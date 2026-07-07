@@ -1,14 +1,15 @@
 import os
+import json
 import tempfile
 import pytest
 import mne
 import numpy as np
 import pandas as pd
-from meg_tokens.meg.preprocessing import convert_ctf_headshape_to_pos, realign_epochs
+from meg_tokens.meg.preprocessing import convert_ctf_headshape_to_pos, realign_epochs, save_clean_raw
 
 
 def test_convert_ctf_headshape_to_pos():
-    mock_eeg_content = (
+    eeg_content = (
         "NZ 1.0 2.0 3.0\n"
         "OG 4.0 5.0 6.0\n"
         "OD 7.0 8.0 9.0\n"
@@ -27,11 +28,11 @@ def test_convert_ctf_headshape_to_pos():
     )
     
     with tempfile.TemporaryDirectory() as tmp_dir:
-        eeg_path = os.path.join(tmp_dir, 'mock_headshape.eeg')
-        pos_path = os.path.join(tmp_dir, 'mock_headshape.pos')
+        eeg_path = os.path.join(tmp_dir, 'headshape.eeg')
+        pos_path = os.path.join(tmp_dir, 'headshape.pos')
         
         with open(eeg_path, 'w') as f:
-            f.write(mock_eeg_content)
+            f.write(eeg_content)
             
         convert_ctf_headshape_to_pos(eeg_path, pos_path)
         
@@ -51,7 +52,7 @@ def test_convert_ctf_headshape_to_pos():
 
 def test_realign_epochs():
     info = mne.create_info(ch_names=['MEG1', 'MEG2'], sfreq=1000.0, ch_types=['mag', 'mag'])
-    data = np.random.randn(3, 2, 5000) # 5.0 seconds
+    data = np.arange(3 * 2 * 5000, dtype=float).reshape(3, 2, 5000)
     
     metadata = pd.DataFrame({
         'tGO': [1000, 1000, 1000],
@@ -77,3 +78,22 @@ def test_realign_epochs():
     assert realigned_dt.tmin == -0.2
     assert realigned_dt.get_data().shape == (3, 2, 1000)
 
+
+def test_save_clean_raw_derivative(tmp_path):
+    info = mne.create_info(ch_names=['MEG1', 'MEG2'], sfreq=1000.0, ch_types=['mag', 'mag'])
+    data = np.zeros((2, 1000))
+    raw = mne.io.RawArray(data, info)
+
+    path = save_clean_raw(raw, tmp_path, subject_id='H1', run_id='Slow1', processing='filt')
+
+    assert path.endswith(
+        "derivatives/meg-tokens/sub-H01/meg/sub-H01_task-tokens_run-1_proc-filt_desc-slow_raw.fif"
+    )
+    assert os.path.exists(path)
+    sidecar = path.replace(".fif", ".json")
+    assert os.path.exists(sidecar)
+    with open(sidecar, "r", encoding="utf-8") as f:
+        meta = json.load(f)
+    assert meta["subject"] == "H01"
+    assert meta["condition"] == "Slow"
+    assert meta["run"] == "1"

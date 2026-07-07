@@ -2,6 +2,7 @@ import os
 import argparse
 import numpy as np
 import mne
+from meg_tokens.io import ensure_dir, require_file, save_array
 
 def run_batch_extract_roi_masks(
     src_path: str,
@@ -24,52 +25,30 @@ def run_batch_extract_roi_masks(
             'Right-Amygdala', 'Right-Thalamus-Proper', 'Right-Cerebellum-Cortex'
         ]
         
-    if not os.path.exists(output_dir):
-        os.makedirs(output_dir)
+    output_path = ensure_dir(output_dir)
         
     print(f"Loading volume source space from: {src_path}")
+    vol_src = mne.read_source_spaces(require_file(src_path, purpose="volume source space"))
     try:
-        vol_src = mne.read_source_spaces(src_path)
-    except FileNotFoundError:
-        print(f"Error: Could not find source space file at {src_path}")
-        print("Mocking extraction for demonstration purposes.")
-        vol_src = None
-        
-    if vol_src is not None:
-        try:
-            available_labels = mne.get_volume_labels_from_src(vol_src, 'fsaverage', 'aseg')
-            print(f"Found {len(available_labels)} available volume labels in source space.")
-        except Exception as e:
-            print(f"Warning: Could not extract labels from src natively: {e}")
-            available_labels = []
+        available_labels = mne.get_volume_labels_from_src(vol_src, 'fsaverage', 'aseg')
+        print(f"Found {len(available_labels)} available volume labels in source space.")
+    except Exception as e:
+        print(f"Could not list volume labels from src: {e}")
             
     for label in roi_labels:
         print(f"Processing ROI: {label}")
         
-        if vol_src is not None:
-            # Extract actual vertices from the source space (MNE 0.24+ standard)
-            # Find the index of the source space corresponding to the volume
-            vertices = []
-            for s in vol_src:
-                if s['type'] == 'vol':
-                    # This is highly dependent on the exact MNE setup for the aseg atlas.
-                    # Typically, mne.extract_label_time_course or mne.get_volume_labels_from_aseg is used.
-                    # As a structural fallback, we extract the vertex indices associated with this ROI.
-                    if 'seg_name' in s and label in s['seg_name']:
-                        idx = s['seg_name'].index(label)
-                        vertices = s['vertno'][s['inuse'].astype(bool)]
-                        # This logic needs to be tailored to the specific vol_src construction.
-                        break
-                        
-            if not len(vertices):
-                print(f"  -> Could not locate {label} in src. Generating mock vertices.")
-                vertices = np.arange(100) # Mock vertices
-        else:
-            # Mock extraction
-            vertices = np.arange(100)
+        vertices = []
+        for s in vol_src:
+            if s.get('type') == 'vol' and 'seg_name' in s and label in s['seg_name']:
+                vertices = s['vertno'][s['inuse'].astype(bool)]
+                break
+
+        if not len(vertices):
+            raise ValueError(f"Could not locate ROI {label!r} in source space {src_path}")
             
-        out_file = os.path.join(output_dir, f"{label}_vertices.npy")
-        np.save(out_file, vertices)
+        out_file = output_path / f"{label}_vertices.npy"
+        save_array(out_file, np.asarray(vertices), dims=("vertex",), metadata={"roi": label, "source_space": str(src_path)})
         print(f"  -> Saved {len(vertices)} vertices to {out_file}")
 
     print("=== Extraction Complete ===")

@@ -1,7 +1,122 @@
 import os
+import json
 import numpy as np
 import pandas as pd
 import mne
+from pathlib import Path
+from typing import Optional, Tuple
+
+from meg_tokens.io import derivative_path, ensure_dir, save_table, sidecar_path
+from meg_tokens.utils.batch_processor import normalize_subject_id
+from meg_tokens.utils.tdms_parser import validate_behavior_dataframe
+
+
+DEFAULT_EVENT_IDS = {
+    'go': {'Go': 524288},
+    'enter': {'Enter': 1048576},
+    'feedback': {'Feedback': 2097152},
+}
+
+SUBJECT_EVENT_OVERRIDES = {
+    'H06': {
+        'go': {'Go': 262144},
+    }
+}
+
+
+def get_event_id(align_to: str, subject_id: Optional[str] = None) -> dict:
+    """Return event IDs, including known subject-specific legacy overrides."""
+    key = align_to.lower()
+    if key not in DEFAULT_EVENT_IDS:
+        raise ValueError(f"Unknown alignment event: {align_to}")
+    if subject_id is not None:
+        subject = normalize_subject_id(subject_id)
+        override = SUBJECT_EVENT_OVERRIDES.get(subject, {}).get(key)
+        if override is not None:
+            return override.copy()
+    return DEFAULT_EVENT_IDS[key].copy()
+
+
+def parse_run_label(run_id: str) -> Tuple[str, Optional[str]]:
+    """Return numeric run and optional condition from labels like Slow1 or run-1."""
+    text = str(run_id).strip()
+    if text.lower().startswith("run-"):
+        return text.split("-", 1)[1], None
+
+    match = None
+    import re
+    match = re.fullmatch(r"([A-Za-z]+)?0*([0-9]+)", text)
+    if match is None:
+        cleaned = "".join(ch for ch in text if ch.isalnum() or ch in ("-", "+"))
+        return cleaned, None
+    condition = match.group(1)
+    run = str(int(match.group(2)))
+    return run, condition.capitalize() if condition else None
+
+
+def find_behavior_table(
+    behavior_root: str,
+    subject_id: str,
+    run_id: str,
+    condition: Optional[str] = None,
+) -> Path:
+    """Find a Stage 1 behavior TSV derivative for a subject/run."""
+    subject = normalize_subject_id(subject_id)
+    run, inferred_condition = parse_run_label(run_id)
+    condition = condition or inferred_condition
+    beh_dir = Path(behavior_root) / "derivatives" / "meg-tokens" / f"sub-{subject}" / "beh"
+    if condition:
+        pattern = f"sub-{subject}_task-tokens_run-{run}_desc-{condition.lower()}_beh.tsv"
+        candidates = [beh_dir / pattern]
+    else:
+        candidates = sorted(beh_dir.glob(f"sub-{subject}_task-tokens_run-{run}_desc-*_beh.tsv"))
+
+    existing = [path for path in candidates if path.is_file()]
+    if not existing:
+        raise FileNotFoundError(f"No behavior TSV derivative found for subject={subject}, run={run} under {behavior_root}")
+    if len(existing) > 1:
+        raise ValueError(f"Multiple behavior TSV derivatives matched subject={subject}, run={run}: {existing}")
+    return existing[0]
+
+
+def load_behavior_table(path: str) -> pd.DataFrame:
+    """Load and validate a Stage 1 behavior TSV derivative."""
+    df = pd.read_csv(path, sep="\t")
+    validate_behavior_dataframe(df)
+    return df
+
+
+def synchronize_events_and_behavior(
+    events: np.ndarray,
+    event_ids: dict,
+    behavior_df: pd.DataFrame,
+    on_mismatch: str = "error",
+) -> Tuple[np.ndarray, pd.DataFrame]:
+    """Synchronize matching MEG events with behavior rows."""
+    matching_codes = list(event_ids.values())
+    matched_events = events[np.isin(events[:, 2], matching_codes)]
+
+    n_events = len(matched_events)
+    n_trials = len(behavior_df)
+    if n_events == 0:
+        raise ValueError(f"No MEG events matched event IDs: {event_ids}")
+
+    if n_events != n_trials:
+        message = f"Trial count mismatch: MEG events={n_events}, behavior rows={n_trials}"
+        if on_mismatch == "error":
+            raise ValueError(message)
+        if on_mismatch == "truncate":
+            n_keep = min(n_events, n_trials)
+            matched_events = matched_events[:n_keep]
+            behavior_df = behavior_df.iloc[:n_keep].copy()
+        else:
+            raise ValueError("on_mismatch must be 'error' or 'truncate'")
+
+    metadata_df = behavior_df.copy().reset_index(drop=True)
+    final_events = matched_events[:len(metadata_df)]
+    metadata_df['meg_sample'] = final_events[:, 0]
+    metadata_df['meg_trigger_value'] = final_events[:, 2]
+    return final_events, metadata_df
 
 def build_epochs_with_metadata(
     raw: mne.io.Raw,
@@ -13,7 +128,8 @@ def build_epochs_with_metadata(
     picks: np.ndarray = None,
     baseline: tuple = None,
     reject: dict = None,
-    preload: bool = True
+    preload: bool = True,
+    on_mismatch: str = "error",
 ) -> mne.Epochs:
     """
     Builds an MNE Epochs object with behavioral dataframe attached as metadata.
@@ -34,43 +150,12 @@ def build_epochs_with_metadata(
     Returns:
         mne.Epochs object with synced metadata.
     """
-    # Filter raw events to find the ones matching our event_ids
-    matching_codes = list(event_ids.values())
-    matched_events_mask = np.isin(events[:, 2], matching_codes)
-    matched_events = events[matched_events_mask]
-    
-    n_events = len(matched_events)
-    n_trials = len(behavior_df)
-    
-    if n_events != n_trials:
-        print(f"Warning: Trial count mismatch! MEG events: {n_events}, Behavioral trials: {n_trials}")
-        if n_events < n_trials:
-            print(f"Aligning: Truncating behavioral trials to match the {n_events} MEG events.")
-            behavior_df = behavior_df.iloc[:n_events].copy()
-        else:
-            print(f"Aligning: Selecting only the first {n_trials} matching MEG events.")
-            # Find the indices of the first n_trials matching events in the original events array
-            matched_indices = np.where(matched_events_mask)[0][:n_trials]
-            # Construct a mask for the original events array to only keep these indices and non-matching events
-            keep_mask = np.ones(len(events), dtype=bool)
-            all_matched_indices = np.where(matched_events_mask)[0]
-            indices_to_drop = all_matched_indices[n_trials:]
-            keep_mask[indices_to_drop] = False
-            events = events[keep_mask]
-            
-    # Attach events sample indices to the behavior metadata
-    # We copy to avoid modifying the original dataframe
-    metadata_df = behavior_df.copy()
-    
-    # We slice matched_events to match metadata_df length in case of any remaining minor mismatch
-    final_matched_events = events[np.isin(events[:, 2], matching_codes)][:len(metadata_df)]
-    metadata_df['meg_sample'] = final_matched_events[:, 0]
-    metadata_df['meg_trigger_value'] = final_matched_events[:, 2]
+    final_events, metadata_df = synchronize_events_and_behavior(events, event_ids, behavior_df, on_mismatch=on_mismatch)
     
     # Build Epochs
     epochs = mne.Epochs(
         raw,
-        events,
+        final_events,
         event_id=event_ids,
         tmin=tmin,
         tmax=tmax,
@@ -89,7 +174,9 @@ def save_epochs_and_events(
     output_dir: str,
     subject_id: str,
     run_id: str,
-    bids_format: bool = True
+    bids_format: bool = True,
+    condition: Optional[str] = None,
+    align_to: str = "go",
 ) -> dict:
     """
     Saves Epochs and event files. Supports standard MNE files and BIDS-compliant tsv formats.
@@ -105,36 +192,60 @@ def save_epochs_and_events(
         Dict containing saved file paths.
     """
     if bids_format:
-        # BIDS Folder Structure: sub-<label>/meg/
-        sub_label = f"sub-{subject_id}"
-        run_label = f"run-{run_id}".lower().replace("_", "")
-        
-        meg_dir = os.path.join(output_dir, sub_label, "meg")
-        os.makedirs(meg_dir, exist_ok=True)
-        
-        epochs_filename = f"{sub_label}_task-tokens_{run_label}_epo.fif"
-        events_filename = f"{sub_label}_task-tokens_{run_label}_events.tsv"
-        eve_filename = f"{sub_label}_task-tokens_{run_label}_eve.eve"
-        
-        epochs_path = os.path.join(meg_dir, epochs_filename)
-        events_tsv_path = os.path.join(meg_dir, events_filename)
-        eve_path = os.path.join(meg_dir, eve_filename)
+        subject = normalize_subject_id(subject_id)
+        run, inferred_condition = parse_run_label(run_id)
+        condition = condition or inferred_condition
+        description = align_to if condition is None else f"{condition.lower()}-{align_to}"
+
+        epochs_path = derivative_path(
+            output_dir,
+            subject=subject,
+            datatype="meg",
+            task="tokens",
+            run=run,
+            description=description,
+            suffix="epo",
+            extension=".fif",
+        )
+        events_tsv_path = derivative_path(
+            output_dir,
+            subject=subject,
+            datatype="meg",
+            task="tokens",
+            run=run,
+            description=description,
+            suffix="events",
+            extension=".tsv",
+        )
+        eve_path = derivative_path(
+            output_dir,
+            subject=subject,
+            datatype="meg",
+            task="tokens",
+            run=run,
+            description=description,
+            suffix="eve",
+            extension=".eve",
+        )
+        ensure_dir(epochs_path.parent)
         
         # Save MNE epochs file
-        epochs.save(epochs_path, overwrite=True)
+        epochs.save(str(epochs_path), overwrite=True)
         
         # Save standard MNE .eve file
-        mne.write_events(eve_path, epochs.events, overwrite=True)
+        mne.write_events(str(eve_path), epochs.events, overwrite=True)
         
         # Save BIDS events.tsv file
         # Columns: onset, duration, trial_type, value, plus all behavioral metadata columns
         sfreq = epochs.info['sfreq']
         events_data = epochs.events
         
+        event_name_by_value = {value: name for name, value in epochs.event_id.items()}
         bids_events = pd.DataFrame({
             'onset': events_data[:, 0] / sfreq,
             'duration': np.zeros(len(events_data)),
-            'trial_type': [list(epochs.event_id.keys())[0]] * len(events_data),
+            'sample': events_data[:, 0],
+            'trial_type': [event_name_by_value.get(value, str(value)) for value in events_data[:, 2]],
             'value': events_data[:, 2]
         })
         
@@ -146,12 +257,43 @@ def save_epochs_and_events(
             meta_clean = meta_clean.reset_index(drop=True)
             bids_events = pd.concat([bids_events, meta_clean], axis=1)
             
-        bids_events.to_csv(events_tsv_path, sep='\t', index=False)
+        save_table(
+            events_tsv_path,
+            bids_events,
+            metadata={
+                "stage": "epoching",
+                "subject": subject,
+                "condition": condition,
+                "run": run,
+                "alignment": align_to,
+                "tmin": epochs.tmin,
+                "tmax": epochs.tmax,
+                "sfreq": sfreq,
+            },
+        )
+
+        with sidecar_path(epochs_path).open("w", encoding="utf-8") as f:
+            json.dump(
+                {
+                    "format": "mne-epochs-fif",
+                    "stage": "epoching",
+                    "subject": subject,
+                    "condition": condition,
+                    "run": run,
+                    "alignment": align_to,
+                    "n_epochs": len(epochs),
+                    "event_id": epochs.event_id,
+                },
+                f,
+                indent=2,
+                sort_keys=True,
+            )
+            f.write("\n")
         
         return {
-            'epochs': epochs_path,
-            'events_tsv': events_tsv_path,
-            'eve': eve_path
+            'epochs': str(epochs_path),
+            'events_tsv': str(events_tsv_path),
+            'eve': str(eve_path)
         }
     else:
         # Standard format

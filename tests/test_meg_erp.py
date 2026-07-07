@@ -4,8 +4,6 @@ import pandas as pd
 import mne
 import tempfile
 import os
-import scipy.io as sio
-from unittest.mock import patch, MagicMock
 
 from meg_tokens.meg.erp import (
     align_and_pad_epochs,
@@ -14,7 +12,6 @@ from meg_tokens.meg.erp import (
 )
 
 def test_align_and_pad_epochs():
-    # Set up mock behavioral DataFrame
     df = pd.DataFrame({
         'tGO': [1000.0, 1000.0, 1000.0],
         'tEnterTarget': [2500.0, 1500.0, 5000.0]  # RT = 1500ms, 500ms, 4000ms
@@ -82,21 +79,19 @@ def test_align_and_pad_epochs_vector():
     assert not np.any(np.isnan(aligned[0][:, :, :220]))
 
 
-@patch('meg_tokens.meg.erp.mne.read_labels_from_annot')
-def test_parcellate_source_estimates(mock_read_labels):
-    # Set up mock labels
-    label_lh = MagicMock()
-    label_lh.name = 'Label_1-lh'
-    
-    label_rh = MagicMock()
-    label_rh.name = 'Label_2-rh'
-    
-    # Mock return values for read_labels_from_annot
-    # Medal wall or unknown labels are ignored by parcellation
-    mock_read_labels.side_effect = [
-        [label_lh],  # left hemi
-        [label_rh]   # right hemi
-    ]
+def test_parcellate_source_estimates(monkeypatch):
+    class Label:
+        def __init__(self, name):
+            self.name = name
+
+    label_lh = Label('Label_1-lh')
+    label_rh = Label('Label_2-rh')
+
+    label_sets = {"lh": [label_lh], "rh": [label_rh]}
+    monkeypatch.setattr(
+        "meg_tokens.meg.erp.mne.read_labels_from_annot",
+        lambda subject, parc, hemi, subjects_dir: label_sets[hemi],
+    )
     
     sfreq = 100.0
     n_vertices = 10
@@ -105,13 +100,13 @@ def test_parcellate_source_estimates(mock_read_labels):
     vertices = [np.arange(5), np.arange(5, 10)]
     stc = mne.SourceEstimate(data, vertices=vertices, tmin=0.0, tstep=1.0/sfreq)
     
-    # Mock stc.in_label
-    mock_stc_in_label = MagicMock()
-    mock_stc_in_label.data = np.ones((3, n_times)) * 10.0  # 3 vertices in label
-    stc.in_label = MagicMock(return_value=mock_stc_in_label)
+    class LabelEstimate:
+        data = np.ones((3, n_times)) * 10.0
+
+    stc.in_label = lambda label: LabelEstimate()
     
     label_names, parcellated = parcellate_source_estimates(
-        stc, subjects_dir='mock_dir', subject='fsaverage', parc='HCPMMP1'
+        stc, subjects_dir='subjects_dir', subject='fsaverage', parc='HCPMMP1'
     )
     
     assert label_names == ['Label_1-lh', 'Label_2-rh']
@@ -120,20 +115,17 @@ def test_parcellate_source_estimates(mock_read_labels):
     assert np.allclose(parcellated, 10.0)
 
 def test_export_neural_space():
-    data = np.random.randn(5, 100)
+    data = np.arange(500, dtype=float).reshape(5, 100)
     label_names = ['L1', 'L2', 'L3', 'L4', 'L5']
     
     with tempfile.TemporaryDirectory() as tmpdir:
-        export_neural_space(data, label_names, tmpdir, 'test_export', format='both')
+        export_neural_space(data, label_names, tmpdir, 'test_export', format='npy')
         
         # Check files exist
         assert os.path.exists(os.path.join(tmpdir, 'test_export.npy'))
-        assert os.path.exists(os.path.join(tmpdir, 'test_export.mat'))
+        assert os.path.exists(os.path.join(tmpdir, 'test_export.json'))
+        assert not os.path.exists(os.path.join(tmpdir, 'test_export.mat'))
         
         # Load and verify
         loaded_npy = np.load(os.path.join(tmpdir, 'test_export.npy'))
         assert np.allclose(loaded_npy, data)
-        
-        loaded_mat = sio.loadmat(os.path.join(tmpdir, 'test_export.mat'))
-        assert 'data' in loaded_mat
-        assert np.allclose(loaded_mat['data'], data)

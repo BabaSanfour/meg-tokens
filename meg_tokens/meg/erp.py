@@ -1,7 +1,7 @@
-import os
 import numpy as np
 import mne
-import scipy.io as sio
+from typing import Optional
+from meg_tokens.io import ensure_dir, save_array
 
 def align_and_pad_epochs(
     stcs: list,
@@ -89,7 +89,9 @@ def parcellate_source_estimates(
     subjects_dir: str,
     subject: str = 'fsaverage',
     parc: str = 'HCPMMP1',
-    hemi: str = 'both'
+    hemi: str = 'both',
+    source_space: Optional[mne.SourceSpaces] = None,
+    mode: str = 'mean'
 ) -> tuple:
     """
     Parcellates a source estimate into region-of-interest (ROI) labels using an annotation.
@@ -105,6 +107,9 @@ def parcellate_source_estimates(
         subject: Subject template name (default 'fsaverage').
         parc: Brain annotation parcellation atlas (e.g., 'HCPMMP1', 'aparc.a2009s').
         hemi: Hemisphere to parcellate ('left', 'right', or 'both').
+        source_space: Optional MNE SourceSpaces object. If supplied, MNE's
+            extract_label_time_course is used directly.
+        mode: Extraction mode passed to MNE when source_space is supplied.
         
     Returns:
         tuple (label_names, parcellated_data)
@@ -125,8 +130,23 @@ def parcellate_source_estimates(
         if rh_labels and (rh_labels[0].name.startswith('unknown') or 'Medial_wall' in rh_labels[0].name):
             rh_labels = rh_labels[1:]
         labels.extend(rh_labels)
+
+    if source_space is not None:
+        label_tcs = mne.extract_label_time_course(
+            [stc],
+            labels,
+            source_space,
+            mode=mode,
+            allow_empty=True,
+            return_generator=False,
+            verbose=False,
+        )
+        label_tcs = np.asarray(label_tcs)
+        if label_tcs.shape[0] != 1:
+            raise ValueError(f"Expected one source estimate after parcellation, got shape {label_tcs.shape}")
+        return [label.name for label in labels], label_tcs[0]
         
-    is_vector = isinstance(stc, mne.VectorSourceEstimate)
+    is_vector = stc.data.ndim == 3
     n_times = stc.data.shape[-1]
     
     parcellated = []
@@ -166,31 +186,107 @@ def parcellate_source_estimates(
     return label_names, parc_arr
 
 
+def _source_group_slices(vertices: list[np.ndarray]) -> list[slice]:
+    slices = []
+    start = 0
+    for group in vertices:
+        stop = start + len(group)
+        slices.append(slice(start, stop))
+        start = stop
+    return slices
+
+
+def _source_group_prefix(vertices: list[np.ndarray], group_index: int) -> str:
+    if len(vertices) == 1:
+        return "vol"
+    if group_index == 0:
+        return "lh"
+    if group_index == 1:
+        return "rh"
+    return f"vol{group_index - 1:02d}"
+
+
+def _volume_group_indices(stc) -> list[int]:
+    class_name = stc.__class__.__name__.lower()
+    vertices = list(stc.vertices)
+    if class_name.startswith("vol"):
+        return list(range(len(vertices)))
+    if "mixed" in class_name and len(vertices) > 2:
+        return list(range(2, len(vertices)))
+    raise ValueError(
+        f"Source estimate type {stc.__class__.__name__} does not contain volume source groups"
+    )
+
+
+def source_feature_group_indices(stc, feature_space: str) -> list[int]:
+    """Return vertex-group indices for an all-source or volume feature export."""
+    vertices = list(stc.vertices)
+    if feature_space == "all_source":
+        return list(range(len(vertices)))
+    if feature_space == "volume":
+        return _volume_group_indices(stc)
+    raise ValueError("feature_space must be 'all_source' or 'volume'")
+
+
+def source_feature_labels(stc, feature_space: str) -> list[str]:
+    """Build stable source-coordinate labels for non-parcellated exports."""
+    vertices = list(stc.vertices)
+    labels = []
+    for group_index in source_feature_group_indices(stc, feature_space):
+        prefix = _source_group_prefix(vertices, group_index)
+        for vertex in np.asarray(vertices[group_index]).tolist():
+            labels.append(f"{prefix}-{int(vertex)}")
+    return labels
+
+
+def select_source_feature_data(stc, feature_space: str) -> tuple[list[str], np.ndarray]:
+    """Return source-level data for all-source or volume ERP exports.
+
+    The returned array keeps MNE's source-major orientation:
+    ``source x time`` for scalar estimates and ``source x orientation x time``
+    for vector estimates.
+    """
+    data = np.asarray(stc.data)
+    vertices = list(stc.vertices)
+    group_slices = _source_group_slices(vertices)
+    group_indices = source_feature_group_indices(stc, feature_space)
+    row_indices = np.concatenate([
+        np.arange(group_slices[group].start, group_slices[group].stop)
+        for group in group_indices
+    ])
+    labels = source_feature_labels(stc, feature_space)
+    return labels, np.take(data, row_indices, axis=0)
+
+
 def export_neural_space(
     data: np.ndarray,
     label_names: list,
     output_dir: str,
     file_prefix: str,
-    format: str = 'both'
+    format: str = 'npy',
+    metadata: Optional[dict] = None,
 ):
     """
-    Exports parcellated neural space matrices to Numpy (.npy) and Matlab (.mat) formats.
+    Export parcellated neural-space matrices as `.npy` plus JSON sidecar.
     
     Args:
         data: Parcellated data array of shape (n_labels, n_times) or (3, n_labels, n_times).
         label_names: List of label name strings.
         output_dir: Output directory to write files.
         file_prefix: Prefix filename.
-        format: Export format ('npy', 'mat', or 'both').
+        format: Export format. Only 'npy' is supported for new pipeline outputs.
+        metadata: Optional metadata stored in the JSON sidecar.
     """
-    if not os.path.exists(output_dir):
-        os.makedirs(output_dir)
-        
-    if format in ('npy', 'both'):
-        npy_path = os.path.join(output_dir, f"{file_prefix}.npy")
-        np.save(npy_path, data)
-        
-    if format in ('mat', 'both'):
-        mat_path = os.path.join(output_dir, f"{file_prefix}.mat")
-        # Structure payload matching legacy Matlab loading expectations
-        sio.savemat(mat_path, {'data': data, 'labels': label_names})
+    if format != 'npy':
+        raise ValueError("Only format='npy' is supported for new neural-space exports")
+
+    out_dir = ensure_dir(output_dir)
+    npy_path = out_dir / f"{file_prefix}.npy"
+    dims = ("label", "time") if data.ndim == 2 else ("component", "label", "time")
+    return save_array(
+        npy_path,
+        data,
+        dims=dims,
+        coords={"label": label_names},
+        metadata=metadata or {},
+    )

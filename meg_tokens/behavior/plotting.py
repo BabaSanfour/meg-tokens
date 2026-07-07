@@ -81,10 +81,9 @@ def plot_comparison_bars(
     indices = np.arange(2)
     ax.bar(indices, means, yerr=sems, color=['lime', 'red'], alpha=0.6, capsize=8, zorder=1)
     
-    # Add jittered scatter points for subjects
-    np.random.seed(0)  # For consistent jitter positioning
-    jitter_a = np.random.normal(indices[0], 0.08, size=len(raw_a))
-    jitter_b = np.random.normal(indices[1], 0.08, size=len(raw_b))
+    # Add deterministic horizontal offsets for subject points.
+    jitter_a = indices[0] + np.linspace(-0.08, 0.08, len(raw_a)) if len(raw_a) else np.array([])
+    jitter_b = indices[1] + np.linspace(-0.08, 0.08, len(raw_b)) if len(raw_b) else np.array([])
     
     # Curated colormap for subjects
     subject_colors = plt.cm.tab20(np.linspace(0, 1, max(len(raw_a), len(raw_b))))

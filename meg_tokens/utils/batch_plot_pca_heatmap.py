@@ -4,6 +4,7 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
+from meg_tokens.io import ensure_dir, load_array
 
 def run_batch_plot_pca_heatmap(
     data_path: str,
@@ -12,22 +13,15 @@ def run_batch_plot_pca_heatmap(
 ):
     print(f"=== Starting PCA ROI Heatmap Plotting ===")
     
-    if not os.path.exists(output_dir):
-        os.makedirs(output_dir)
+    output_path = ensure_dir(output_dir)
         
     if rois is None or len(rois) == 0:
         rois = ['Pallidum', 'Caudate', 'Putamen', 'Amygdala', 'Thalamus-Proper', 'Cerebellum-Cortex', 'Brain-Stem']
         
-    try:
-        data = np.load(data_path)
-        print(f"Loaded heatmap data shape: {data.shape}")
-    except FileNotFoundError:
-        print(f"Warning: {data_path} not found. Generating mock data for demonstration.")
-        # Mock data: shape (n_components, n_rois)
-        n_components = 5
-        data = np.random.uniform(10, 50, (n_components, len(rois)))
-        # Make the first component explain the most variance
-        data[0, :] = np.random.uniform(40, 70, len(rois))
+    data = load_array(data_path, expected_ndim=2).data
+    print(f"Loaded heatmap data shape: {data.shape}")
+    if data.shape[1] != len(rois):
+        raise ValueError(f"Heatmap data has {data.shape[1]} ROI columns but {len(rois)} ROI labels were provided")
         
     n_components = data.shape[0]
     
@@ -63,7 +57,7 @@ def run_batch_plot_pca_heatmap(
     
     plt.tight_layout()
     
-    save_path = os.path.join(output_dir, "pca_roi_heatmap.png")
+    save_path = output_path / "pca_roi_heatmap.png"
     plt.savefig(save_path, dpi=300)
     plt.close(f)
     print(f"Saved PCA Heatmap to {save_path}")

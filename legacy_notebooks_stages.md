@@ -2,11 +2,13 @@
 
 This document categorizes all legacy notebooks and scripts from the 2018 Decision-Making Dynamics (DDM) MEG project by processing stage. This serves as a master index to guide our modular refactoring and migration into the clean, tested `meg-tokens` library.
 
+For the strict one-row-per-executable replication status, see [`docs/legacy_traceability.md`](docs/legacy_traceability.md).
+
 ---
 
 ## 🗺️ Stages Overview
 
-Here is the 10-stage architecture of the legacy analysis pipeline:
+Here is the 12-stage architecture of the legacy analysis pipeline:
 
 1. **Stage 1: Dataframe Parsing** - TDMS behavioral parsing and CSV mapping.
 2. **Stage 2: MEG Preprocessing & Trial Alignment** - Notch/bandpass filtering, ICA, headshape alignment, and trial epoching.
@@ -18,6 +20,8 @@ Here is the 10-stage architecture of the legacy analysis pipeline:
 8. **Stage 8: Brain-Behavior Correlations** - Correlations between peak neural commitment times, PC projections, and behavior.
 9. **Stage 9: MVPA Decoding & Classification** - Time-resolved MVPA classifiers (Fast vs. Slow, Choice, Difficulty) on source space data.
 10. **Stage 10: Functional Connectivity** - Seed-based connectivity and circular connectivity plots.
+11. **Stage 11: Hilbert Features for PAC/CFC** - Band-filtered signal, phase, amplitude, and power extraction for downstream coupling analyses.
+12. **Stage 12: PAC/CFC Statistics** - Phase-amplitude modulation-index estimation from staged Hilbert derivatives.
 
 ---
 
@@ -103,7 +107,7 @@ This stage explores the relationships between neural features reconstructed in s
 *   [`05_compute_resample_raw.py`](archive/replicated/DDM_scripts/scripts_new/05_compute_resample_raw.py) *(Replicated)*
 *   [`05_regroup_sources_block.py`](archive/replicated/DDM_scripts/scripts_new/05_regroup_sources_block.py) *(Replicated)*
 *   [`05_Time_Frequency_Maps.ipynb`](archive/replicated/DDM_scripts/scripts_new/05_Time_Frequency_Maps.ipynb) *(Replicated)*
-*   [`0000_FOOF_AND_PSD.ipynb`](archive/replicated/DDM_scripts/scripts_new/0000_FOOF_AND_PSD.ipynb) *(Replicated)*
+*   [`0000_FOOF_AND_PSD.ipynb`](archive/replicated/DDM_scripts/scripts_new/0000_FOOF_AND_PSD.ipynb) *(Replicated/modernized - PSD extraction and aperiodic/periodic fitting now run through `batch_psd_fooof.py`, which consumes Stage 2 Epochs FIF derivatives, uses `specparam`, and writes `.npy`/`.tsv` outputs with JSON sidecars)*
 *   [`Power_DDM-no_baseline.ipynb`](archive/replicated/DDM_scripts/scripts_new/Power_DDM-no_baseline.ipynb) *(Replicated - Third-party time-frequency analysis absorbed by batch_time_frequency.py in Stage 5)*
 *   [`Filtered_signal_DDM.ipynb`](archive/replicated/DDM_scripts/scripts_new/Filtered_signal_DDM.ipynb) *(Replicated)*
 *   [`Power_DDM_Lab1.ipynb`](archive/replicated/DDM_scripts/scripts_new/Power_DDM_Lab1.ipynb) *(Replicated)*
@@ -145,26 +149,26 @@ This stage explores the relationships between neural features reconstructed in s
 *   [`run_all_conn_all2ROI.sh`](archive/replicated/DDM_scripts/scripts_new/run_all_conn_all2ROI.sh) *(Replicated - Replaced by unified cluster/job_connectivity.sh array job)*
 
 ## MATLAB Scripts
-*   [`array2struct.m`](archive/replicated/DDM_scripts/matlab_scripts/array2struct.m) *(Replicated/Obsolete - Data wrangling to mock Spike/Firing-Rate format for legacy @nmData framework, completely replaced by native Python MNE/pandas)*
-*   [`Neural_space_AL_all_sources.m`](archive/replicated/DDM_scripts/matlab_scripts/Neural_space_AL_all_sources.m) *(Replicated - PCA trajectory & loadings extraction/plotting, replaced by Python `batch_plot_pca_trajectory.py` and `batch_plot_pca_loadings.py`)*
-*   [`NeuralSpaceSimulation_AN.m`](archive/replicated/DDM_scripts/matlab_scripts/NeuralSpaceSimulation_AN.m) *(Obsolete - Computational neural network simulation script from a 2006 paper, used as a structural template, not related to MEG data)*
-*   [`Neural_space_Thomas_all_sources_correct_error.m`](archive/replicated/DDM_scripts/matlab_scripts/Neural_space_Thomas_all_sources_correct_error.m) *(Replicated - PCA trajectory extraction for Correct vs Error condition, fully replaced by Python `batch_plot_pca_trajectory.py`)*
-*   [`Neural_space_Thomas_all_sources_correct_error_ROIs.m`](archive/replicated/DDM_scripts/matlab_scripts/Neural_space_Thomas_all_sources_correct_error_ROIs.m) *(Replicated/Obsolete - PCA trajectory extraction constrained to an ROI; modern Python `batch_dpca.py` extracts full source space natively. ROI constraint filtering would need to be added to `batch_dpca.py` if desired in the future)*
-*   [`Neural_space_Thomas_all_sources_DEEP_enter.m`](archive/replicated/DDM_scripts/matlab_scripts/Neural_space_Thomas_all_sources_DEEP_enter.m) *(Replicated - PCA trajectory extraction for deep volumetric sources like Accumbens; modern pipeline natively handles this via `--volume` flag in `batch_dpca.py`)*
-*   [`Neural_space_Thomas_all_sources_deep_fast_slow.m`](archive/replicated/DDM_scripts/matlab_scripts/Neural_space_Thomas_all_sources_deep_fast_slow.m) *(Replicated - PCA trajectory extraction for deep volumetric Brain-Stem during Fast vs Slow conditions; replicated via `--volume`, `--rois Brain-Stem`, and `--conditions all_fast all_slow` flags in `batch_dpca.py`)*
-*   [`Neural_space_Thomas_all_sources_DEEP_go.m`](archive/replicated/DDM_scripts/matlab_scripts/Neural_space_Thomas_all_sources_DEEP_go.m) *(Replicated - PCA trajectory extraction for deep volumetric sources like Accumbens during Go condition; fully replaced via modern Python `--volume` flag in `batch_dpca.py`)*
-*   [`Neural_space_Thomas_all_sources_DEEP.m`](archive/replicated/DDM_scripts/matlab_scripts/Neural_space_Thomas_all_sources_DEEP.m) *(Replicated - PCA trajectory extraction for all deep volumetric sources during Go condition; fully replaced via modern Python `--volume` flag in `batch_dpca.py`)*
-*   [`Neural_space_Thomas_all_sources_ERP.m`](archive/replicated/DDM_scripts/matlab_scripts/Neural_space_Thomas_all_sources_ERP.m) *(Replicated - PCA trajectory extraction constrained to the DorsoLateral Prefrontal Cortex ROI. Despite the name 'ERP', it looks at the beta frequency band. Fully replaced by `--rois "DorsoLateral Prefrontal Cortex"` in `batch_dpca.py`)*
-*   [`Neural_space_Thomas_all_sources_raw.m`](archive/replicated/DDM_scripts/matlab_scripts/Neural_space_Thomas_all_sources_raw.m) *(Replicated - PCA trajectory extraction for the entire source space on broadband 'raw' (unfiltered) data during the Enter condition; fully replaced by default `batch_dpca.py` on raw epochs)*
-*   [`Neural_space_Thomas_all_sources.m`](archive/replicated/DDM_scripts/matlab_scripts/Neural_space_Thomas_all_sources.m) *(Replicated - PCA trajectory extraction constrained to the 'Early Visual Cortex' ROI on gamma_low data. Fully replaced by `--rois "Early Visual Cortex"` in `batch_dpca.py`)*
-*   [`Neural_space_Thomas.m`](archive/replicated/DDM_scripts/matlab_scripts/Neural_space_Thomas.m) *(Replicated - Master script attempting to extract PCA across a massive hardcoded list of 44 specific HCPMMP1 ROIs for theta-band ERP data. Fully replaced natively by passing multiple ROIs to `--rois` in `batch_dpca.py`)*
+*   [`array2struct.m`](archive/replicated/DDM_scripts/matlab_scripts/array2struct.m) *(Replicated/Obsolete - Data wrangling to the legacy Spike/Firing-Rate structure used by the @nmData framework, completely replaced by native Python MNE/pandas)*
+*   [`Neural_space_AL_all_sources.m`](archive/replicated/DDM_scripts/matlab_scripts/Neural_space_AL_all_sources.m) *(Replicated - PCA trajectory & loadings extraction now replaced by derivative-aware `batch_dpca.py --analysis pca`; plotting is handled by `batch_plot_pca_trajectory.py`, `batch_plot_component_timecourse.py`, `batch_plot_pca_variance.py`, and `batch_plot_pca_loadings.py`)*
+*   [`NeuralSpaceSimulation_AN.m`](archive/replicated/DDM_scripts/matlab_scripts/NeuralSpaceSimulation_AN.m) *(Out of scope - modeling-only script from a 2006 paper, not related to MEG Tokens project data)*
+*   [`Neural_space_Thomas_all_sources_correct_error.m`](archive/replicated/DDM_scripts/matlab_scripts/Neural_space_Thomas_all_sources_correct_error.m) *(Replicated - Correct vs Error PCA trajectory extraction replaced by `batch_dpca.py --analysis pca --conditions Correct Error` over Stage 4/5 derivatives)*
+*   [`Neural_space_Thomas_all_sources_correct_error_ROIs.m`](archive/replicated/DDM_scripts/matlab_scripts/Neural_space_Thomas_all_sources_correct_error_ROIs.m) *(Replicated - ROI-constrained PCA is now `batch_dpca.py --analysis pca --labels ...`, using staged label coordinates instead of MATLAB vertex `.mat` masks)*
+*   [`Neural_space_Thomas_all_sources_DEEP_enter.m`](archive/replicated/DDM_scripts/matlab_scripts/Neural_space_Thomas_all_sources_DEEP_enter.m) *(Replicated - deep/volume PCA trajectories are handled by Stage 4 power or Stage 5 ERP derivatives plus `batch_dpca.py --analysis pca`; no MATLAB `.mat` export is used)*
+*   [`Neural_space_Thomas_all_sources_deep_fast_slow.m`](archive/replicated/DDM_scripts/matlab_scripts/Neural_space_Thomas_all_sources_deep_fast_slow.m) *(Replicated - Fast vs Slow deep-source trajectories replaced by derivative PCA with `--conditions Fast Slow` and appropriate staged deep features)*
+*   [`Neural_space_Thomas_all_sources_DEEP_go.m`](archive/replicated/DDM_scripts/matlab_scripts/Neural_space_Thomas_all_sources_DEEP_go.m) *(Replicated - Go-aligned deep-source trajectories replaced by derivative PCA with `--align_to go`)*
+*   [`Neural_space_Thomas_all_sources_DEEP.m`](archive/replicated/DDM_scripts/matlab_scripts/Neural_space_Thomas_all_sources_DEEP.m) *(Replicated - all-deep-source PCA trajectories replaced by derivative PCA over staged deep features)*
+*   [`Neural_space_Thomas_all_sources_ERP.m`](archive/replicated/DDM_scripts/matlab_scripts/Neural_space_Thomas_all_sources_ERP.m) *(Replicated - DLPFC/beta trajectory extraction replaced by derivative PCA with `--feature_source power --band beta --labels ...`)*
+*   [`Neural_space_Thomas_all_sources_raw.m`](archive/replicated/DDM_scripts/matlab_scripts/Neural_space_Thomas_all_sources_raw.m) *(Replicated - broadband/source ERP trajectory extraction replaced by Stage 5 ERP derivatives plus `batch_dpca.py --analysis pca`)*
+*   [`Neural_space_Thomas_all_sources.m`](archive/replicated/DDM_scripts/matlab_scripts/Neural_space_Thomas_all_sources.m) *(Replicated - Early Visual Cortex gamma-low trajectory extraction replaced by derivative PCA with `--feature_source power --band gamma_low --labels ...`)*
+*   [`Neural_space_Thomas.m`](archive/replicated/DDM_scripts/matlab_scripts/Neural_space_Thomas.m) *(Replicated - the hardcoded ROI loop is replaced by repeated `batch_dpca.py --analysis pca --labels ...` calls over staged HCPMMP1 derivatives)*
 *   [`Distribution_baseline_Fast_slow.ipynb`](archive/replicated/DDM_scripts/scripts_new/Distribution_baseline_Fast_slow.ipynb) *(Replicated)*
 *   [`00_Correlations_Peak_Commitment.ipynb`](archive/replicated/DDM_scripts/scripts_new/00_Correlations_Peak_Commitment.ipynb) *(Replicated)*
 *   [`00_plot_success_probability.ipynb`](archive/replicated/DDM_scripts/scripts_new/00_plot_success_probability.ipynb) *(Replicated)*
 
 ### Stage 6: ERP Source-Space Aggregation (In Focus)
 
-This stage downsamples, trial-aligns, and parcellates source-localized ERP waveforms, exporting them as structured `.mat` files for Matlab-based group analysis.
+The legacy stage downsampled, trial-aligned, parcellated, and exported MATLAB `.mat` files. The modern replication keeps the behavioral operations but writes Stage 5 `.npy` arrays plus JSON sidecars and aligned `erptrials.tsv` metadata, so PCA, decoding, and statistics all consume the same derivative contract.
 
 #### Active Legacy Files
 
@@ -172,7 +176,7 @@ This stage downsamples, trial-aligns, and parcellates source-localized ERP wavef
 | :--- | :--- | :--- | :--- |
 | [`00_ERP_Make_matlab_files_neural_space.ipynb`](archive/replicated/DDM_scripts/scripts_new/00_ERP_Make_matlab_files_neural_space.ipynb) | **Primary ERP Aggregator & Parcellator**:<br>1. **Downsampling**: Loads source-space estimates (`-stc.h5`) for Go and Enter Target blocks and downsamples waveforms from 600 Hz to 100 Hz (`resample(..., down=6.0)`).<br>2. **NaN Alignment & Slicing**: Slices trial waveforms relative to event times (Go trigger and Enter Target choice). For Go-aligned trials, truncates the waveform at `tEnterTarget - 300ms` (motor preparation onset) and pads with NaNs up to 400 samples (4 seconds) to avoid motor artifact contamination.<br>3. **Glasser Parcellation**: Loads `lh.HCPMMP1.annot` and `rh.HCPMMP1.annot` labels, extracts time series for all 360 regions via `stc.in_label(label)`, and averages across vertices within each label.<br>4. **MATLAB Export**: Aggregates datasets across subjects and exports them as `.mat` files (`sio.savemat`). Also scales and merges frequency bands (delta * 3, theta * 6, alpha * 11.5, beta * 22.5, gamma_low * 45) into concatenated files. | `mne`, `numpy`, `pandas`, `scipy.io` (sio), `os` | **Replicated** (via [`erp.py`](meg_tokens/meg/erp.py)) |
 | [`00_Make_matlab_files_neural_space.ipynb`](archive/replicated/DDM_scripts/scripts_new/00_Make_matlab_files_neural_space.ipynb) | Backup and alternative version of the main ERP aggregation and MATLAB export pipeline. | `mne`, `numpy`, `scipy.io` | **Replicated** (via [`erp.py`](meg_tokens/meg/erp.py)) |
-| [`00_Make_matlab_files_neural_space-all_sources.ipynb`](archive/replicated/DDM_scripts/scripts_new/00_Make_matlab_files_neural_space-all_sources.ipynb) | Variant that processes and exports unparcellated whole-brain source estimates (all 8,196 vertices) rather than region-of-interest labels. | `mne`, `numpy`, `scipy.io` | **Replicated** (via [`erp.py`](meg_tokens/meg/erp.py)) |
+| [`00_Make_matlab_files_neural_space-all_sources.ipynb`](archive/replicated/DDM_scripts/scripts_new/00_Make_matlab_files_neural_space-all_sources.ipynb) | Variant that processes and exports unparcellated whole-brain source estimates (all 8,196 vertices) rather than region-of-interest labels. | `mne`, `numpy`, `scipy.io` | **Replicated** (via `batch_erp_parcellation.py --feature_space all_source`) |
 | [`00_Make_matlab_files_neural_space-Copy1.ipynb`](archive/replicated/DDM_scripts/scripts_new/00_Make_matlab_files_neural_space-Copy1.ipynb) | Duplicate scratch version of the source-space matlab file creator. | `mne`, `numpy`, `scipy.io` | **Replicated** (via [`erp.py`](meg_tokens/meg/erp.py)) |
 | [`Script_split_ERP.ipynb`](archive/replicated/DDM_scripts/scripts_new/Script_split_ERP.ipynb) | Slices and splits ERP time courses into pre-stimulus baseline and active decision periods. | `numpy`, `scipy.io` | **Replicated** (via [`erp.py`](meg_tokens/meg/erp.py)) |
 | [`00_Prepare_ROIS_data.ipynb`](archive/replicated/DDM_scripts/scripts_new/00_Prepare_ROIS_data.ipynb) | Extracts structural vertex indices for subcortical volume labels from MNE source space and saves them as ROI masks. | `mne`, `numpy` | **Replicated** (via [`batch_extract_roi_masks.py`](meg_tokens/utils/batch_extract_roi_masks.py)) |
@@ -184,7 +188,7 @@ This stage downsamples, trial-aligns, and parcellates source-localized ERP wavef
 This stage calculates group-level statistics (e.g., permutation t-tests, cluster permutations) and plots waveforms, timing significance, and cortical topographies.
 
 #### Relationship to Stage 6:
-*   While Stage 6 (`00_ERP`) exports parcellated time courses as `.mat` files for PCA in MATLAB, **Stage 7 Python notebooks** (e.g., `071_` and `06_` notebooks) represent the **Python-based statistical inference pathway**.
+*   The old Stage 6 (`00_ERP`) MATLAB export path has been replaced by staged `.npy`/`.tsv` derivatives. **Stage 7 Python notebooks** (e.g., `071_` and `06_` notebooks) represent the historical Python-based statistical inference pathway.
 *   The `071_` notebooks downsample, trial-align, and parcellate source activity using the Destrieux (`aparc.a2009s`) atlas, saving the results in directories like `figures/time/left_minus_right_aparc/`.
 *   The `06_` notebooks load these `.npy` files to run permutation t-tests, determine timing significance windowing, plot region-of-interest waveforms with SEM shading, and render cortical topoplots.
 
@@ -216,8 +220,8 @@ This stage calculates group-level statistics (e.g., permutation t-tests, cluster
 *   [`09_Figures_brain_decoding_all_sources.ipynb`](archive/replicated/DDM_scripts/scripts_new/09_Figures_brain_decoding_all_sources.ipynb) *(Replicated - Time-resolved 3D PyVista animations absorbed by batch_plot_pca_loadings.py --save_movie)*
 *   [`091_Figures_brain_stats_all_sources.ipynb`](archive/replicated/DDM_scripts/scripts_new/091_Figures_brain_stats_all_sources.ipynb) *(Replicated - Time-resolved 3D PyVista animations absorbed by batch_plot_pca_loadings.py --save_movie)*
 *   [`091_Stats_SRC_POWER_arrange_data_all_sources.ipynb`](archive/replicated/DDM_scripts/scripts_new/091_Stats_SRC_POWER_arrange_data_all_sources.ipynb) *(Replicated - MVPA on Parcellation ROIs replaced by batch_decoding_roi.py)*
-*   [`091_Stats_SRC_POWER_arrange_data_all_sources-DEEP.ipynb`](archive/replicated/DDM_scripts/scripts_new/091_Stats_SRC_POWER_arrange_data_all_sources-DEEP.ipynb) *(Replicated - Deep volume source extraction to MATLAB replaced by batch_extract_deep_sources.py)*
-*   [`091_Stats_SRC_POWER_arrange_data_all_sources-_correct_error.ipynb`](archive/replicated/DDM_scripts/scripts_new/091_Stats_SRC_POWER_arrange_data_all_sources-_correct_error.ipynb)<br>[`091_Stats_SRC_POWER_arrange_data_all_sources-ERP.ipynb`](archive/replicated/DDM_scripts/scripts_new/091_Stats_SRC_POWER_arrange_data_all_sources-ERP.ipynb)<br>[`091_Stats_SRC_POWER_arrange_data_all_sources-_post_error_slowing.ipynb`](archive/replicated/DDM_scripts/scripts_new/091_Stats_SRC_POWER_arrange_data_all_sources-_post_error_slowing.ipynb) *(Replicated - Manual CSV behavior slicing replaced by dynamic --behavior_filter)*
+*   [`091_Stats_SRC_POWER_arrange_data_all_sources-DEEP.ipynb`](archive/replicated/DDM_scripts/scripts_new/091_Stats_SRC_POWER_arrange_data_all_sources-DEEP.ipynb) *(Replicated - Deep volume source extraction to MATLAB replaced by mixed source spaces from `batch_sources.py --volume_labels ...` plus `batch_erp_parcellation.py --feature_space volume`)*
+*   [`091_Stats_SRC_POWER_arrange_data_all_sources-_correct_error.ipynb`](archive/replicated/DDM_scripts/scripts_new/091_Stats_SRC_POWER_arrange_data_all_sources-_correct_error.ipynb)<br>[`091_Stats_SRC_POWER_arrange_data_all_sources-ERP.ipynb`](archive/replicated/DDM_scripts/scripts_new/091_Stats_SRC_POWER_arrange_data_all_sources-ERP.ipynb)<br>[`091_Stats_SRC_POWER_arrange_data_all_sources-_post_error_slowing.ipynb`](archive/replicated/DDM_scripts/scripts_new/091_Stats_SRC_POWER_arrange_data_all_sources-_post_error_slowing.ipynb) *(Replicated - Manual CSV behavior slicing replaced by shared trial metadata, behavior columns, and `batch_erp_parcellation.py --feature_space all_source`)*
 *   [`09_1st_moment_signif_DT_trial_types.ipynb`](archive/replicated/DDM_scripts/scripts_new/09_1st_moment_signif_DT_trial_types.ipynb)<br>[`09_1st_moment_signif_DT_trial_types-Fast_Slow.ipynb`](archive/replicated/DDM_scripts/scripts_new/09_1st_moment_signif_DT_trial_types-Fast_Slow.ipynb) *(Replicated - Manual bar charting replaced by batch_plot_decoding_onset.py)*
 *   [`00_Plot_brains_MNE_and_CSV.ipynb`](archive/replicated/DDM_scripts/scripts_new/00_Plot_brains_MNE_and_CSV.ipynb) *(Replicated - replaced by batch_plot_pca_loadings.py --export_csv)*
 *   [`00_Matlab_loadings_brain.ipynb`](archive/replicated/DDM_scripts/scripts_new/00_Matlab_loadings_brain.ipynb) *(Replicated - replaced by batch_plot_pca_variance.py)*
@@ -245,16 +249,22 @@ This stage calculates group-level statistics (e.g., permutation t-tests, cluster
 *   [`Portfolio_deep_learning.ipynb`](archive/replicated/DDM_scripts/scripts_new/Portfolio_deep_learning.ipynb) *(Replicated)*
 
 ### Stage 9.2: Demixed Principal Component Analysis
-*   [`092_Mixed_PCA-COMPUTE.ipynb`](archive/replicated/DDM_scripts/scripts_new/092_Mixed_PCA-COMPUTE.ipynb) *(Replicated - Tensor construction logic replaced by batch_dpca.py)*
+*   [`092_Mixed_PCA-COMPUTE.ipynb`](archive/replicated/DDM_scripts/scripts_new/092_Mixed_PCA-COMPUTE.ipynb) *(Replicated - tensor construction now reads real ERP derivatives and `erptrials.tsv` sidecars via `batch_dpca.py --analysis dpca`; outputs are `.npy`/`.tsv` derivatives with JSON sidecars)*
 *   [`092_Mixed_PCA_PLOT.ipynb`](archive/replicated/DDM_scripts/scripts_new/092_Mixed_PCA_PLOT.ipynb) *(Replicated - Matplotlib component plotting replaced by batch_plot_dpca.py)*
 
 ### Stage 10: Functional Connectivity
-*   [`08_SRC_Connectivity.py`](archive/replicated/DDM_scripts/scripts_new/08_SRC_Connectivity.py)<br>[`08_SRC_Connectivity.ipynb`](archive/replicated/DDM_scripts/scripts_new/08_SRC_Connectivity.ipynb) *(Replicated - Huge vertex-to-vertex matrix calculation absorbed by batch_connectivity.py)*
-*   [`08_SRC_Connectivity_all2ROI.py`](archive/replicated/DDM_scripts/scripts_new/08_SRC_Connectivity_all2ROI.py) *(Replicated - Vertex-to-ROI downsampling logic absorbed and optimized natively in batch_connectivity.py)*
-*   [`08_Plot_connectivity_circle.ipynb`](archive/replicated/DDM_scripts/scripts_new/08_Plot_connectivity_circle.ipynb)<br>[`08_Plot_connectivity_circle-subject-by-subject.ipynb`](archive/replicated/DDM_scripts/scripts_new/08_Plot_connectivity_circle-subject-by-subject.ipynb) *(Replicated - Replaced by batch_plot_connectivity_circle.py)*
-*   [`08_Seed_based_connectivity_final.ipynb`](archive/replicated/DDM_scripts/scripts_new/08_Seed_based_connectivity_final.ipynb)<br>[`08_SRC_Connectivity_seed_based_plot.py`](archive/replicated/DDM_scripts/scripts_new/08_SRC_Connectivity_seed_based_plot.py) *(Replicated - Replaced by batch_plot_seed_connectivity.py routing into batch_plot_pca_loadings.py)*
+*   [`08_SRC_Connectivity.py`](archive/replicated/DDM_scripts/scripts_new/08_SRC_Connectivity.py)<br>[`08_SRC_Connectivity.ipynb`](archive/replicated/DDM_scripts/scripts_new/08_SRC_Connectivity.ipynb) *(Replicated - before/after spectral connectivity is now computed directly over Stage 5 ROI time-course derivatives by `batch_connectivity.py`, avoiding legacy full vertex-to-vertex intermediates)*
+*   [`08_SRC_Connectivity_all2ROI.py`](archive/replicated/DDM_scripts/scripts_new/08_SRC_Connectivity_all2ROI.py) *(Replicated/modernized - ROI aggregation is handled upstream by Stage 5 parcellation, so Stage 10 consumes label time courses directly)*
+*   [`08_Plot_connectivity_circle.ipynb`](archive/replicated/DDM_scripts/scripts_new/08_Plot_connectivity_circle.ipynb)<br>[`08_Plot_connectivity_circle-subject-by-subject.ipynb`](archive/replicated/DDM_scripts/scripts_new/08_Plot_connectivity_circle-subject-by-subject.ipynb) *(Replicated - `batch_plot_connectivity_circle.py` reads Stage 10 derivatives, averages runs within subject, and writes sidecar-backed stats plus figures)*
+*   [`08_Seed_based_connectivity_final.ipynb`](archive/replicated/DDM_scripts/scripts_new/08_Seed_based_connectivity_final.ipynb)<br>[`08_SRC_Connectivity_seed_based_plot.py`](archive/replicated/DDM_scripts/scripts_new/08_SRC_Connectivity_seed_based_plot.py) *(Replicated - `batch_plot_seed_connectivity.py` writes seed-to-all node vectors, t-statistics, p-values, and null distributions as derivatives)*
 *   **Alpha-Band Seed Connectivity**: Refer to [`Untitled10.ipynb`](archive/replicated/DDM_scripts/scripts_new/Untitled10.ipynb) and [`Untitled6.ipynb`](archive/replicated/DDM_scripts/scripts_new/Untitled6.ipynb) for seed-based spectral connectivity computing.
-*   **Cross-Frequency Coupling (CFC)**: Refer to [`Untitled.ipynb`](archive/replicated/DDM_analysis_scripts/Untitled.ipynb) for phase-amplitude coupling using `brainpipe`.
+*   **Cross-Frequency Coupling (CFC)**: [`Untitled.ipynb`](archive/replicated/DDM_analysis_scripts/Untitled.ipynb) contains Brainpipe band-filtered signal, amplitude, and power extraction. This behavior is implemented by `batch_hilbert_features.py`, and final modulation-index PAC/CFC statistics are implemented by `batch_pac_cfc.py`.
+
+### Stage 11: Hilbert Features for PAC/CFC
+*   [`Untitled.ipynb`](archive/replicated/DDM_analysis_scripts/Untitled.ipynb) *(Replicated/modernized for the MEG Tokens path - the real-data Brainpipe `power`, `amplitude`, and `sigfilt` export behavior is replaced by `batch_hilbert_features.py`, which reads Stage 5 ERP/parcellation derivatives and writes sidecar-backed `.npy` Hilbert features. The old notebook's non-DDM autism example is out of project scope.)*
+
+### Stage 12: PAC/CFC Statistics
+*   [`Untitled.ipynb`](archive/replicated/DDM_analysis_scripts/Untitled.ipynb) *(Replicated/modernized - phase-amplitude coupling statistics are now computed by `batch_pac_cfc.py` using Tort-style modulation index over Stage 11 phase and amplitude derivatives.)*
 
 ### Uncategorized / Scratch Files (Ignore or Cleanup)
 *   [`Untitled*.ipynb`](archive/replicated/DDM_scripts/scripts_new/) (Several scratch notebooks: `Untitled.ipynb` through `Untitled15.ipynb`, `Untitled-Copy1.ipynb`, etc.)

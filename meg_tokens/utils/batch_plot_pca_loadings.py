@@ -1,27 +1,39 @@
-import os
 import argparse
+import json
+from typing import Optional, Sequence
+
 import numpy as np
 import mne
 from meg_tokens.meg.plotting import plot_brain_tmap
+from meg_tokens.io import ensure_dir, load_array, require_file
 
-def create_mock_stc(pca_loadings: np.ndarray, fs_dir: str = None, vertices_path: str = None, is_volume: bool = False) -> mne.SourceEstimate:
-    """
-    Creates a mock mne.SourceEstimate or VolSourceEstimate object to hold the pca_loadings for 3D plotting.
-    Assuming standard fsaverage with 8196 vertices per hemisphere if no vertices_path is provided.
-    """
-    if vertices_path and os.path.exists(vertices_path):
-        # Load custom vertices (e.g. from an ROI subset)
-        # Assuming saved with dtype=object, so we extract the list/arrays
-        loaded = np.load(vertices_path, allow_pickle=True)
-        if isinstance(loaded, np.ndarray) and loaded.ndim == 0:
-            vertices = loaded.item()
-        else:
-            vertices = list(loaded)
-    else:
-        n_total_vertices = pca_loadings.shape[0]
-        n_hemi = n_total_vertices // 2
-        vertices = [np.arange(n_hemi), np.arange(n_hemi)]
-    
+
+def _load_vertices(vertices_path: Optional[str], metadata: dict) -> list:
+    if vertices_path is not None:
+        vertices_file = require_file(vertices_path, purpose="source vertices")
+        if vertices_file.suffix == ".json":
+            with vertices_file.open("r", encoding="utf-8") as f:
+                return [np.asarray(vertices) for vertices in json.load(f)]
+        loaded = np.load(vertices_file, allow_pickle=False)
+        if loaded.ndim == 1:
+            return [loaded]
+        if loaded.ndim == 2:
+            return [np.asarray(row) for row in loaded]
+        raise ValueError("vertices_path must be a JSON list of vertex arrays or a 1D/2D numeric .npy file")
+
+    stage_meta = metadata.get("metadata", {})
+    if isinstance(stage_meta, dict) and stage_meta.get("source_vertices") is not None:
+        return [np.asarray(vertices) for vertices in stage_meta["source_vertices"]]
+    raise ValueError("--vertices_path is required unless the loadings sidecar contains source_vertices")
+
+
+def create_stc_from_loadings(
+    pca_loadings: np.ndarray,
+    *,
+    vertices: list,
+    is_volume: bool = False,
+) -> mne.SourceEstimate:
+    """Create an MNE source estimate from loadings and real vertex metadata."""
     if pca_loadings.ndim == 1:
         pca_loadings = pca_loadings[:, np.newaxis]
         
@@ -29,10 +41,8 @@ def create_mock_stc(pca_loadings: np.ndarray, fs_dir: str = None, vertices_path:
     tstep = 0.01
     
     if is_volume:
-        stc = mne.VolSourceEstimate(data=pca_loadings, vertices=vertices, tmin=tmin, tstep=tstep, subject='fsaverage')
-    else:
-        stc = mne.SourceEstimate(data=pca_loadings, vertices=vertices, tmin=tmin, tstep=tstep, subject='fsaverage')
-    return stc
+        return mne.VolSourceEstimate(data=pca_loadings, vertices=vertices, tmin=tmin, tstep=tstep, subject='fsaverage')
+    return mne.SourceEstimate(data=pca_loadings, vertices=vertices, tmin=tmin, tstep=tstep, subject='fsaverage')
 
 def run_batch_plot_pca_loadings(
     loadings_path: str,
@@ -47,10 +57,9 @@ def run_batch_plot_pca_loadings(
     print(f"=== Starting PCA Loadings 3D Brain Plotting ===")
     print(f"Loading PCA loadings from: {loadings_path}")
     
-    if not os.path.exists(output_dir):
-        os.makedirs(output_dir)
-        
-    pca_loadings = np.load(loadings_path)
+    output_path = ensure_dir(output_dir)
+    loaded = load_array(loadings_path)
+    pca_loadings = loaded.data
         
     print(f"Loaded PCA loadings shape: {pca_loadings.shape}")
     
@@ -80,44 +89,41 @@ def run_batch_plot_pca_loadings(
                 'Loading_Value': active_values
             }).sort_values(by='Loading_Value', ascending=False)
             
-            csv_path = os.path.join(output_dir, "top_active_regions.csv")
+            csv_path = output_path / "top_active_regions.csv"
             df.to_csv(csv_path, index=False)
             print(f"Exported top active vertices to {csv_path}")
             
     print("Constructing mne.SourceEstimate...")
-    try:
-        stc = create_mock_stc(pca_loadings, fs_dir=subjects_dir, vertices_path=vertices_path, is_volume=is_volume)
-        
-        print("Rendering 3D Brain...")
-        brain = plot_brain_tmap(
-            stc=stc,
-            subject='fsaverage',
-            subjects_dir=subjects_dir,
-            title='PCA Loadings'
-        )
-        
-        save_path = os.path.join(output_dir, "pca_loadings_3d_render.png")
-        
-        if save_movie:
-            from meg_tokens.meg.plotting import save_brain_movie_frames
-            save_brain_movie_frames(
-                brain=brain, 
-                times=stc.times, 
-                output_dir=output_dir, 
-                prefix="Fig_pca", 
-                views=['dorsal', 'lateral', 'medial']
-            )
-        else:
-            print(f"Note: Rendering skipped in headless environment. Would save to: {save_path}")
-        
-    except Exception as e:
-        print(f"Mock plotting error: {e}")
+    vertices = _load_vertices(vertices_path, loaded.metadata)
+    stc = create_stc_from_loadings(pca_loadings, vertices=vertices, is_volume=is_volume)
 
-if __name__ == "__main__":
+    print("Rendering 3D Brain...")
+    brain = plot_brain_tmap(
+        stc=stc,
+        subject='fsaverage',
+        subjects_dir=subjects_dir,
+        title='PCA Loadings'
+    )
+
+    save_path = output_path / "pca_loadings_3d_render.png"
+
+    if save_movie:
+        from meg_tokens.meg.plotting import save_brain_movie_frames
+        save_brain_movie_frames(
+            brain=brain,
+            times=stc.times,
+            output_dir=output_dir,
+            prefix="Fig_pca",
+            views=['dorsal', 'lateral', 'medial']
+        )
+    else:
+        print(f"Brain object created. Configure the MNE 3D backend to save a screenshot at: {save_path}")
+
+def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Plot PCA loadings on a 3D brain and optionally export active regions")
     parser.add_argument("--loadings_path", type=str, required=True,
                         help="Path to .npy file containing PCA loadings")
-    parser.add_argument("--out_dir", type=str, default='./figures/pca_loadings/',
+    parser.add_argument("--out_dir", type=str, required=True,
                         help="Directory to save 3D renders and CSV reports")
     parser.add_argument("--subjects_dir", type=str, default=None,
                         help="FreeSurfer subjects directory")
@@ -128,13 +134,21 @@ if __name__ == "__main__":
     parser.add_argument("--save_movie", action="store_true",
                         help="If the input array is time-resolved, loop over time and export top, left, and right screenshots for every timepoint, matching the legacy visbrain script.")
     parser.add_argument("--vertices_path", type=str, default=None,
-                        help="Path to .npy file containing vertex indices if PCA was constrained to ROI")
+                        help="Optional JSON or numeric .npy file containing vertex indices if the loadings sidecar lacks source_vertices")
     parser.add_argument("--volume", action="store_true",
                         help="Plot as volumetric source estimate instead of surface")
     
-    args = parser.parse_args()
+    return parser
+
+
+def main(argv: Optional[Sequence[str]] = None) -> None:
+    args = build_arg_parser().parse_args(argv)
     run_batch_plot_pca_loadings(
         args.loadings_path, args.out_dir, args.subjects_dir, 
         args.threshold_percentile, args.export_csv, args.save_movie,
         args.vertices_path, args.volume
     )
+
+
+if __name__ == "__main__":
+    main()

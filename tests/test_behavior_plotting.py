@@ -8,8 +8,8 @@ from meg_tokens.behavior.plotting import (
 )
 
 def test_plot_fast_slow_distributions():
-    dt_fast = np.random.normal(700, 100, 50)
-    dt_slow = np.random.normal(1200, 150, 50)
+    dt_fast = np.linspace(600, 800, 50)
+    dt_slow = np.linspace(1000, 1400, 50)
     
     fig = plot_fast_slow_distributions(dt_fast, dt_slow, title="Test Fast vs Slow")
     
@@ -17,9 +17,9 @@ def test_plot_fast_slow_distributions():
     plt.close(fig)
 
 def test_plot_trial_class_distributions():
-    easy = np.random.normal(600, 80, 30)
-    ambig = np.random.normal(800, 100, 30)
-    misleading = np.random.normal(1000, 120, 30)
+    easy = np.linspace(520, 680, 30)
+    ambig = np.linspace(700, 900, 30)
+    misleading = np.linspace(880, 1120, 30)
     
     fig = plot_trial_class_distributions(easy, ambig, misleading, title="Test Difficulty")
     
@@ -27,8 +27,8 @@ def test_plot_trial_class_distributions():
     plt.close(fig)
 
 def test_plot_comparison_bars():
-    raw_a = np.random.normal(1200, 150, 10)
-    raw_b = np.random.normal(1400, 180, 10)
+    raw_a = np.linspace(1050, 1350, 10)
+    raw_b = np.linspace(1220, 1580, 10)
     
     fig = plot_comparison_bars(
         mean_a=1200.0, sem_a=50.0,

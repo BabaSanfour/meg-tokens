@@ -1,15 +1,74 @@
 import os
 import re
+from dataclasses import dataclass
+from pathlib import Path
+
 import pandas as pd
-from meg_tokens.utils.tdms_parser import parse_tdms_file
+from meg_tokens.io import derivative_path, save_table
+from meg_tokens.utils.tdms_parser import parse_tdms_file, validate_behavior_dataframe
 
 # Regex to parse DDM TDMS filenames like H1Slow1_180131.tdms
-FILENAME_RE = re.compile(r'^H(?:0[1-9]|[1-9][0-9]*)(Slow|Fast|RT)([0-9]+)_(.*)\.tdms$', re.IGNORECASE)
+FILENAME_RE = re.compile(
+    r'^(?P<subject>H(?:0[1-9]|[1-9][0-9]*))(?P<condition>Slow|Fast|RT)(?P<run>[0-9]+)_(?P<date>.*)\.tdms$',
+    re.IGNORECASE,
+)
+
+
+@dataclass(frozen=True)
+class TdmsRunInfo:
+    subject: str
+    condition: str
+    run: str
+    date: str
+
+
+def normalize_subject_id(subject_id: str) -> str:
+    """Normalize legacy subject labels to H01-style IDs."""
+    match = re.fullmatch(r'H0*([0-9]+)', subject_id.strip(), re.IGNORECASE)
+    if not match:
+        raise ValueError(f"Invalid subject ID: {subject_id}")
+    return f"H{int(match.group(1)):02d}"
+
+
+def parse_tdms_filename(filename: str) -> TdmsRunInfo:
+    match = FILENAME_RE.match(filename)
+    if match is None:
+        raise ValueError(f"Non-standard TDMS filename: {filename}")
+    return TdmsRunInfo(
+        subject=normalize_subject_id(match.group("subject")),
+        condition="RT" if match.group("condition").upper() == "RT" else match.group("condition").capitalize(),
+        run=match.group("run"),
+        date=match.group("date"),
+    )
+
+
+def behavior_output_path(output_root: str, run_info: TdmsRunInfo) -> Path:
+    return derivative_path(
+        output_root,
+        subject=run_info.subject,
+        datatype="beh",
+        task="tokens",
+        run=run_info.run,
+        description=run_info.condition.lower(),
+        suffix="beh",
+        extension=".tsv",
+    )
+
+
+def add_run_metadata(df: pd.DataFrame, run_info: TdmsRunInfo, source_file: str) -> pd.DataFrame:
+    out = df.copy()
+    out.insert(0, "subject", run_info.subject)
+    out.insert(1, "condition", run_info.condition)
+    out.insert(2, "run", int(run_info.run))
+    out.insert(3, "source_file", source_file)
+    out["rawRT"] = (out["tEnterTarget"] - out["tGO"]).where(out["nChoiceMade"] > 0)
+    out["isCorrect"] = (out["nChoiceMade"] == out["nCorrectChoice"]).where(out["nChoiceMade"] > 0)
+    return out
 
 def process_subject_tdms(subject_id: str, input_dir: str, output_dir: str, dry_run: bool = False) -> list:
     """
     Scans a subject's TDMS directory, parses all trial runs, and saves them
-    in the new clean CSV format: {subject_id}_{condition}{index}.csv.
+    as BIDS-derivatives-style behavior `.tsv` tables with JSON sidecars.
     
     Args:
         subject_id: Subject directory name (e.g. 'H1', 'H02').
@@ -21,42 +80,50 @@ def process_subject_tdms(subject_id: str, input_dir: str, output_dir: str, dry_r
         A list of dicts with mapped files.
     """
     subject_input_path = os.path.join(input_dir, subject_id)
-    subject_output_path = os.path.join(output_dir, subject_id)
     
     if not os.path.exists(subject_input_path):
         raise FileNotFoundError(f"Subject input directory does not exist: {subject_input_path}")
-        
-    if not dry_run:
-        os.makedirs(subject_output_path, exist_ok=True)
         
     processed_files = []
     
     # List all TDMS files in subject directory
     for filename in sorted(os.listdir(subject_input_path)):
         if filename.endswith(".tdms"):
-            match = FILENAME_RE.match(filename)
-            if match:
-                condition, index, date = match.groups()
-                # Construct output file name (e.g. H1_Slow1.csv or H1_RT1.csv)
-                cond_formatted = "RT" if condition.upper() == "RT" else condition.capitalize()
-                output_filename = f"{subject_id}_{cond_formatted}{index}.csv"
-                
+            try:
+                run_info = parse_tdms_filename(filename)
                 input_file_path = os.path.join(subject_input_path, filename)
-                output_file_path = os.path.join(subject_output_path, output_filename)
-                
-                print(f"Mapping: {filename} -> {output_filename}")
+                output_file_path = behavior_output_path(output_dir, run_info)
+
+                print(f"Mapping: {filename} -> {output_file_path}")
                 
                 if not dry_run:
                     df = parse_tdms_file(input_file_path)
-                    df.to_csv(output_file_path, index=True) # Replicate original index output
+                    df = add_run_metadata(df, run_info, filename)
+                    validate_behavior_dataframe(df)
+                    save_table(
+                        output_file_path,
+                        df,
+                        metadata={
+                            "stage": "behavior_parsing",
+                            "subject": run_info.subject,
+                            "condition": run_info.condition,
+                            "run": run_info.run,
+                            "source_file": filename,
+                            "source_date": run_info.date,
+                        },
+                    )
+                else:
+                    df = pd.DataFrame()
                     
                 processed_files.append({
-                    'subject': subject_id,
+                    'subject': run_info.subject,
+                    'condition': run_info.condition,
+                    'run': run_info.run,
                     'input': filename,
-                    'output': output_filename,
+                    'output': str(output_file_path),
                     'trials': len(df) if not dry_run else 0
                 })
-            else:
+            except ValueError:
                 print(f"Skipping non-standard TDMS file: {filename}")
                 
     return processed_files
@@ -96,12 +163,12 @@ if __name__ == "__main__":
     import argparse
     
     parser = argparse.ArgumentParser(
-        description="Run batch processor to parse TDMS files and map them to CSV dataframes."
+        description="Parse TDMS files into BIDS-derivatives-style behavior TSV tables."
     )
     parser.add_argument("--input_dir", type=str, required=True,
                         help="Path to the main tdms/ folder (containing subject subfolders).")
     parser.add_argument("--output_dir", type=str, required=True,
-                        help="Path to the target dataframes/ folder.")
+                        help="BIDS derivatives root for parsed behavior tables.")
     parser.add_argument("--dry_run", action='store_true',
                         help="If set, only prints mapping and does not write files.")
     

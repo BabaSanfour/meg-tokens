@@ -4,56 +4,20 @@
 # Unified Master SLURM Submitter for All HCPMMP1 ROIs
 # Replaces all 12 legacy `run_all_classif_*.sh` scripts.
 # ==============================================================================
-# Usage Example: 
-# ./submit_all_rois.sh "./data/epochs_enter/" "speed in ['Fast', 'Slow']"
+# Usage Example:
+# export TOKENS_BIDS=/path/to/tokens-bids
+# ./submit_all_rois.sh
 # ==============================================================================
 
-DATA_DIR=$1
-BEHAVIOR_FILTER=$2
+TOKENS_BIDS=${TOKENS_BIDS:?Set TOKENS_BIDS to the BIDS derivatives root}
 
-if [ -z "$DATA_DIR" ]; then
-    echo "Usage: ./submit_all_rois.sh <data_dir> [behavior_filter]"
+if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
+    echo "Usage: TOKENS_BIDS=/path/to/tokens-bids ./submit_all_rois.sh"
     echo ""
     echo "This script iterates over all 360 HCPMMP1 ROIs and submits them to the SLURM cluster"
     echo "using the unified cluster/job_decoding.sh script."
     echo ""
-    echo "HOW TO RUN THE 12 LEGACY 'run_all_classif' VERSIONS:"
-    echo "------------------------------------------------------"
-    echo "1. run_all_classif_baseline_enter:"
-    echo "   ./submit_all_rois.sh \"./data/epochs_enter/\""
-    echo ""
-    echo "2. run_all_classif_baseline_go:"
-    echo "   ./submit_all_rois.sh \"./data/epochs_go/\""
-    echo ""
-    echo "3. run_all_classif_fast_vs_slow_enter:"
-    echo "   ./submit_all_rois.sh \"./data/epochs_enter/\" \"speed in ['Fast', 'Slow']\""
-    echo ""
-    echo "4. run_all_classif_fast_vs_slow_go:"
-    echo "   ./submit_all_rois.sh \"./data/epochs_go/\" \"speed in ['Fast', 'Slow']\""
-    echo ""
-    echo "5. run_all_classif_lh_rh_enter:"
-    echo "   ./submit_all_rois.sh \"./data/epochs_enter/\" \"nChoiceMade in [1, 2]\""
-    echo ""
-    echo "6. run_all_classif_lh_rh_go:"
-    echo "   ./submit_all_rois.sh \"./data/epochs_go/\" \"nChoiceMade in [1, 2]\""
-    echo ""
-    echo "7. run_all_classif_sensory_evidence_enter:"
-    echo "   ./submit_all_rois.sh \"./data/epochs_enter/\" \"sTrialClass in [1, 2, 3]\""
-    echo ""
-    echo "8. run_all_classif_sensory_evidence_enter_all_sources:"
-    echo "   (Handled by single all-sources job, no ROI loop needed!)"
-    echo ""
-    echo "9. run_all_classif_sensory_evidence_go:"
-    echo "   ./submit_all_rois.sh \"./data/epochs_go/\" \"sTrialClass in [1, 2, 3]\""
-    echo ""
-    echo "10. run_all_classif_sensory_evidence_go_all_sources:"
-    echo "    (Handled by single all-sources job, no ROI loop needed!)"
-    echo ""
-    echo "11. run_all_classif_trial_class_enter:"
-    echo "    ./submit_all_rois.sh \"./data/epochs_enter/\""
-    echo ""
-    echo "12. run_all_classif_trial_class_go:"
-    echo "    ./submit_all_rois.sh \"./data/epochs_go/\""
+    echo "Optional environment variables: CONDITIONS, ALIGN_TO, SOURCE_METHOD, PARC, PERMUTATIONS."
     exit 1
 fi
 
@@ -61,7 +25,7 @@ ROIS="L_10d_ROI-lh L_10pp_ROI-lh L_10r_ROI-lh L_10v_ROI-lh L_11l_ROI-lh L_13l_RO
 
 for roi in $ROIS; do
     echo "Submitting decoding job for ROI: $roi"
-    sbatch cluster/job_decoding.sh "$roi" "$DATA_DIR" "$BEHAVIOR_FILTER"
+    sbatch cluster/job_decoding.sh "$roi"
 done
 
 echo "All 360 ROI jobs submitted to the cluster!"

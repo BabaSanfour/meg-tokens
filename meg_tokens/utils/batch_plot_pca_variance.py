@@ -3,6 +3,7 @@ import argparse
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
+from meg_tokens.io import ensure_dir, load_array
 
 def run_batch_plot_pca_variance(
     variance_path: str,
@@ -11,16 +12,8 @@ def run_batch_plot_pca_variance(
     print(f"=== Starting PCA Variance Explained Plotting ===")
     print(f"Loading variance data from: {variance_path}")
     
-    if not os.path.exists(output_dir):
-        os.makedirs(output_dir)
-        
-    try:
-        nVarExpl = np.load(variance_path)
-    except FileNotFoundError:
-        print(f"Warning: {variance_path} not found. Generating mock data for demonstration.")
-        # Mock variance explained that drops off logarithmically
-        nVarExpl = np.exp(-np.arange(1, 21)/4)
-        nVarExpl /= np.sum(nVarExpl)
+    output_path = ensure_dir(output_dir)
+    nVarExpl = load_array(variance_path, expected_ndim=1).data
         
     fig, ax = plt.subplots(figsize=(8, 6))
     
@@ -37,7 +30,7 @@ def run_batch_plot_pca_variance(
     
     sns.despine(ax=ax)
     
-    save_path = os.path.join(output_dir, "pca_variance_explained.png")
+    save_path = output_path / "pca_variance_explained.png"
     plt.savefig(save_path, dpi=300)
     plt.close(fig)
     print(f"Saved PCA Variance plot to {save_path}")

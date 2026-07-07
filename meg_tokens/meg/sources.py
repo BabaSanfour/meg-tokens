@@ -10,7 +10,188 @@ Note on legacy implementations:
 import os
 import numpy as np
 import mne
-from mne.minimum_norm import make_inverse_operator, apply_inverse_epochs
+import pandas as pd
+from pathlib import Path
+from typing import List, Optional
+from mne.minimum_norm import make_inverse_operator, apply_inverse_epochs, write_inverse_operator
+
+from meg_tokens.io import derivative_path, ensure_dir, save_sidecar, save_table
+from meg_tokens.utils.batch_processor import normalize_subject_id
+from meg_tokens.utils.epochs_builder import parse_run_label
+
+
+def source_derivative_path(
+    output_root: str,
+    subject_id: str,
+    *,
+    suffix: str,
+    extension: str,
+    run_id: Optional[str] = None,
+    condition: Optional[str] = None,
+    description: Optional[str] = None,
+    processing: Optional[str] = None,
+    space: Optional[str] = None,
+) -> Path:
+    """Build a Stage 3 source derivative path."""
+    subject = normalize_subject_id(subject_id)
+    run = None
+    inferred_condition = None
+    if run_id is not None:
+        run, inferred_condition = parse_run_label(run_id)
+    condition = condition or inferred_condition
+    desc_parts = []
+    if condition:
+        desc_parts.append(condition.lower())
+    if description:
+        desc_parts.append(description)
+    desc = "-".join(desc_parts) if desc_parts else None
+    return derivative_path(
+        output_root,
+        subject=subject,
+        datatype="meg",
+        task="tokens",
+        run=run,
+        processing=processing,
+        space=space,
+        description=desc,
+        suffix=suffix,
+        extension=extension,
+    )
+
+
+def save_noise_covariance(cov: mne.Covariance, output_root: str, subject_id: str) -> str:
+    path = source_derivative_path(output_root, subject_id, suffix="cov", extension=".fif", description="noise")
+    ensure_dir(path.parent)
+    mne.write_cov(str(path), cov, overwrite=True)
+    save_sidecar(path, {"format": "mne-covariance-fif", "stage": "source_reconstruction", "kind": "noise_covariance", "subject": normalize_subject_id(subject_id)})
+    return str(path)
+
+
+def save_bem_solution(bem: mne.bem.ConductorModel, output_root: str, subject_id: str) -> str:
+    path = source_derivative_path(output_root, subject_id, suffix="bem", extension=".fif", description="singlelayer")
+    ensure_dir(path.parent)
+    mne.write_bem_solution(str(path), bem, overwrite=True)
+    save_sidecar(path, {"format": "mne-bem-fif", "stage": "source_reconstruction", "kind": "bem_solution", "subject": normalize_subject_id(subject_id)})
+    return str(path)
+
+
+def save_source_space(
+    src: mne.SourceSpaces,
+    output_root: str,
+    subject_id: str,
+    spacing: str,
+    *,
+    volume_labels: Optional[list[str]] = None,
+    volume_pos: Optional[float] = None,
+) -> str:
+    path = source_derivative_path(output_root, subject_id, suffix="src", extension=".fif", description=spacing, space="subject")
+    ensure_dir(path.parent)
+    mne.write_source_spaces(str(path), src, overwrite=True)
+    save_sidecar(path, {
+        "format": "mne-source-space-fif",
+        "stage": "source_reconstruction",
+        "kind": "source_space",
+        "subject": normalize_subject_id(subject_id),
+        "spacing": spacing,
+        "volume_labels": volume_labels or [],
+        "volume_pos_mm": volume_pos,
+    })
+    return str(path)
+
+
+def save_forward_solution(fwd: mne.Forward, output_root: str, subject_id: str, run_id: str, condition: Optional[str], alignment: str) -> str:
+    path = source_derivative_path(output_root, subject_id, suffix="fwd", extension=".fif", run_id=run_id, condition=condition, description=alignment)
+    ensure_dir(path.parent)
+    mne.write_forward_solution(str(path), fwd, overwrite=True)
+    save_sidecar(path, {"format": "mne-forward-fif", "stage": "source_reconstruction", "kind": "forward_solution", "subject": normalize_subject_id(subject_id), "run": parse_run_label(run_id)[0], "condition": condition, "alignment": alignment})
+    return str(path)
+
+
+def save_inverse_operator(inverse_operator, output_root: str, subject_id: str, run_id: str, condition: Optional[str], alignment: str, method: str) -> str:
+    path = source_derivative_path(output_root, subject_id, suffix="inv", extension=".fif", run_id=run_id, condition=condition, description=f"{alignment}-{method}")
+    ensure_dir(path.parent)
+    write_inverse_operator(str(path), inverse_operator, overwrite=True)
+    save_sidecar(path, {"format": "mne-inverse-operator-fif", "stage": "source_reconstruction", "kind": "inverse_operator", "subject": normalize_subject_id(subject_id), "run": parse_run_label(run_id)[0], "condition": condition, "alignment": alignment, "method": method})
+    return str(path)
+
+
+def save_source_estimates(
+    stcs: List[mne.SourceEstimate],
+    output_root: str,
+    subject_id: str,
+    run_id: str,
+    condition: Optional[str],
+    alignment: str,
+    method: str,
+) -> str:
+    """Save trial source estimates and a manifest consumed by later stages."""
+    subject = normalize_subject_id(subject_id)
+    run, inferred_condition = parse_run_label(run_id)
+    condition = condition or inferred_condition
+    manifest_path = source_derivative_path(
+        output_root,
+        subject,
+        suffix="stcmanifest",
+        extension=".tsv",
+        run_id=run,
+        condition=condition,
+        description=f"{alignment}-{method}",
+    )
+    ensure_dir(manifest_path.parent)
+
+    rows = []
+    for trial_idx, stc in enumerate(stcs, start=1):
+        base = source_derivative_path(
+            output_root,
+            subject,
+            suffix=f"trial{trial_idx:04d}stc",
+            extension="",
+            run_id=run,
+            condition=condition,
+            description=f"{alignment}-{method}",
+        )
+        ensure_dir(base.parent)
+        stc.save(str(base), ftype="stc", overwrite=True)
+        save_sidecar(
+            base,
+            {
+                "format": "mne-source-estimate",
+                "stage": "source_reconstruction",
+                "kind": "source_estimate",
+                "subject": subject,
+                "run": run,
+                "condition": condition,
+                "alignment": alignment,
+                "method": method,
+                "trial_index": trial_idx,
+                "n_times": int(stc.data.shape[-1]),
+            },
+        )
+        rows.append({
+            "trial": trial_idx,
+            "stc_base": str(base),
+            "subject": subject,
+            "run": run,
+            "condition": condition,
+            "alignment": alignment,
+            "method": method,
+        })
+
+    save_table(
+        manifest_path,
+        pd.DataFrame(rows),
+        metadata={
+            "stage": "source_reconstruction",
+            "kind": "source_estimate_manifest",
+            "subject": subject,
+            "run": run,
+            "condition": condition,
+            "alignment": alignment,
+            "method": method,
+            "n_trials": len(rows),
+        },
+    )
+    return str(manifest_path)
 
 def compute_noise_covariance(
     noise_raw_path: str,

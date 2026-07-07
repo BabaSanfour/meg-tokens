@@ -1,117 +1,118 @@
-import os
+"""Plot dPCA component derivatives saved by ``batch_dpca --analysis dpca``."""
+
+from __future__ import annotations
+
 import argparse
-import numpy as np
+import itertools
+from pathlib import Path
+from typing import Optional, Sequence
+
+import matplotlib
+
+matplotlib.use("Agg", force=True)
+
 import matplotlib.pyplot as plt
+import numpy as np
 import seaborn as sns
 
+from meg_tokens.io import ensure_dir, load_array
+
+
+def _component_paths(component_paths: Optional[Sequence[str]], dpca_dir: Optional[str]) -> list[Path]:
+    if component_paths:
+        return [Path(path) for path in component_paths]
+    if dpca_dir is None:
+        raise ValueError("Either component_paths or dpca_dir is required")
+    paths = sorted(Path(dpca_dir).glob("**/*_dpca*components.npy"))
+    if not paths:
+        raise FileNotFoundError(f"No dPCA component derivatives found under {dpca_dir}")
+    return paths
+
+
 def run_batch_plot_dpca(
-    dpca_prefix: str,
-    output_dir: str,
-    time_step: float = 50.0,
-    time_offset: float = -1000.0,
-    n_components_to_plot: int = 3
-):
-    """
-    Plots the top Demixed Principal Components (dPCA) and their significance masks.
-    
-    This replaces the legacy '092_Mixed_PCA_PLOT.ipynb' scratchpad with a formal 
-    automated tool that dynamically iterates over all marginalized dimensions.
-    """
-    print(f"=== Starting dPCA Visualization ===")
-    
-    if not os.path.exists(output_dir):
-        os.makedirs(output_dir)
-        
+    component_paths: Optional[Sequence[str]] = None,
+    output_dir: str = "figures/dpca",
+    *,
+    dpca_dir: Optional[str] = None,
+    n_components_to_plot: int = 3,
+) -> list[Path]:
+    """Plot one or more sidecar-backed dPCA component arrays."""
+    print("=== Starting dPCA Visualization ===")
+    output_path = ensure_dir(output_dir)
     sns.set_theme(style="whitegrid", context="paper", palette="deep")
-    
-    print(f"Loading dPCA results from prefix: {dpca_prefix}")
-    try:
-        components = np.load(f"{dpca_prefix}_components.npy", allow_pickle=True).item()
-        masks = np.load(f"{dpca_prefix}_signif_masks.npy", allow_pickle=True).item()
-    except FileNotFoundError:
-        print(f"Error: Could not find dPCA result files matching prefix '{dpca_prefix}'")
-        return
-        
-    for key, Z in components.items():
-        print(f"Plotting marginalization '{key}'...")
-        
-        # Z shape is (n_components, dim1, dim2, ..., n_times)
-        # We want to plot the first N components.
-        n_times = Z.shape[-1]
-        times = np.arange(n_times) * time_step + time_offset
-        
-        n_dims = len(Z.shape) - 2 # Subtract components and time axes
-        mask_array = masks.get(key, None)
-        
-        for comp_idx in range(min(n_components_to_plot, Z.shape[0])):
+
+    saved = []
+    for component_path in _component_paths(component_paths, dpca_dir):
+        loaded = load_array(component_path, require_sidecar=True)
+        values = np.asarray(loaded.data, dtype=float)
+        dims = list(loaded.metadata.get("dims", []))
+        coords = loaded.metadata.get("coords", {})
+        stage_meta = loaded.metadata.get("metadata", {})
+        if not dims or dims[0] != "component" or dims[-1] != "time":
+            raise ValueError(f"Expected component x ... x time dPCA array, got dims={dims} in {component_path}")
+
+        times = np.asarray(coords.get("time_sec", np.arange(values.shape[-1])), dtype=float)
+        if times.shape[0] != values.shape[-1]:
+            raise ValueError(f"time coordinate length does not match dPCA data in {component_path}")
+        time_label = "Time (s)" if "time_sec" in coords else "Time sample"
+        marginalization = stage_meta.get("marginalization", component_path.stem)
+
+        condition_shape = values.shape[1:-1]
+        condition_dims = dims[1:-1]
+        condition_coords = [coords.get(dim, list(range(size))) for dim, size in zip(condition_dims, condition_shape)]
+
+        for comp_idx in range(min(n_components_to_plot, values.shape[0])):
             fig, ax = plt.subplots(figsize=(10, 6))
-            
-            # Collapse all condition dimensions into a single list of 1D arrays for plotting
-            import itertools
-            condition_shapes = Z.shape[1:-1]
-            if n_dims > 0:
-                for idxs in itertools.product(*[range(d) for d in condition_shapes]):
-                    slice_idx = (comp_idx,) + idxs + (slice(None),)
-                    time_course = Z[slice_idx]
-                    
-                    label = f"Condition {idxs}"
-                    ax.plot(times, time_course, label=label, lw=2, alpha=0.8)
+            if condition_shape:
+                for idxs in itertools.product(*[range(size) for size in condition_shape]):
+                    selector = (comp_idx, *idxs, slice(None))
+                    label_bits = [
+                        f"{dim}={condition_coords[pos][idx]}"
+                        for pos, (dim, idx) in enumerate(zip(condition_dims, idxs))
+                    ]
+                    ax.plot(times, values[selector], label=", ".join(label_bits), lw=2, alpha=0.85)
             else:
-                # E.g., for pure time 't' component
-                time_course = Z[comp_idx, :]
-                ax.plot(times, time_course, label="Main Effect", lw=2, color='black')
-                
-            # Plot significance mask if available
-            if mask_array is not None:
-                comp_mask = mask_array[comp_idx] # boolean array over time
-                
-                # Extract contiguous blocks of True
-                sig_indices = np.where(comp_mask)[0]
-                if len(sig_indices) > 0:
-                    # Find jumps to define blocks
-                    breaks = np.where(np.diff(sig_indices) > 1)[0]
-                    splits = np.split(sig_indices, breaks + 1)
-                    
-                    for block in splits:
-                        start_time = times[block[0]]
-                        end_time = times[block[-1]]
-                        ax.axvspan(start_time, end_time, color='gray', alpha=0.2)
-                        
-                    ax.plot([], [], color='gray', alpha=0.2, linewidth=10, label='Significant (p<0.05)')
-                    
-            ax.set_title(f"dPCA Marginalization '{key}' - Component {comp_idx+1}", fontsize=14)
-            ax.set_xlabel("Time (ms)", fontsize=12)
-            ax.set_ylabel("Component Amplitude (A.U.)", fontsize=12)
-            ax.axvline(0, color='black', linestyle='--', alpha=0.5)
-            
-            # Only show legend if not too many conditions
-            if n_dims > 0 and np.prod(condition_shapes) <= 12:
-                handles, labels = ax.get_legend_handles_labels()
-                by_label = dict(zip(labels, handles))
-                ax.legend(by_label.values(), by_label.keys(), loc='best')
-                
+                ax.plot(times, values[comp_idx], label="Main effect", lw=2, color="black")
+
+            ax.axvline(0, color="black", linestyle="--", alpha=0.5)
+            ax.set_title(f"dPCA {marginalization} component {comp_idx + 1}")
+            ax.set_xlabel(time_label)
+            ax.set_ylabel("Component amplitude")
+            if condition_shape and int(np.prod(condition_shape)) <= 12:
+                ax.legend(loc="best")
             sns.despine(ax=ax)
-            
-            out_file = os.path.join(output_dir, f"dpca_{key}_comp{comp_idx+1}.png")
-            plt.savefig(out_file, dpi=300, bbox_inches='tight')
-            plt.close()
-            
-    print(f"Saved all dPCA component plots to {output_dir}")
+
+            save_path = output_path / f"{component_path.stem}_component-{comp_idx + 1}.png"
+            fig.savefig(save_path, dpi=300, bbox_inches="tight")
+            plt.close(fig)
+            saved.append(save_path)
+            print(f"Saved dPCA component plot: {save_path}")
+
+    return saved
+
+
+def build_arg_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Plot dPCA component derivatives.")
+    parser.add_argument("--component_paths", type=str, nargs="+", default=None,
+                        help="One or more *_dpca*components.npy files written by batch_dpca.")
+    parser.add_argument("--dpca_dir", type=str, default=None,
+                        help="Directory to search recursively for dPCA component derivatives.")
+    parser.add_argument("--out_dir", type=str, required=True,
+                        help="Directory to save plots.")
+    parser.add_argument("--n_components", type=int, default=3,
+                        help="Number of components to plot per marginalization.")
+    return parser
+
+
+def main(argv: Optional[Sequence[str]] = None) -> None:
+    args = build_arg_parser().parse_args(argv)
+    run_batch_plot_dpca(
+        component_paths=args.component_paths,
+        dpca_dir=args.dpca_dir,
+        output_dir=args.out_dir,
+        n_components_to_plot=args.n_components,
+    )
+
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Plot Demixed PCA (dPCA) Components")
-    parser.add_argument("--dpca_prefix", type=str, required=True,
-                        help="Path prefix to the saved dPCA .npy files")
-    parser.add_argument("--out_dir", type=str, default='./figures/dpca/',
-                        help="Directory to save the plots")
-    parser.add_argument("--n_components", type=int, default=3,
-                        help="Number of components to plot per marginalization")
-    parser.add_argument("--time_step", type=float, default=50.0,
-                        help="Time step between samples in ms")
-    parser.add_argument("--time_offset", type=float, default=-1000.0,
-                        help="Time offset for the first sample in ms")
-    
-    args = parser.parse_args()
-    run_batch_plot_dpca(
-        args.dpca_prefix, args.out_dir, args.time_step, args.time_offset, args.n_components
-    )
+    main()

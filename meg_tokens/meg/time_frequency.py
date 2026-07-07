@@ -1,15 +1,8 @@
-"""
-Time-frequency spectrograms and power analysis for MEG and source-space data.
-
-Note on future additions (Stage 10 - Functional Connectivity):
-- Alpha-Band Seed Connectivity was prototyped in legacy notebooks:
-  `archive/replicated/DDM_scripts/scripts_new/Untitled10.ipynb` and `Untitled6.ipynb`
-- Cross-Frequency Coupling (CFC) via `brainpipe` was prototyped in:
-  `archive/replicated/DDM_analysis_scripts/Untitled.ipynb`
-"""
+"""Time-frequency, Hilbert, and band-power analysis helpers."""
 
 import numpy as np
 import mne
+from scipy.signal import hilbert
 
 DEFAULT_BANDS = {
     'delta': (2, 4),
@@ -19,6 +12,16 @@ DEFAULT_BANDS = {
     'gamma_low': (30, 60),
     'gamma_high': (60, 90)
 }
+
+SOURCE_ESTIMATE_TYPES = (
+    mne.SourceEstimate,
+    mne.VectorSourceEstimate,
+    mne.VolSourceEstimate,
+    mne.VolVectorSourceEstimate,
+    mne.MixedSourceEstimate,
+    mne.MixedVectorSourceEstimate,
+)
+
 
 def _slide_window(power_data: np.ndarray, width: int, step: int) -> np.ndarray:
     """
@@ -45,6 +48,118 @@ def _slide_window(power_data: np.ndarray, width: int, step: int) -> np.ndarray:
         out[..., idx] = np.mean(power_data[..., start : start + width], axis=-1)
     return out
 
+
+def compute_window_times(tmin: float, sfreq: float, n_times: int, width: int, step: int) -> np.ndarray:
+    """Return center times for the sliding windows used by `_slide_window`."""
+    if width <= 0:
+        raise ValueError("width must be a positive integer")
+    if step <= 0:
+        raise ValueError("step must be a positive integer")
+    if n_times <= width:
+        center = (n_times - 1) / 2.0
+        return np.array([tmin + center / sfreq])
+    starts = np.arange(0, n_times - width + 1, step)
+    centers = starts + ((width - 1) / 2.0)
+    return tmin + centers / sfreq
+
+
+def _hilbert_power_array(
+    raw_data: np.ndarray,
+    sfreq: float,
+    fmin: float,
+    fmax: float,
+    n_jobs: int = 1,
+) -> np.ndarray:
+    """Filter data along the last axis and return squared Hilbert envelope."""
+    orig_shape = raw_data.shape
+    flat = raw_data.astype(np.float64, copy=False).reshape(-1, orig_shape[-1])
+    filtered = mne.filter.filter_data(
+        flat,
+        sfreq=sfreq,
+        l_freq=fmin,
+        h_freq=fmax,
+        n_jobs=n_jobs,
+        verbose=False,
+    )
+    envelope = np.abs(hilbert(filtered, axis=-1)) ** 2
+    return envelope.reshape(orig_shape)
+
+
+def compute_hilbert_band_features(
+    data: np.ndarray,
+    sfreq: float,
+    freq_bands: dict[str, tuple[float, float]] | None = None,
+    *,
+    features: tuple[str, ...] | list[str] = ("amplitude", "power", "phase", "sigfilt"),
+    n_jobs: int = 1,
+) -> dict[str, dict[str, np.ndarray]]:
+    """Return Hilbert features for each frequency band.
+
+    Parameters
+    ----------
+    data
+        Numeric array with time on the last axis. The input shape is preserved
+        in every output array.
+    sfreq
+        Sampling rate in Hz.
+    freq_bands
+        Mapping from band name to ``(fmin, fmax)`` in Hz.
+    features
+        Any of ``amplitude``, ``power``, ``phase``, and ``sigfilt``. ``sigfilt``
+        is the band-filtered signal and mirrors the old Brainpipe output name.
+
+    Returns
+    -------
+    dict
+        ``{band_name: {feature_name: array}}``.
+    """
+    if freq_bands is None:
+        freq_bands = DEFAULT_BANDS
+
+    requested = tuple("sigfilt" if item == "filtered" else item for item in features)
+    valid = {"amplitude", "power", "phase", "sigfilt"}
+    unknown = sorted(set(requested) - valid)
+    if unknown:
+        raise ValueError(f"Unknown Hilbert feature(s): {unknown}. Valid features: {sorted(valid)}")
+
+    values = np.asarray(data, dtype=np.float64)
+    if values.ndim < 2:
+        raise ValueError(f"Hilbert feature input must have at least 2 dimensions, got {values.shape}")
+    if values.shape[-1] < 2:
+        raise ValueError("Hilbert feature input must contain at least two time samples")
+    if sfreq <= 0:
+        raise ValueError("sfreq must be positive")
+
+    orig_shape = values.shape
+    flat = values.reshape(-1, orig_shape[-1])
+    out: dict[str, dict[str, np.ndarray]] = {}
+
+    for band_name, (fmin, fmax) in freq_bands.items():
+        if fmin <= 0 or fmax <= fmin:
+            raise ValueError(f"Band {band_name!r} must satisfy 0 < fmin < fmax")
+        filtered = mne.filter.filter_data(
+            flat,
+            sfreq=float(sfreq),
+            l_freq=float(fmin),
+            h_freq=float(fmax),
+            n_jobs=n_jobs,
+            verbose=False,
+        )
+        analytic = hilbert(filtered, axis=-1)
+        amplitude = np.abs(analytic)
+        band_out: dict[str, np.ndarray] = {}
+        if "sigfilt" in requested:
+            band_out["sigfilt"] = filtered.reshape(orig_shape)
+        if "amplitude" in requested:
+            band_out["amplitude"] = amplitude.reshape(orig_shape)
+        if "power" in requested:
+            band_out["power"] = (amplitude ** 2).reshape(orig_shape)
+        if "phase" in requested:
+            band_out["phase"] = np.angle(analytic).reshape(orig_shape)
+        out[band_name] = band_out
+
+    return out
+
 def compute_band_power(
     data,
     sfreq: float,
@@ -63,7 +178,7 @@ def compute_band_power(
     Args:
         data: input data. Can be a numpy array of shape (n_channels, n_times) or 
               (n_channels, n_trials, n_times), or MNE Epochs, SourceEstimate, or 
-              VectorSourceEstimate.
+              MNE source-estimate subclass.
         sfreq: Sampling frequency in Hz.
         freq_bands: Dict mapping band name (str) to tuple (fmin, fmax). If None, uses DEFAULT_BANDS.
         method: Power computation method. Options: 'hilbert', 'morlet', 'multitaper'.
@@ -81,7 +196,12 @@ def compute_band_power(
         freq_bands = DEFAULT_BANDS
 
     # Determine input type and extract raw numpy data array
-    is_mne_stc = isinstance(data, (mne.SourceEstimate, mne.VectorSourceEstimate))
+    if width <= 0:
+        raise ValueError("width must be a positive integer")
+    if step <= 0:
+        raise ValueError("step must be a positive integer")
+
+    is_mne_stc = isinstance(data, SOURCE_ESTIMATE_TYPES)
     is_mne_epochs = isinstance(data, mne.BaseEpochs)
     
     if is_mne_stc:
@@ -94,6 +214,7 @@ def compute_band_power(
         sfreq = data.info['sfreq']
     elif isinstance(data, np.ndarray):
         raw_data = data
+        tmin = 0.0
     else:
         raise TypeError("Unsupported data type. Expected np.ndarray, mne.Epochs, or mne.SourceEstimate.")
 
@@ -112,33 +233,7 @@ def compute_band_power(
 
     for band_name, (fmin, fmax) in freq_bands.items():
         if method == 'hilbert':
-            if isinstance(data, mne.VectorSourceEstimate):
-                raise TypeError(
-                    "Hilbert method is not supported on VectorSourceEstimate "
-                    "due to an indexing limitation in MNE-Python's native apply_hilbert. "
-                    "This will be addressed in a future update."
-                )
-            if not (is_mne_stc or is_mne_epochs):
-                raise TypeError("Hilbert method is only supported on MNE Epochs or SourceEstimate objects.")
-
-            # Use native MNE objects to filter and apply hilbert
-            mne_obj = data.copy()
-            if hasattr(mne_obj, 'load_data') and not mne_obj.preload:
-                mne_obj.load_data()
-            # 1. Filter
-            mne_obj.filter(fmin, fmax, n_jobs=n_jobs, verbose=False)
-            # 2. Apply Hilbert envelope
-            mne_obj.apply_hilbert(envelope=True, n_jobs=n_jobs, verbose=False)
-            # 3. Get power (envelope squared)
-            if is_mne_stc:
-                power = mne_obj.data ** 2
-                power = power[:, np.newaxis, :]
-            else:
-                power = mne_obj.get_data() ** 2
-                # Swap axes to match (n_channels, n_epochs, n_times)
-                power = np.swapaxes(power, 0, 1)
-                
-            # Apply sliding window average
+            power = _hilbert_power_array(raw_data, sfreq, fmin, fmax, n_jobs=n_jobs)
             power_downsampled = _slide_window(power, width, step)
             
         elif method in ('morlet', 'multitaper'):
@@ -185,25 +280,17 @@ def compute_band_power(
             if is_mne_stc:
                 # Calculate new tmin (center of the first window) and tstep
                 dt = 1.0 / sfreq
-                new_tmin = tmin + ((width - 1) / 2.0) * dt
+                actual_width = min(width, n_times)
+                new_tmin = tmin + ((actual_width - 1) / 2.0) * dt
                 new_tstep = step * dt
                 
-                if isinstance(data, mne.VectorSourceEstimate):
-                    results[band_name] = mne.VectorSourceEstimate(
-                        power_downsampled,
-                        vertices=data.vertices,
-                        tmin=new_tmin,
-                        tstep=new_tstep,
-                        subject=data.subject
-                    )
-                else:
-                    results[band_name] = mne.SourceEstimate(
-                        power_downsampled,
-                        vertices=data.vertices,
-                        tmin=new_tmin,
-                        tstep=new_tstep,
-                        subject=data.subject
-                    )
+                results[band_name] = data.__class__(
+                    power_downsampled,
+                    vertices=data.vertices,
+                    tmin=new_tmin,
+                    tstep=new_tstep,
+                    subject=data.subject
+                )
             elif is_mne_epochs:
                 # Swap back to (n_epochs, n_channels, n_windows)
                 epochs_power_data = np.swapaxes(power_downsampled, 0, 1)
@@ -214,7 +301,8 @@ def compute_band_power(
                     ch_types=data.get_channel_types()
                 )
                 dt = 1.0 / sfreq
-                new_tmin = data.tmin + ((width - 1) / 2.0) * dt
+                actual_width = min(width, n_times)
+                new_tmin = data.tmin + ((actual_width - 1) / 2.0) * dt
                 results[band_name] = mne.EpochsArray(
                     epochs_power_data,
                     info,
@@ -309,106 +397,118 @@ def compute_psd(
     n_overlap: int = 150,
     n_jobs: int = 1
 ) -> tuple:
-    """
-    Computes the Power Spectral Density (PSD) for MNE Epochs.
-    
-    Args:
-        epochs: MNE Epochs object.
-        fmin: Minimum frequency of interest.
-        fmax: Maximum frequency of interest.
-        method: 'welch' or 'multitaper'.
-        n_fft: The length of FFT used for the Welch method.
-        n_overlap: The number of points of overlap between segments for Welch.
-        n_jobs: Number of parallel jobs.
-        
-    Returns:
-        tuple: (psds, freqs)
-            psds: array of shape (n_epochs, n_channels, n_freqs)
-            freqs: array of frequencies
-    """
+    """Compute PSD for an MNE Epochs object using modern MNE APIs."""
+    if not isinstance(epochs, mne.BaseEpochs):
+        raise TypeError("epochs must be an MNE Epochs object")
+    if fmax <= fmin:
+        raise ValueError("fmax must be greater than fmin")
+
     if method == 'welch':
-        from mne.time_frequency import psd_welch
-        psds, freqs = psd_welch(
-            epochs, fmin=fmin, fmax=fmax, n_fft=n_fft, 
-            n_overlap=n_overlap, n_jobs=n_jobs, average='median'
+        if n_fft <= 0:
+            raise ValueError("n_fft must be positive")
+        if n_overlap < 0:
+            raise ValueError("n_overlap must be non-negative")
+        n_times = len(epochs.times)
+        fft = min(int(n_fft), n_times)
+        overlap = min(int(n_overlap), max(0, fft - 1))
+        spectrum = epochs.compute_psd(
+            method="welch",
+            fmin=fmin,
+            fmax=fmax,
+            n_fft=fft,
+            n_overlap=overlap,
+            n_jobs=n_jobs,
+            verbose=False,
         )
     elif method == 'multitaper':
-        from mne.time_frequency import psd_multitaper
-        psds, freqs = psd_multitaper(
-            epochs, fmin=fmin, fmax=fmax, n_jobs=n_jobs
+        spectrum = epochs.compute_psd(
+            method="multitaper",
+            fmin=fmin,
+            fmax=fmax,
+            n_jobs=n_jobs,
+            verbose=False,
         )
     else:
         raise ValueError(f"Unknown PSD method: {method}")
-        
-    return psds, freqs
+
+    return np.asarray(spectrum.get_data()), np.asarray(spectrum.freqs)
+
+
+def fit_specparam(
+    freqs: np.ndarray,
+    spectra: np.ndarray,
+    peak_width_limits: tuple[float, float] = (1.0, 10.0),
+    min_peak_height: float = 0.1,
+    max_n_peaks: int = 6,
+    peak_threshold: float = 2.0,
+    freq_range: tuple[float, float] | None = None,
+    aperiodic_mode: str = "fixed",
+    n_jobs: int = 1,
+    verbose: bool = False,
+):
+    """Fit specparam spectral parameterization to one or more spectra."""
+    try:
+        from specparam import SpectralGroupModel, SpectralModel
+    except ImportError:
+        raise ImportError("specparam is required for spectral parameterization.")
+
+    freq_values = np.asarray(freqs, dtype=float)
+    spectrum_values = np.asarray(spectra, dtype=float)
+    if freq_values.ndim != 1:
+        raise ValueError("freqs must be one-dimensional")
+    if spectrum_values.shape[-1] != freq_values.size:
+        raise ValueError("spectra last dimension must match freqs")
+    if not np.all(np.isfinite(spectrum_values)):
+        raise ValueError("specparam requires finite spectra")
+    if np.any(spectrum_values <= 0):
+        raise ValueError("specparam requires strictly positive spectra")
+
+    if freq_range is None:
+        freq_range = (float(freq_values[0]), float(freq_values[-1]))
+
+    settings = dict(
+        aperiodic_mode=aperiodic_mode,
+        peak_width_limits=peak_width_limits,
+        min_peak_height=min_peak_height,
+        max_n_peaks=max_n_peaks,
+        peak_threshold=peak_threshold,
+        verbose=verbose,
+    )
+
+    if spectrum_values.ndim == 1:
+        model = SpectralModel(**settings)
+        model.fit(freq_values, spectrum_values, list(freq_range))
+        return model
+    if spectrum_values.ndim == 2:
+        model = SpectralGroupModel(**settings)
+        model.fit(freq_values, spectrum_values, list(freq_range), n_jobs=n_jobs)
+        return model
+    if spectrum_values.ndim == 3:
+        leading_shape = spectrum_values.shape[:-1]
+        flat = spectrum_values.reshape(-1, spectrum_values.shape[-1])
+        model = SpectralGroupModel(**settings)
+        model.fit(freq_values, flat, list(freq_range), n_jobs=n_jobs)
+        model.input_shape = leading_shape
+        return model
+    raise ValueError("spectra must be 1D, 2D, or 3D")
 
 
 def fit_fooof(
     freqs: np.ndarray,
     spectra: np.ndarray,
-    peak_width_limits: list = [1, 10],
+    peak_width_limits: tuple[float, float] = (1.0, 10.0),
     min_peak_height: float = 0.1,
     max_n_peaks: int = 6,
     peak_threshold: float = 2.0,
-    freq_range: list = None
+    freq_range: tuple[float, float] | None = None,
 ):
-    """
-    Fits the FOOOF (Fitting Oscillations & One Over F) model to extract 
-    aperiodic and periodic components of the power spectrum.
-    
-    Args:
-        freqs: 1D array of frequencies.
-        spectra: 1D, 2D (n_spectra, n_freqs), or 3D array of power spectra.
-                 If 3D, it will be collapsed or processed iteratively depending on shape.
-        peak_width_limits: Limits on possible peak widths.
-        min_peak_height: Minimum absolute height of a peak.
-        max_n_peaks: Maximum number of peaks to fit.
-        peak_threshold: Relative threshold for detecting peaks.
-        freq_range: Range of frequencies to fit, e.g. [1, 100].
-        
-    Returns:
-        FOOOFGroup or FOOOF object with the fitted model.
-    """
-    try:
-        from fooof import FOOOF, FOOOFGroup
-        from fooof.objs import fit_fooof_3d
-    except ImportError:
-        raise ImportError("FOOOF is not installed. Please install it via 'pip install fooof'.")
-        
-    if freq_range is None:
-        freq_range = [freqs[0], freqs[-1]]
-        
-    if spectra.ndim == 1:
-        # Single spectrum
-        fm = FOOOF(
-            peak_width_limits=peak_width_limits, 
-            min_peak_height=min_peak_height,
-            max_n_peaks=max_n_peaks, 
-            peak_threshold=peak_threshold
-        )
-        fm.fit(freqs, spectra, freq_range)
-        return fm
-        
-    elif spectra.ndim == 2:
-        # Group of spectra
-        fg = FOOOFGroup(
-            peak_width_limits=peak_width_limits, 
-            min_peak_height=min_peak_height,
-            max_n_peaks=max_n_peaks, 
-            peak_threshold=peak_threshold
-        )
-        fg.fit(freqs, spectra, freq_range)
-        return fg
-        
-    elif spectra.ndim == 3:
-        # 3D array: (n_groups, n_spectra, n_freqs)
-        fg = FOOOFGroup(
-            peak_width_limits=peak_width_limits, 
-            min_peak_height=min_peak_height,
-            max_n_peaks=max_n_peaks, 
-            peak_threshold=peak_threshold
-        )
-        fgs = fit_fooof_3d(fg, freqs, spectra, freq_range=freq_range)
-        return fgs
-    else:
-        raise ValueError("Spectra must be 1D, 2D, or 3D.")
+    """Compatibility wrapper around :func:`fit_specparam`."""
+    return fit_specparam(
+        freqs,
+        spectra,
+        peak_width_limits=peak_width_limits,
+        min_peak_height=min_peak_height,
+        max_n_peaks=max_n_peaks,
+        peak_threshold=peak_threshold,
+        freq_range=freq_range,
+    )

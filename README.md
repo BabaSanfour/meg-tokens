@@ -1,6 +1,6 @@
-# MEG/iEEG Tokens Task Analysis (DDM Project)
+# MEG Tokens Task Analysis (DDM Project)
 
-This repository contains the analysis scripts and a clean, refactored Python library for investigating decision-making dynamics using the **Tokens Task** paired with Magnetoencephalography (MEG) and Intracranial EEG (iEEG).
+This repository contains the analysis scripts and a refactored Python library for investigating decision-making dynamics using the **Tokens Task** paired with Magnetoencephalography (MEG). iEEG notebooks in the archive are out of scope for this refactor.
 
 ## 🗂️ Project Structure
 
@@ -9,6 +9,7 @@ This repository contains the analysis scripts and a clean, refactored Python lib
     *   `meg/`: Modules for neural data preprocessing, ICA, and source localization.
     *   `utils/`: Helpers for reading TDMS files and I/O.
 *   **`tests/`**: Unit tests.
+*   **`docs/`**: Data contracts and refactor notes, including the strict one-row-per-file legacy mapping in [`docs/legacy_traceability.md`](docs/legacy_traceability.md).
 *   **`pyproject.toml`**: Metadata and dependency configuration for the python package.
 *   **`archive/`**: Contains the raw, unorganized scripts copied from the external drives:
     *   `DDM_scripts/`: Python/Jupyter notebooks (`scripts_new/`) and Matlab scripts (`matlab_scripts/`) copied from the `DDM_scripts` partition.
@@ -20,7 +21,7 @@ The analysis pipeline is designed to be executed sequentially from raw data inge
 
 | Step | Stage | Module | Purpose |
 | :--- | :--- | :--- | :--- |
-| **1** | **Behavioral Log Parsing** | [`tdms_parser.py`](meg_tokens/utils/tdms_parser.py) | Parses raw LabVIEW `.tdms` logs into tabular CSV format. |
+| **1** | **Behavioral Log Parsing** | [`tdms_parser.py`](meg_tokens/utils/tdms_parser.py) | Parses raw LabVIEW `.tdms` logs into BIDS-derivatives-style behavior TSV tables with JSON sidecars. |
 | **2** | **Behavioral Metrics Extraction** | [`analysis.py`](meg_tokens/behavior/analysis.py) | Computes choice RTs, accuracy, difficulty levels, and formats behavioral variables. |
 | **3** | **Behavioral Performance Plotting** | [`plotting.py`](meg_tokens/behavior/plotting.py) | Renders performance diagnostics, psychometric response curves, and RT distributions. |
 | **4** | **MEG Preprocessing & Filtering** | [`preprocessing.py`](meg_tokens/meg/preprocessing.py) | Loads raw CTF MEG, applies filters, performs ICA decomposition, and coregisters head points. |
@@ -28,7 +29,7 @@ The analysis pipeline is designed to be executed sequentially from raw data inge
 | **6** | **Pipeline Automation & Batching** | [`batch_processor.py`](meg_tokens/utils/batch_processor.py) | Automates steps 1-5 in batch across blocks, runs, and subjects. |
 | **7** | **Neural Source Localization** | [`sources.py`](meg_tokens/meg/sources.py) | Computes noise covariance, BEM models, sets up source spaces, and applies minimum-norm inverses. |
 | **8** | **Source-Space Time-Frequency Power** | [`time_frequency.py`](meg_tokens/meg/time_frequency.py) | Extracts spectrograms (theta, alpha, beta, gamma) from source estimates using Morlet/multitapers. |
-| **9** | **ERP Slicing, Parcellation, & Export** | [`erp.py`](meg_tokens/meg/erp.py) | Truncates trial waveforms, pads with NaNs, parcellates using cortical atlases, and exports to Numpy/MATLAB. |
+| **9** | **ERP Slicing, Parcellation, & Export** | [`erp.py`](meg_tokens/meg/erp.py) | Truncates trial waveforms, pads with NaNs, parcellates using cortical atlases, and exports `.npy` arrays with JSON sidecars. |
 | **10** | **Group Statistics & Permutations** | [`stats.py`](meg_tokens/meg/stats.py) | Computes non-parametric permutation t-tests and spatio-temporal cluster significance. |
 
 ## 💾 Data Locations
@@ -42,9 +43,9 @@ The analysis pipeline is designed to be executed sequentially from raw data inge
 *   **Behavioral Logs (TDMS)**
     *   `[cc197cfe-12fc-4d55-b0a8-4f52a93ef003 Drive] /media/karim/cc197cfe-12fc-4d55-b0a8-4f52a93ef003/DDM/tdms/`
     *   Contains LabVIEW behavioral event logs for all 32 subjects (`H1` to `H32`).
-*   **Behavioral Dataframes (CSVs)**
-    *   `[cc197cfe-12fc-4d55-b0a8-4f52a93ef003 Drive] /media/karim/cc197cfe-12fc-4d55-b0a8-4f52a93ef003/DDM/dataframes/`
-    *   Contains extracted behavior variables exported as CSV files.
+*   **Parsed Behavioral Derivatives**
+    *   Choose a BIDS derivatives root, for example `/path/to/tokens-bids/`.
+    *   Stage 1 writes tables such as `derivatives/meg-tokens/sub-H01/beh/sub-H01_task-tokens_run-1_desc-slow_beh.tsv`.
 
 ---
 *Note: This repository was refactored and organized starting 2026-06-25.*
@@ -54,15 +55,19 @@ The analysis pipeline is designed to be executed sequentially from raw data inge
 The legacy scripts for extracting data, slicing ERPs, computing sources, and extracting power have all been unified into parameterized batch scripts located in `meg_tokens/utils/`. You can run them directly from your terminal.
 
 ### Stage 1: TDMS Behavioral Extraction
-Extracts trial-by-trial logs from the raw LabVIEW directories into clean CSVs.
+Extracts trial-by-trial logs from the raw LabVIEW directories into behavior TSV derivatives with JSON sidecars.
 ```bash
-python -m meg_tokens.utils.batch_processor --input_dir /path/to/tdms/ --output_dir /path/to/dataframes/
+python -m meg_tokens.utils.batch_processor --input_dir /path/to/tdms/ --output_dir /path/to/tokens-bids/
 ```
 
 ### Stage 2: Epoch Extraction & Alignment
-Filters raw continuous MEG data and slices it into event-locked trial epochs.
+Filters raw continuous MEG data and slices it into event-locked trial epochs. Epoching consumes Stage 1 behavior TSV derivatives and cleaned/filtered raw FIF derivatives.
 ```bash
-python -m meg_tokens.utils.batch_epochs --align_to go --subjects H01 H02
+python -m meg_tokens.utils.batch_preprocess --raw_path /path/to/H01Slow1.ds --out_dir /path/to/tokens-bids/ --subject H01 --run Slow1
+```
+
+```bash
+python -m meg_tokens.utils.batch_epochs --align_to go --subjects H01 H02 --raw_dir /path/to/tokens-bids/ --behavior_dir /path/to/tokens-bids/ --out_dir /path/to/tokens-bids/
 ```
 
 ### Stage 3: Behavioral Distributions & Metrics Plotting
@@ -72,47 +77,142 @@ python -m meg_tokens.utils.batch_plot_behavior --subjects H01 H02 H03
 ```
 
 ### Stage 4: Neural Source Localization
-Builds BEM solutions, noise covariances, and source spaces for each subject.
+Builds noise covariance, BEM, source-space, forward, inverse, and trial source-estimate derivatives for each subject.
 ```bash
-python -m meg_tokens.utils.batch_sources --subjects H01 H02 --spacing oct6
+python -m meg_tokens.utils.batch_sources \
+  --subjects H01 H02 \
+  --raw_dir /path/to/raw-or-noise/ \
+  --epochs_dir /path/to/tokens-bids/ \
+  --trans_dir /path/to/trans-files/ \
+  --subjects_dir /path/to/freesurfer-subjects/ \
+  --out_dir /path/to/tokens-bids/ \
+  --run Slow1 \
+  --align_to go \
+  --spacing oct6
+```
+
+For legacy deep/volume analyses, request a mixed surface+volume source space
+with FreeSurfer aseg labels. This writes a distinct
+`desc-oct6-mixed_src.fif` derivative.
+
+```bash
+python -m meg_tokens.utils.batch_sources \
+  --subjects H01 \
+  --raw_dir /path/to/raw-or-noise/ \
+  --epochs_dir /path/to/tokens-bids/ \
+  --trans_dir /path/to/trans-files/ \
+  --subjects_dir /path/to/freesurfer-subjects/ \
+  --out_dir /path/to/tokens-bids/ \
+  --run Slow1 \
+  --align_to go \
+  --spacing oct6 \
+  --volume_labels Left-Putamen Right-Putamen Left-Caudate Right-Caudate
 ```
 
 ### Stage 5: Time-Frequency Power Extraction
-Extracts frequency-band power spectrograms from trial epochs using sliding-window Hilbert or Morlet transforms.
+Extracts source-space frequency-band power from the Stage 3 source-estimate manifest using sliding-window Hilbert, Morlet, or multitaper transforms.
 ```bash
-python -m meg_tokens.utils.batch_time_frequency --method hilbert --subjects H01 H02
+python -m meg_tokens.utils.batch_time_frequency \
+  --source_dir /path/to/tokens-bids/ \
+  --out_dir /path/to/tokens-bids/ \
+  --subjects H01 H02 \
+  --run Slow1 \
+  --align_to go \
+  --source_method dSPM \
+  --method hilbert \
+  --bands alpha beta gamma_low \
+  --width 400 \
+  --step 110
 ```
 
-### Stage 5: Power Spectral Density & FOOOF Modeling
-Computes Welch or Multitaper PSD on epochs and fits the FOOOF model to separate periodic and aperiodic components.
+### Stage 5b: Power Spectral Density & Specparam Modeling
+Computes Welch or multitaper PSD on Stage 2 Epochs FIF derivatives and fits `specparam` models to separate periodic and aperiodic spectral structure. The command name keeps the old FOOOF label for compatibility, but the implementation uses `specparam` and writes `.npy`/`.tsv` derivatives with JSON sidecars.
+
 ```bash
-python -m meg_tokens.utils.batch_psd_fooof --subjects H01 H02 H03 --method welch --fmin 1.0 --fmax 100.0
+python -m meg_tokens.utils.batch_psd_fooof \
+  --epochs_dir /path/to/tokens-bids \
+  --out_dir /path/to/tokens-bids \
+  --subjects H01 H02 H03 \
+  --condition Fast \
+  --align_to go \
+  --method welch \
+  --fmin 1.0 \
+  --fmax 100.0
 ```
 
 ### Stage 6: ERP Slicing & Parcellation
-Slices source estimates relative to task events, pads boundaries, and parcellates into cortical atlases.
+Slices Stage 3 source estimates relative to task events, pads Go-aligned trials before response, parcellates into cortical atlases, and writes trial-level `.npy` arrays with aligned trial metadata.
 *(Note: This natively replicates legacy scripts like `08_Decoding_SRC_POWER_Trial_types_time_Trial_Types.py` that extracted condition-specific Trial Types arrays).*
 ```bash
-python -m meg_tokens.utils.batch_erp_parcellation --align_to go --min_rt_ms 100.0
+python -m meg_tokens.utils.batch_erp_parcellation \
+  --source_dir /path/to/tokens-bids/ \
+  --behavior_dir /path/to/tokens-bids/ \
+  --subjects_dir /path/to/freesurfer-subjects/ \
+  --out_dir /path/to/tokens-bids/ \
+  --subjects H01 H02 \
+  --run Slow1 \
+  --align_to go \
+  --source_method dSPM \
+  --parc HCPMMP1 \
+  --max_duration_samples 400 \
+  --min_rt_ms 100.0
 ```
 
-### Stage 7: Group-Level Statistics (Permutation T-Tests)
-Runs a permutation t-test on the parcellated time courses comparing two conditions.
+All-source and volume source-coordinate exports use the same alignment and
+trial metadata contract:
+
 ```bash
-python -m meg_tokens.utils.batch_group_statistics --conditions Fast Slow --perms 1000
+python -m meg_tokens.utils.batch_erp_parcellation \
+  --source_dir /path/to/tokens-bids/ \
+  --behavior_dir /path/to/tokens-bids/ \
+  --out_dir /path/to/tokens-bids/ \
+  --subjects H01 H02 \
+  --run Slow1 \
+  --align_to go \
+  --source_method dSPM \
+  --feature_space all_source
+```
+
+Use `--feature_space volume` for source estimates produced from mixed or volume
+source spaces.
+
+### Stage 7: Group-Level Statistics (Permutation T-Tests)
+Runs a paired subject-level permutation t-test on Stage 6 parcellated ERP derivatives.
+```bash
+python -m meg_tokens.utils.batch_group_statistics \
+  --erp_dir /path/to/tokens-bids/ \
+  --out_dir /path/to/tokens-bids/ \
+  --conditions Fast Slow \
+  --align_to go \
+  --source_method dSPM \
+  --parc HCPMMP1 \
+  --perms 1000
 ```
 
 ### Stage 7: Statistical Plotting & Correlations
-Generates brain topoplots of the significant t-values, lateralized timecourses (Contra vs Ipsi), and correlates neural peak latencies with behavior. You can run this for any contrast (e.g. Fast/Slow, Correct/Error, or 3+ Trial Types).
+Generates summary tables and selected label time-course figures from Stage 7 group-statistics derivatives. Optional behavior correlations read Stage 1 behavior TSV derivatives.
 ```bash
-# Example 1: Fast vs Slow trials (Brain-Behavior correlations)
-python -m meg_tokens.utils.batch_plot_statistics --conditions Fast Slow
+python -m meg_tokens.utils.batch_plot_statistics \
+  --stats_dir /path/to/tokens-bids/ \
+  --out_dir /path/to/tokens-bids/ \
+  --conditions Fast Slow \
+  --align_to go \
+  --source_method dSPM \
+  --parc HCPMMP1 \
+  --top_n 8
+```
 
-# Example 2: Contralateral minus Ipsilateral motor preparation (Left vs Right choices)
-python -m meg_tokens.utils.batch_plot_statistics --conditions Left Right --lateralized
-
-# Example 3: Multiple conditions (Trial Types: Easy vs Ambiguous vs Misleading)
-python -m meg_tokens.utils.batch_plot_statistics --conditions Easy Ambiguous Misleading
+```bash
+python -m meg_tokens.utils.batch_plot_statistics \
+  --stats_dir /path/to/tokens-bids/ \
+  --out_dir /path/to/tokens-bids/ \
+  --behavior_dir /path/to/tokens-bids/ \
+  --conditions Fast Slow \
+  --align_to go \
+  --source_method dSPM \
+  --parc HCPMMP1 \
+  --labels Label_1-lh Label_2-rh \
+  --correlate_behavior
 ```
 
 > **Tip:** You can append `--help` or `-h` to any of these commands to view all available path override arguments.
@@ -121,316 +221,268 @@ python -m meg_tokens.utils.batch_plot_statistics --conditions Easy Ambiguous Mis
 (Integrated directly into Stage 7 execution output. Automatically generated alongside stats).
 
 ### Stage 9: Time-Resolved MVPA Decoding (Classification)
-Runs native Python inter-subject Machine Learning (Linear Discriminant Analysis) over time using a Sliding Estimator to decode conditions. This replaces all legacy MATLAB LDA scripts and disjointed Python compute scripts.
+Runs time-resolved Linear Discriminant Analysis over Stage 6 ERP/parcellation derivatives or Stage 4 source-power derivatives. Outputs are `.npy` arrays with JSON sidecars plus a decoding time-course figure.
 
 ```bash
-# 1. Decode Fast vs Slow trials (Replaces compute_classif_fast_vs_slow_*)
-python -m meg_tokens.utils.batch_decoding --conditions Fast Slow --alignment enter
-python -m meg_tokens.utils.batch_decoding --conditions Fast Slow --alignment go
+python -m meg_tokens.utils.batch_decoding \
+  --feature_dir /path/to/tokens-bids/ \
+  --out_dir /path/to/tokens-bids/ \
+  --feature_source erp \
+  --conditions Fast Slow \
+  --align_to go \
+  --source_method dSPM \
+  --parc HCPMMP1 \
+  --permutations 100
+```
 
-# 2. Decode Sensory Evidence Parametrically (Replaces compute_classif_sensory_evidence_*)
-python -m meg_tokens.utils.batch_decoding --conditions Easy Ambiguous Misleading --alignment enter
-python -m meg_tokens.utils.batch_decoding --conditions Easy Ambiguous Misleading --alignment go
-
-# 3. Decode Left vs Right Choice (Replaces compute_classif_lh_rh_* & _trial_class_*)
-python -m meg_tokens.utils.batch_decoding --conditions Left Right --alignment enter
-python -m meg_tokens.utils.batch_decoding --conditions Left Right --alignment go
-
-# 4. Decode Baseline vs Task Timecourse (Replaces compute_classif_baseline_*)
-python -m meg_tokens.utils.batch_decoding --compare_to_baseline --alignment enter
-python -m meg_tokens.utils.batch_decoding --compare_to_baseline --alignment go
-
-> **Flexibility: Sensor vs. Source Space & Powerbands**
-> This unified pipeline is entirely agnostic to both the spatial and frequency domains. You can easily switch between them by pointing the `--data_dir` flag to the corresponding extracted features.
-> 
-> ```bash
-> # Example A: Decode on Source Space (Cortical Parcellations)
-> python -m meg_tokens.utils.batch_decoding --conditions Fast Slow --alignment enter --data_dir /path/to/source_space_data/
-> 
-> # Example B: Decode on Sensor Space (Replaces *Classif_in_time*.ipynb)
-> python -m meg_tokens.utils.batch_decoding --conditions Fast Slow --alignment enter --data_dir /path/to/sensor_space_data/
-> 
-> # Example C: Decode on Raw Broadband signal
-> python -m meg_tokens.utils.batch_decoding --conditions Fast Slow --alignment enter --data_dir /path/to/broadband_signal/
-> 
-> # Example D: Decode on isolated Alpha Powerband
-> python -m meg_tokens.utils.batch_decoding --conditions Fast Slow --alignment enter --data_dir /path/to/alpha_power/
-> 
-> # Example E: Spatial Searchlight MVPA (Replaces Da_grp_topoplot*.ipynb & Classif_group_topoplot*.ipynb)
-> # Trains independent univariate LDA classifiers on every sensor and renders a predictive topomap
-> python -m meg_tokens.utils.batch_decoding_topoplot --conditions Fast Slow --permutations 99
-> python -m meg_tokens.utils.batch_decoding_topoplot --conditions Left Right --permutations 99
-> python -m meg_tokens.utils.batch_decoding_topoplot --conditions Correct Error --permutations 99
-> python -m meg_tokens.utils.batch_decoding_topoplot --conditions Easy Difficult --permutations 99
-> # Example F: Multi-Class Decoding (Replicates 08_Decoding_SRC_POWER_arrange_data.ipynb)
-> # Supports any number of conditions natively (e.g. 3-way classifier for Trial Types)
-> python -m meg_tokens.utils.batch_decoding --conditions Easy Ambiguous Misleading --permutations 100
-> 
-> # Example G: Decoding with Permutation Thresholds (Replicates 08_Decoding_SRC_POWER_Baseline_figures.ipynb)
-> # Appending --permutations calculates and plots a rigorous p<0.05 threshold line on the accuracy graph
-> python -m meg_tokens.utils.batch_decoding --compare_to_baseline --permutations 100
-> 
-> # Example H: Decoding Sensory Evidence (Replicates 08_Decoding_SRC_POWER_Sensory_evidence_figures.ipynb)
-> # Passes the Sensory Evidence conditions into the same time-resolved pipeline
-> python -m meg_tokens.utils.batch_decoding --conditions Easy Ambiguous Misleading --alignment enter --permutations 100
-> 
-> # Example I: Spatial Searchlight MVPA on Lateralized Sources (Replicates 09_Test_decoding_local.ipynb)
-> # Computes (Left - Right) hemisphere activity and runs vertex-by-vertex time-resolved classification
-> # This dynamically replaces the heavy cluster-based lateralized spatial decoding scripts.
-> python -m meg_tokens.utils.batch_decoding_lateralized --conditions Easy Ambiguous Misleading --permutations 100
-> 
-> # Example J: Automated Decoding Latency (Onset) Bar Charts (Replicates 09_1st_moment... notebooks)
-> # Extracts the first timepoint where accuracy exceeds the permutation threshold and plots it.
-> python -m meg_tokens.utils.batch_plot_decoding_onset \
->     --scores decoding_scores_Easy.npy decoding_scores_Ambiguous.npy decoding_scores_Misleading.npy \
->     --thresholds decoding_threshold_Easy.npy decoding_threshold_Ambiguous.npy decoding_threshold_Misleading.npy \
->     --names Easy Ambiguous Misleading \
->     --time_offset -1000 --time_step 50
-> # Example K: Time-Resolved ROI MVPA (Replicates 091_Stats_SRC_POWER... scripts)
-> # Extracts data from a predefined parcellation (e.g. HCPMMP1), computes ROI lateralization, 
-> # and runs time-resolved decoding individually per ROI.
-> python -m meg_tokens.utils.batch_decoding_roi --parcellation HCPMMP1 --conditions Easy Ambiguous Misleading --permutations 100
-> ```
-> 
-> > [!TIP]
-> > **Dynamic Behavior Filtering:**
-> > All decoding and stats batch scripts (`batch_stats_lateralized.py`, `batch_decoding_lateralized.py`, `batch_decoding_roi.py`) now support a `--behavior_filter` argument. This fully replaces the legacy `091_` "arrange_data" scripts by allowing you to dynamically slice your data using pandas queries directly on the MNE `Epochs.metadata`!
-> >
-> > Example 2: Run ROI decoding on Post-Error Slowing trials (requires 'previous_error' column in metadata):
-> > ```bash
-> > python -m meg_tokens.utils.batch_decoding_roi --parcellation HCPMMP1 --behavior_filter "previous_error == True"
-> > ```
-> 
-> # Example L: Deep Volume Source Extraction (Replicates 091_...-DEEP.ipynb)
-> # Extracts deep brain volume sources (vertices > 8196) and exports them to MATLAB
-> python -m meg_tokens.utils.batch_extract_deep_sources --condition Easy
-> ```
-> 
-> # Example M: ERP (Time-Domain) ROI Decoding (Replicates 091_...-ERP.ipynb)
-> # By default, batch_decoding_roi loads 'epo.fif' (raw time-domain ERP data). 
-> # You do not need a special flag to replicate the ERP script—just run standard ROI decoding!
-> python -m meg_tokens.utils.batch_decoding_roi --parcellation HCPMMP1 --conditions Easy Ambiguous Misleading
-> ```
-> 
-> **Permutation Testing:** You can append `--permutations 100` to any of the above commands to automatically shuffle the labels and calculate a rigorous `p<0.05` significance threshold overlaid on your decoding accuracy plots.
-
-### Stage 9.5: Visualizing PCA / LDA Models (Replaces all 14 `00_Matlab_loadings_*` variants)
-The legacy pipeline had 14 different `00_Matlab_loadings_brain_transfer_*.ipynb` notebooks hardcoded for specific conditions (e.g. Fast/Slow, Correct/Error, Go/Enter) and spatial ROIs. 
-These have all been unified into Python scripts that read native `.npy` arrays. Below are 4 examples directly replicating the core legacy notebooks:
-
-#### Example 1: PCA Variance Scree Plot (Replicates `00_Matlab_loadings_brain.ipynb`)
-To visualize the cumulative variance explained by your principal components (extracted from `sklearn.decomposition.PCA().explained_variance_ratio_`):
 ```bash
+python -m meg_tokens.utils.batch_decoding \
+  --feature_dir /path/to/tokens-bids/ \
+  --out_dir /path/to/tokens-bids/ \
+  --feature_source power \
+  --conditions Fast Slow \
+  --align_to go \
+  --source_method dSPM \
+  --band alpha \
+  --permutations 100
+```
+
+Trial-metadata decoding, such as sensory-evidence classes inside Fast/Slow runs, uses the Stage 6 `erptrials.tsv` metadata:
+
+```bash
+python -m meg_tokens.utils.batch_decoding \
+  --feature_dir /path/to/tokens-bids/ \
+  --out_dir /path/to/tokens-bids/ \
+  --feature_source erp \
+  --input_conditions Fast Slow \
+  --conditions Easy Ambiguous Misleading \
+  --class_column sTrialClass \
+  --class_values 1 2 3 \
+  --align_to go \
+  --source_method dSPM \
+  --parc HCPMMP1
+```
+
+ROI and lateralized ROI wrappers call the same decoding engine:
+
+```bash
+python -m meg_tokens.utils.batch_decoding_roi \
+  --feature_dir /path/to/tokens-bids/ \
+  --out_dir /path/to/tokens-bids/ \
+  --conditions Fast Slow \
+  --roi Label_1-lh
+
+python -m meg_tokens.utils.batch_decoding_lateralized \
+  --feature_dir /path/to/tokens-bids/ \
+  --out_dir /path/to/tokens-bids/ \
+  --conditions Fast Slow
+```
+
+### Stage 9.5: PCA Trajectories and Loadings
+This replaces the legacy `@nmData` MATLAB PCA trajectory framework (`Neural_space_Thomas_*.m`, `Neural_space_AL_all_sources.m`) and the PCA/LDA plotting notebooks.
+
+The replicated behavior is: load real Stage 4 power or Stage 5 ERP derivatives, optionally select labels/ROIs, average trials into subject-level condition observations by default, fit PCA over condition-by-time samples, project condition means onto shared loadings, and save `.npy`/`.tsv` outputs with JSON sidecars.
+
+```bash
+python -m meg_tokens.utils.batch_dpca \
+  --analysis pca \
+  --feature_dir /path/to/tokens-bids \
+  --out_dir /path/to/tokens-bids \
+  --feature_source erp \
+  --conditions Fast Slow \
+  --subjects H01 H02 H03 \
+  --align_to go \
+  --source_method dSPM \
+  --parc HCPMMP1 \
+  --fit_time_range -1.25 0.70 \
+  --n_components 20
+```
+
+For Stage 4 power derivatives:
+
+```bash
+python -m meg_tokens.utils.batch_dpca \
+  --analysis pca \
+  --feature_dir /path/to/tokens-bids \
+  --out_dir /path/to/tokens-bids \
+  --feature_source power \
+  --conditions Correct Error \
+  --band theta \
+  --align_to feedback \
+  --n_components 15
+```
+
+Useful options: `--labels`, `--lateralize`, `--average_unit trial`, `--transform sqrt` for non-negative power, and `--project_centered` if you explicitly want centered scikit-learn projections instead of the nmData-style raw projection.
+
+The PCA stage writes `*_pcatrajectory.npy`, `*_pcaloadings.npy`, `*_pcavariance.npy`, `*_pcacondmeans.npy`, `*_pcafitscores.npy`, `*_pcafitsamples.tsv`, and `*_pcaobservations.tsv`.
+
+```bash
+python -m meg_tokens.utils.batch_plot_pca_trajectory \
+  --timecourse_path /path/to/sub-group_task-tokens_desc-fast-vs-slow-erp-go-dSPM-HCPMMP1-pca_pcatrajectory.npy \
+  --out_dir /path/to/figures/pca_trajectory \
+  --components 1 2 3
+
+python -m meg_tokens.utils.batch_plot_component_timecourse \
+  --timecourse_path /path/to/sub-group_task-tokens_desc-fast-vs-slow-erp-go-dSPM-HCPMMP1-pca_pcatrajectory.npy \
+  --out_dir /path/to/figures/pca_timecourses \
+  --components 3
+
 python -m meg_tokens.utils.batch_plot_pca_variance \
-    --variance_path /path/to/pca_variance_ratio.npy \
-    --out_dir ./figures/pca_loadings/
+  --variance_path /path/to/sub-group_task-tokens_desc-fast-vs-slow-erp-go-dSPM-HCPMMP1-pca_pcavariance.npy \
+  --out_dir /path/to/figures/pca_variance
 ```
 
-#### Example 2: Temporal Components for Fast vs Slow (Replicates `...-LDA-DEEP.ipynb`, `...-LDA.ipynb`, `...-LDA_PLOT-Copy1.ipynb`, `...-LDA_PLOT.ipynb`, & `..._Confidence_Interval.ipynb`)
-To plot the temporal dynamics (2D line plots) of your extracted PCA/LDA components for Fast vs Slow conditions:
-```bash
-python -m meg_tokens.utils.batch_plot_component_timecourse \
-    --timecourse_path /path/to/component_timecourses.npy \
-    --conditions Fast Slow \
-    --components 3 \
-    --out_dir ./figures/temporal_components/fast_slow/
-```
+For source-space power PCA, loading sidecars carry source vertices when Stage 4 provided them:
 
-#### Example 3: Temporal Components for Correct vs Error (Replicates `...-LDA-Error_Correct.ipynb` & `...-LDA_PLOT-Correct_Error.ipynb`)
-To plot the temporal dynamics for Correct vs Error conditions:
-```bash
-python -m meg_tokens.utils.batch_plot_component_timecourse \
-    --timecourse_path /path/to/component_timecourses.npy \
-    --conditions Correct Error \
-    --components 3 \
-    --out_dir ./figures/temporal_components/correct_error/
-```
-
-#### Example 4: 3D Spatial Maps for ROIs (Replicates `...-LDA-ROIs.ipynb` & `...-LDA_PLOT-Subregions_ROIs.ipynb`)
-To map spatial arrays (e.g., PCA loadings or classifier weights constrained to specific ROIs) onto an MNE PyVista 3D template brain:
 ```bash
 python -m meg_tokens.utils.batch_plot_pca_loadings \
-    --loadings_path /path/to/extracted_roi_spatial_weights.npy \
-    --out_dir ./figures/spatial_weights/rois/
+  --loadings_path /path/to/sub-group_task-tokens_desc-correct-vs-error-power-feedback-dSPM-theta-pca_pcaloadings.npy \
+  --out_dir /path/to/figures/pca_loadings \
+  --subjects_dir /path/to/freesurfer/subjects
 ```
 
-#### Example 5: 3D Spatial Maps for ERPs (Replicates `...-LDA_PLOT-ERP.ipynb`)
-Because the spatial plotting script is agnostic to the data type, you can use the exact same tool to plot pure Event-Related Potential (ERP) spatial arrays (instead of PCA/LDA weights) onto the 3D brain:
-```bash
-python -m meg_tokens.utils.batch_plot_pca_loadings \
-    --loadings_path /path/to/erp_spatial_activation.npy \
-    --out_dir ./figures/erp_spatial_maps/
-```
+### Stage 9.6: Optional Demixed PCA
+`batch_dpca.py --analysis dpca` builds demixed-PCA tensors from real ERP derivatives and their `erptrials.tsv` sidecars. This mode requires the optional Python `dPCA` package.
 
-#### Example 6: 2D Heatmap of PCA Variance by ROI (Replicates `...-LDA_PLOT-DEEP-ROIs.ipynb`)
-To plot a Seaborn heatmap visualizing how much variance each Principal Component explains across multiple specific Regions of Interest:
 ```bash
-python -m meg_tokens.utils.batch_plot_pca_heatmap \
-    --data_path /path/to/pca_roi_variance.npy \
-    --rois Pallidum Caudate Putamen Amygdala Thalamus-Proper Cerebellum-Cortex Brain-Stem \
-    --out_dir ./figures/pca_heatmaps/
-```
+python -m meg_tokens.utils.batch_dpca \
+  --analysis dpca \
+  --feature_dir /path/to/tokens-bids \
+  --out_dir /path/to/tokens-bids \
+  --conditions Fast Slow \
+  --marginalize_cols sTrialClass nChoiceMade nCorrectChoice \
+  --n_components 20
 
-#### Example 7: 3D State Space Trajectories & Loadings
-> **Replaces:** Legacy `@nmData` MATLAB PCA trajectory framework (all `Neural_space_Thomas_*.m` variations)
-> 
-> Plot 3D Neural Trajectories and their spatial variance loadings across the brain. Our modern Python pipeline uses command-line arguments to replace what used to be a dozen copy-pasted MATLAB scripts.
-> 
-> ```bash
-> # Replicates `Neural_space_Thomas_all_sources_correct_error.m` (Full Surface Space)
-> python -m meg_tokens.utils.batch_dpca --conditions Correct Error
-> python -m meg_tokens.utils.batch_plot_pca_trajectory --conditions Correct Error
-> 
-> # Replicates `Neural_space_Thomas_all_sources_ERP.m` and `all_sources.m` (ROI Constrained Surface)
-> python -m meg_tokens.utils.batch_dpca --conditions enter --rois "DorsoLateral Prefrontal Cortex"
-> 
-> # Replicates `Neural_space_Thomas_all_sources_DEEP.m` and `deep_fast_slow.m` (Volumetric Subcortical Structures)
-> python -m meg_tokens.utils.batch_dpca --conditions all_fast all_slow --rois Brain-Stem --volume
-> ```
-> 
-> <details>
-> <summary><b>List of 44 Regions of Interest (ROIs) analyzed by legacy scripts:</b></summary>
-> 
-> These are the 44 specific HCPMMP1 combined ROIs (22 per hemisphere) historically targeted by the legacy MATLAB scripts. You can pass any of these exact strings into the `--rois` argument.
-> 
-> *   `???` (Unassigned)
-> *   `Anterior Cingulate and Medial Prefrontal Cortex`
-> *   `Auditory Association Cortex`
-> *   `Dorsal Stream Visual Cortex`
-> *   `DorsoLateral Prefrontal Cortex`
-> *   `Early Auditory Cortex`
-> *   `Early Visual Cortex`
-> *   `Inferior Frontal Cortex`
-> *   `Inferior Parietal Cortex`
-> *   `Insular and Frontal Opercular Cortex`
-> *   `Lateral Temporal Cortex`
-> *   `MT+ Complex and Neighboring Visual Areas`
-> *   `Medial Temporal Cortex`
-> *   `Orbital and Polar Frontal Cortex`
-> *   `Paracentral Lobular and Mid Cingulate Cortex`
-> *   `Posterior Cingulate Cortex`
-> *   `Posterior Opercular Cortex`
-> *   `Premotor Cortex`
-> *   `Primary Visual Cortex (V1)`
-> *   `Somatosensory and Motor Cortex`
-> *   `Superior Parietal Cortex`
-> *   `Temporo-Parieto-Occipital Junction`
-> *   `Ventral Stream Visual Cortex`
-> *(Note: The legacy scripts appended `-lh` and `-rh` to these to evaluate the 44 separate hemispheres).*
-> </details>
-> 
-> ```bash
-> # Standard Trajectory Plotting
-> python -m meg_tokens.utils.batch_plot_pca_trajectory \
->     --timecourse_path /path/to/component_timecourses.npy \
->     --conditions Go Enter \
->     --out_dir ./figures/pca_trajectories/
-> ```
-
-#### Example 8: Thresholding and Exporting Active Regions (Replicates `00_Plot_brains_MNE_and_CSV.ipynb`)
-To plot spatial arrays onto the brain while thresholding out weak activations (e.g., only keeping the top 5% most active vertices) and exporting those surviving regions to a `.csv` report:
-```bash
-python -m meg_tokens.utils.batch_plot_pca_loadings \
-    --loadings_path /path/to/extracted_spatial_weights.npy \
-    --threshold_percentile 95 \
-    --export_csv \
-    --out_dir ./figures/spatial_weights/thresholded/
+python -m meg_tokens.utils.batch_plot_dpca \
+  --dpca_dir /path/to/tokens-bids \
+  --out_dir /path/to/figures/dpca \
+  --n_components 3
 ```
 
 ### Stage 10: Functional Connectivity
-Extracts source-space functional connectivity (e.g., Imaginary Coherence, Phase Locking Value) between cortical regions (ROIs) across time windows and frequency bands.
-
-*(Note: This unified script replaces the legacy `08_SRC_Connectivity.py` and `08_SRC_Connectivity_all2ROI.py` by extracting ROI time-courses natively before computing the connectivity matrices, vastly improving memory and CPU performance).*
+Extracts spectral connectivity between Stage 5 parcellated source time courses. This replaces `08_SRC_Connectivity.py` and `08_SRC_Connectivity_all2ROI.py` without writing full vertex-to-vertex matrices.
 
 ```bash
 python -m meg_tokens.utils.batch_connectivity \
-    --conditions Fast1 Slow1 \
-    --parc aparc.a2009s \
-    --out_dir ./connectivity_results/
-
-# You can also change the connectivity metric using the --method flag
-# For example, using Weighted Phase Lag Index (wpli2_debiased):
-python -m meg_tokens.utils.batch_connectivity \
-    --conditions Fast1 Slow1 \
-    --method wpli2_debiased \
-    --out_dir ./connectivity_results/
+  --feature_dir /path/to/tokens-bids \
+  --out_dir /path/to/tokens-bids \
+  --subjects H01 H02 H03 \
+  --conditions Fast Slow \
+  --align_to enter \
+  --source_method dSPM \
+  --parc HCPMMP1 \
+  --method imcoh \
+  --bands delta theta alpha beta \
+  --before_window 0.7 1.4 \
+  --after_window 1.6 2.3
 ```
 
 #### Example 1: Circular Connectivity (Chord Diagrams) (Replicates `08_Plot_connectivity_circle.ipynb`)
-To calculate permutation t-tests on the functional connectivity matrices and plot the significant edges as a circular chord diagram:
+To calculate subject-level permutation tests on active-minus-baseline connectivity and plot significant edges:
+
 ```bash
 python -m meg_tokens.utils.batch_plot_connectivity_circle \
-    --data_dir ./connectivity_results/ \
-    --condition Fast1 \
-    --band alpha \
-    --p_threshold 0.05 \
-    --perms 1000
+  --data_dir /path/to/tokens-bids \
+  --out_dir /path/to/tokens-bids \
+  --condition Fast \
+  --band alpha \
+  --p_threshold 0.05 \
+  --perms 1000
 ```
 
 #### Example 2: Seed-Based Spatial Connectivity Maps (Replicates `08_Seed_based_connectivity_final.ipynb`)
-To extract the connectivity profile from a single target "seed" region to the rest of the brain and map it onto a 3D cortical surface:
-```bash
-# Step 1: Extract the 1D spatial connectivity vector for the seed
-python -m meg_tokens.utils.batch_plot_seed_connectivity \
-    --seed_roi 17Networks_LH_SomMotA_1-lh \
-    --condition Fast1 \
-    --out_dir ./figures/connectivity_seeds/
+To extract the connectivity profile from one seed ROI to all other ROIs:
 
-# Step 2: Render that 1D vector onto the 3D PyVista brain
-python -m meg_tokens.utils.batch_plot_pca_loadings \
-    --loadings_path ./figures/connectivity_seeds/seed_connectivity_17Networks_LH_SomMotA_1-lh_Fast1_alpha.npy \
-    --out_dir ./figures/spatial_weights/seed_maps/
+```bash
+python -m meg_tokens.utils.batch_plot_seed_connectivity \
+  --data_dir /path/to/tokens-bids \
+  --out_dir /path/to/tokens-bids \
+  --condition Fast \
+  --band alpha \
+  --seed_roi 17Networks_LH_SomMotA_1-lh \
+  --p_threshold 0.05 \
+  --perms 1000
 ```
 
-### Stage 9.6: Demixed Principal Component Analysis (dPCA) (Replaces `092_Mixed_PCA-COMPUTE.ipynb`)
-dPCA requires constructing a massive N-dimensional tensor representing every possible intersection of behavioral conditions. Our `batch_dpca.py` tool automates this natively in memory using Pandas metadata querying.
+### Stage 11: Hilbert Features for PAC/CFC
+Extracts band-filtered signal, Hilbert amplitude, Hilbert power, and phase from Stage 5 parcellated source time courses. This modernizes the Brainpipe amplitude/power/sigfilt extraction visible in the legacy CFC notebooks and writes `.npy` arrays with JSON sidecars.
 
-> ```bash
-> # Example N: Time-Resolved Demixed PCA
-> # Provide the metadata columns to group by. The tool dynamically constructs the N-dimensional 
-> # tensor, runs dPCA, and automatically saves components and permutation significance masks.
-> python -m meg_tokens.utils.batch_dpca \
->     --marginalize_cols sTrialClass nChoiceMade nCorrectChoice \
->     --labels 'dust' \
->     --n_components 20
-> ```
-> 
-> ```bash
-> # Example O: Plotting dPCA Components (Replaces 092_Mixed_PCA_PLOT.ipynb)
-> # Reads the saved dPCA dictionaries and automatically generates shaded significance
-> # plots for the top N components of every marginalized behavioral axis.
-> python -m meg_tokens.utils.batch_plot_dpca \
->     --dpca_prefix ./dpca_results/dpca_sTrialClass_nChoiceMade_nCorrectChoice \
->     --n_components 3
-> ```
-> 
-> ---
-> 
+```bash
+python -m meg_tokens.utils.batch_hilbert_features \
+  --feature_dir /path/to/tokens-bids \
+  --out_dir /path/to/tokens-bids \
+  --subjects H01 H02 H03 \
+  --conditions Fast Slow \
+  --align_to go \
+  --source_method dSPM \
+  --parc HCPMMP1 \
+  --bands theta alpha beta gamma_low \
+  --features amplitude phase power sigfilt
+```
+
+### Stage 12: PAC/CFC Modulation Index
+Computes final phase-amplitude coupling statistics from Stage 11 low-frequency phase and high-frequency amplitude derivatives.
+
+```bash
+python -m meg_tokens.utils.batch_pac_cfc \
+  --feature_dir /path/to/tokens-bids \
+  --out_dir /path/to/tokens-bids \
+  --subjects H01 H02 H03 \
+  --conditions Fast Slow \
+  --phase_bands theta \
+  --amplitude_bands gamma_low gamma_high \
+  --align_to go \
+  --source_method dSPM \
+  --parc HCPMMP1 \
+  --n_bins 18 \
+  --time_window 0.0 1.5
+```
+
+### Golden Validation
+Compares modern derivatives against frozen real-reference `.npy`, `.tsv`, or
+`.csv` outputs. The command writes a validation report and exits nonzero if any
+comparison fails.
+
+```bash
+python -m meg_tokens.utils.batch_validate_golden \
+  --config /path/to/golden_validation.json \
+  --out_tsv /path/to/tokens-bids/derivatives/meg-tokens/sub-group/meg/sub-group_task-tokens_desc-golden-validation_validation.tsv
+```
+
 > ## SLURM Cluster Job Submission (`cluster/`)
 > The `cluster/` directory contains modernized `.sh` wrappers designed to submit jobs to a SLURM high-performance computing cluster. 
 > 
 > Instead of having dozens of hard-coded shell scripts, we use unified parameterized scripts. For example, all `job_classif_*.sh` decoding scripts are now fully encapsulated by **`cluster/job_decoding.sh`**:
 > 
 > ```bash
-> # Submit a job to decode Fast vs Slow behavior on the "Enter" event
-> sbatch cluster/job_decoding.sh "17Networks_LH_SomMotA_1-lh" "./data/epochs_enter/" "speed in ['Fast', 'Slow']"
+> export TOKENS_BIDS=/path/to/tokens-bids
+> export CONDITIONS="Fast Slow"
+> export ALIGN_TO=go
+> sbatch cluster/job_decoding.sh Label_1-lh
 > ```
-> If you run `sbatch cluster/job_decoding.sh` without arguments, it will print a help menu showing exactly how to replicate all legacy `.sh` commands.
+> If you run `sbatch cluster/job_decoding.sh` without arguments, it prints the required environment variables.
 > 
 > ### Submitting All ROIs Automatically
 > The `cluster/submit_all_rois.sh` master script Replaces all 12 legacy `run_all_classif_*.sh` scripts. It iterates through all 360 HCPMMP1 brain regions and launches a parallel SLURM job for each region.
 > 
 > ```bash
-> # Example: Submit 360 parallel decoding jobs (one for each ROI) across the cluster
-> ./cluster/submit_all_rois.sh "./data/epochs_enter/" "speed in ['Fast', 'Slow']"
+> export TOKENS_BIDS=/path/to/tokens-bids
+> export CONDITIONS="Fast Slow"
+> ./cluster/submit_all_rois.sh
 > ```
 >
 > ### SLURM Array Jobs (32 Subjects)
 > We have replaced all the legacy subject-looping scripts (`run_all_power`, `run_all_sources`, `run_all_conn`, `run_all_resample_raw`) with extremely efficient SLURM Array Jobs. They will automatically parallelize execution across all 32 subjects (H01-H32):
 > 
 > ```bash
+> export TOKENS_BIDS=/path/to/tokens-bids
+> export HILBERT_BANDS="theta alpha beta"
 > sbatch cluster/job_epochs.sh        # Replaces job_resample_raw.sh
 > sbatch cluster/job_sources.sh       # Replaces job_sources.sh
 > sbatch cluster/job_power.sh         # Replaces job_power.sh
+> sbatch cluster/job_psd_specparam.sh
 > sbatch cluster/job_connectivity.sh  # Replaces job_conn.sh
+> sbatch cluster/job_hilbert_features.sh
+> sbatch cluster/job_pac_cfc.sh
+> sbatch cluster/job_golden_validation.sh
 > ```

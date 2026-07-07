@@ -1,8 +1,8 @@
 import os
 import argparse
 import numpy as np
-import scipy.io as sio
 import mne
+from meg_tokens.io import ensure_dir, require_file, save_array
 
 def run_batch_extract_deep_sources(
     data_dir: str,
@@ -13,16 +13,16 @@ def run_batch_extract_deep_sources(
     behavior_filter: str = None
 ):
     """
-    Extracts deep brain volume sources from mixed source spaces and exports them to MATLAB.
+    Extracts deep brain volume sources from mixed source spaces and exports
+    `.npy` derivatives with JSON sidecars.
     
     This replaces the legacy '091_Stats_SRC_POWER_arrange_data_all_sources-DEEP.ipynb' 
-    which manually sliced vertices [8196:] and exported them via scipy.io.savemat.
+    which manually sliced vertices [8196:] before downstream group analyses.
     """
     print(f"=== Starting Deep Volume Source Extraction ===")
     print(f"Condition: {condition}")
     
-    if not os.path.exists(output_dir):
-        os.makedirs(output_dir)
+    output_path = ensure_dir(output_dir)
         
     class_mapping = {'Easy': 1, 'Ambiguous': 2, 'Misleading': 3}
     target_class = class_mapping.get(condition, 1)
@@ -36,8 +36,9 @@ def run_batch_extract_deep_sources(
         inv_file = os.path.join(fwd_dir, f"{s}-inv.fif")
         src_file = os.path.join(fwd_dir, f"{s}-src.fif")
         
-        if not os.path.exists(epochs_file) or not os.path.exists(inv_file) or not os.path.exists(src_file):
-            continue
+        require_file(epochs_file, purpose=f"{s} epochs")
+        require_file(inv_file, purpose=f"{s} inverse operator")
+        require_file(src_file, purpose=f"{s} source space")
             
         epochs = mne.read_epochs(epochs_file, preload=True)
         query = f"sTrialClass == {target_class} and nChoiceMade in [1, 2]"
@@ -81,12 +82,21 @@ def run_batch_extract_deep_sources(
     # Calculate the mean across epochs for this condition
     deep_data_mean = np.nanmean(deep_data_array, axis=0)
     
-    # Export to MATLAB (.mat) replicating the legacy DEEP script behavior
-    out_file = os.path.join(output_dir, f"{condition}_all_deep_volume.mat")
-    out_mean_file = os.path.join(output_dir, f"{condition}_all_deep_volume_mean.mat")
-    
-    sio.savemat(out_file, {'data': deep_data_array})
-    sio.savemat(out_mean_file, {'data': deep_data_mean[np.newaxis, ...]})
+    out_file = output_path / f"{condition}_all_deep_volume.npy"
+    out_mean_file = output_path / f"{condition}_all_deep_volume_mean.npy"
+
+    save_array(
+        out_file,
+        deep_data_array,
+        dims=("epoch", "deep_vertex", "time"),
+        metadata={"stage": "deep_source_extraction", "condition": condition, "subjects": subjects},
+    )
+    save_array(
+        out_mean_file,
+        deep_data_mean[np.newaxis, ...],
+        dims=("condition", "deep_vertex", "time"),
+        metadata={"stage": "deep_source_extraction", "condition": condition, "summary": "epoch_mean"},
+    )
     
     print(f"Successfully exported deep volume sources to {output_dir}")
 
@@ -97,7 +107,7 @@ if __name__ == "__main__":
     parser.add_argument("--fwd_dir", type=str, default='./data/forward/',
                         help="Directory containing forward solutions/inverse operators")
     parser.add_argument("--out_dir", type=str, default='./stats_results/deep/',
-                        help="Directory to save the MATLAB matrices")
+                        help="Directory to save deep-source array derivatives")
     parser.add_argument("--subjects", type=str, nargs='+', default=['H01', 'H02'],
                         help="Subjects to process")
     parser.add_argument("--condition", type=str, default='Easy',

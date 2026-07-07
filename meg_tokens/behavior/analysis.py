@@ -1,7 +1,6 @@
 import numpy as np
 import pandas as pd
 from scipy import stats
-from mne.stats import permutation_t_test
 
 
 def calculate_motor_baseline(rt_dfs: list) -> float:
@@ -36,7 +35,11 @@ def compare_fast_slow(
     n_permutations: int = 1000
 ) -> dict:
     """
-    Compares decision times between Fast and Slow runs using a permutation t-test.
+    Compares decision times between Fast and Slow runs using Welch's t-test.
+
+    The legacy scripts downsampled groups before testing. The refactor keeps all
+    real trials and uses a standard unequal-variance test to avoid random trial
+    selection.
     """
     dt_fast = []
     for df in fast_dfs:
@@ -49,26 +52,16 @@ def compare_fast_slow(
     dt_fast = np.array(dt_fast)
     dt_slow = np.array(dt_slow)
     
-    # Run permutation t-test if we have data
     p_val = 1.0
     t_stat = 0.0
     if len(dt_fast) > 0 and len(dt_slow) > 0:
-        # Match size of slow and fast by random selection to replicate legacy unpaired comparison
-        min_len = min(len(dt_fast), len(dt_slow))
-        np.random.seed(0)  # Reproducibility
-        dt_fast_sub = np.random.choice(dt_fast, min_len, replace=False)
-        dt_slow_sub = np.random.choice(dt_slow, min_len, replace=False)
-        
-        diff = dt_slow_sub - dt_fast_sub
-        if len(diff) <= 1:
+        if len(dt_fast) <= 1 or len(dt_slow) <= 1:
             t_stat = 0.0
             p_val = 1.0
         else:
-            t_obs, p_values, _ = permutation_t_test(diff[:, np.newaxis], n_permutations=n_permutations, tail=0, n_jobs=1)
-            t_stat = float(t_obs[0])
-            p_val = float(p_values[0])
-
-
+            res = stats.ttest_ind(dt_slow, dt_fast, equal_var=False, nan_policy="omit")
+            t_stat = float(res.statistic)
+            p_val = float(res.pvalue)
         
     return {
         'mean_fast': float(np.mean(dt_fast)) if len(dt_fast) > 0 else 0.0,
@@ -107,6 +100,10 @@ def analyze_trial_classes(dfs: list, motor_baseline: float) -> dict:
 def compare_correct_error(dfs: list, motor_baseline: float, n_permutations: int = 1000) -> dict:
     """
     Compares decision times on Correct choices vs. Error trials.
+
+    Run-level means are compared with Welch's t-test when enough runs are
+    available. This avoids random run subsampling while preserving the intended
+    correct-versus-error behavior.
     """
     dt_correct = []
     dt_error = []
@@ -131,25 +128,16 @@ def compare_correct_error(dfs: list, motor_baseline: float, n_permutations: int 
             dt_error.extend(error_trials['DT'].values)
             run_error_means.append(float(np.mean(error_trials['DT'])))
             
-    # Permutation t-test on run averages
     p_val = 1.0
     t_stat = 0.0
     if len(run_correct_means) > 0 and len(run_error_means) > 0:
-        min_len = min(len(run_correct_means), len(run_error_means))
-        np.random.seed(0)
-        correct_sub = np.random.choice(run_correct_means, min_len, replace=False)
-        error_sub = np.random.choice(run_error_means, min_len, replace=False)
-        
-        diff = correct_sub - error_sub
-        if len(diff) <= 1:
+        if len(run_correct_means) <= 1 or len(run_error_means) <= 1:
             t_stat = 0.0
             p_val = 1.0
         else:
-            t_obs, p_values, _ = permutation_t_test(diff[:, np.newaxis], n_permutations=n_permutations, tail=0, n_jobs=1)
-            t_stat = float(t_obs[0])
-            p_val = float(p_values[0])
-
-
+            res = stats.ttest_ind(run_correct_means, run_error_means, equal_var=False, nan_policy="omit")
+            t_stat = float(res.statistic)
+            p_val = float(res.pvalue)
         
     return {
         'mean_correct': float(np.mean(dt_correct)) if dt_correct else 0.0,

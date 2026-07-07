@@ -2,6 +2,35 @@ import re
 import pandas as pd
 from nptdms import TdmsFile
 
+
+TRIAL_COLUMNS = [
+    'nTrialIndex', 'sTrialClass', 'nInitialTime', 'nChoiceMade',
+    'nCorrectChoice', 'tGO', 'tEnterTarget', 'tTrialEnd',
+    'sTokenDirs', 'tTime', 'nProb'
+]
+
+
+def validate_behavior_dataframe(df: pd.DataFrame) -> None:
+    """Validate columns and basic event timing for a parsed behavior table."""
+    missing = [col for col in TRIAL_COLUMNS if col not in df.columns]
+    if missing:
+        raise ValueError(f"Behavior table is missing required columns: {missing}")
+
+    if not df.empty:
+        expected_index = list(range(1, len(df) + 1))
+        actual_index = df['nTrialIndex'].astype(int).tolist()
+        if actual_index != expected_index:
+            raise ValueError("nTrialIndex must be sequential and start at 1")
+
+    chosen = df['nChoiceMade'] > 0
+    invalid_order = chosen & (
+        (df['tGO'] > df['tEnterTarget']) |
+        (df['tEnterTarget'] > df['tTrialEnd'])
+    )
+    if invalid_order.any():
+        rows = df.loc[invalid_order, 'nTrialIndex'].tolist()
+        raise ValueError(f"Invalid event ordering for trials: {rows}")
+
 def parse_single_trial(events_str: str) -> dict:
     """
     Parses the Events property string from a single trial group.
@@ -126,10 +155,6 @@ def parse_tdms_file(file_path: str) -> pd.DataFrame:
                 trial_dict = parse_single_trial(events_str)
                 trial_data.append(trial_dict)
                 
-    columns = [
-        'nTrialIndex', 'sTrialClass', 'nInitialTime', 'nChoiceMade',
-        'nCorrectChoice', 'tGO', 'tEnterTarget', 'tTrialEnd',
-        'sTokenDirs', 'tTime', 'nProb'
-    ]
-    
-    return pd.DataFrame(trial_data, columns=columns)
+    df = pd.DataFrame(trial_data, columns=TRIAL_COLUMNS)
+    validate_behavior_dataframe(df)
+    return df

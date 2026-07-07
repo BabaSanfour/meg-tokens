@@ -1,10 +1,10 @@
 import os
 import pytest
 import pandas as pd
-from meg_tokens.utils.tdms_parser import parse_single_trial, parse_tdms_file
+from meg_tokens.utils.tdms_parser import parse_single_trial, parse_tdms_file, validate_behavior_dataframe
 
-# Sample Mock Events string mimicking the real TDMS structure
-MOCK_EVENTS_STR = """sTaskType: 'TokensMvt'
+# Sample Events string mimicking the real TDMS structure
+EVENTS_STR = """sTaskType: 'TokensMvt'
 dDate: '2018/01/31 04:20:52.738 PM'
 nInitialTime: 6232233
 nTrialIndex: 1
@@ -28,18 +28,18 @@ Tokens.Data: (
 )
 """
 
-def make_mock_events(prob_values):
+def make_events(prob_values):
     steps = [
         f"[tTime: {1000 + i*200}, nTokenNum: {i+1}, nTokenDir: 2, nProb: {p}]"
         for i, p in enumerate(prob_values)
     ]
-    lines = MOCK_EVENTS_STR.splitlines()
+    lines = EVENTS_STR.splitlines()
     idx = lines.index("Tokens.Data: (")
     new_lines = lines[:idx+1] + steps + [")"]
     return "\n".join(new_lines)
 
 def test_parse_single_trial():
-    trial_dict = parse_single_trial(MOCK_EVENTS_STR)
+    trial_dict = parse_single_trial(EVENTS_STR)
     
     assert trial_dict['nTrialIndex'] == 1
     assert trial_dict['nChoiceMade'] == 2
@@ -57,21 +57,21 @@ def test_parse_single_trial():
 def test_trial_class_override_rule_1():
     # Test override rule 1: nProb[1] > 0.6 and nProb[4] > 0.75 and nProb[7] > 0.75
     prob_values = [0.5, 0.7, 0.5, 0.5, 0.8, 0.5, 0.5, 0.8]
-    events_str = make_mock_events(prob_values)
+    events_str = make_events(prob_values)
     trial_dict = parse_single_trial(events_str)
     assert trial_dict['sTrialClass'] == 1
 
 def test_trial_class_override_rule_2():
     # Test override rule 2: nProb[1] == 0.5 and nProb[2] in (0.38, 0.65) and nProb[4] > 0.35
     prob_values = [0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5]
-    events_str = make_mock_events(prob_values)
+    events_str = make_events(prob_values)
     trial_dict = parse_single_trial(events_str)
     assert trial_dict['sTrialClass'] == 2
 
 def test_trial_class_override_rule_3():
     # Test override rule 3: nProb[2] < 0.4
     prob_values = [0.5, 0.5, 0.3, 0.5, 0.5, 0.5, 0.5, 0.5]
-    events_str = make_mock_events(prob_values)
+    events_str = make_events(prob_values)
     trial_dict = parse_single_trial(events_str)
     assert trial_dict['sTrialClass'] == 3
 
@@ -94,3 +94,22 @@ def test_parse_real_tdms_integration():
         assert df['nTrialIndex'].iloc[0] == 1
     else:
         pytest.skip("Real integration TDMS file not accessible.")
+
+
+def test_validate_behavior_dataframe_rejects_invalid_event_order():
+    df = pd.DataFrame({
+        'nTrialIndex': [1],
+        'sTrialClass': [1],
+        'nInitialTime': [0],
+        'nChoiceMade': [1],
+        'nCorrectChoice': [1],
+        'tGO': [2000],
+        'tEnterTarget': [1000],
+        'tTrialEnd': [2500],
+        'sTokenDirs': ['121'],
+        'tTime': [[1100]],
+        'nProb': [[0.6]],
+    })
+
+    with pytest.raises(ValueError, match="Invalid event ordering"):
+        validate_behavior_dataframe(df)
