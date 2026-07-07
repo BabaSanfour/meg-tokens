@@ -86,11 +86,11 @@ def parse_single_trial(events_str: str) -> dict:
         # Replicate DDM logic rules for sTrialClass override
         if len(n_prob) >= 8:
             if n_prob[1] > 0.6 and n_prob[4] > 0.75 and n_prob[7] > 0.75:
-                s_trial_class = 1
-            elif n_prob[1] == 0.5 and n_prob[2] > 0.38 and n_prob[2] < 0.65 and n_prob[4] > 0.35 and n_prob[2] < 0.65:
-                s_trial_class = 2
+                s_trial_class = 1 # 1 = Easy
+            elif n_prob[1] == 0.5 and n_prob[2] > 0.38 and n_prob[2] < 0.65 and n_prob[4] > 0.35 and n_prob[4] < 0.65:
+                s_trial_class = 2 # 2 = Ambiguous
             elif n_prob[2] < 0.4:
-                s_trial_class = 3 # Fixed bug from previous member codebase (TrialClass -> s_trial_class)
+                s_trial_class = 3 # 3 = Misleading (Fixed bug from previous member codebase)
 
     return {
         'nTrialIndex': n_trial_index,

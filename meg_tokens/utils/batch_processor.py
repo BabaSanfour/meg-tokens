@@ -61,7 +61,7 @@ def process_subject_tdms(subject_id: str, input_dir: str, output_dir: str, dry_r
                 
     return processed_files
 
-def process_all_subjects(input_dir: str, output_dir: str, dry_run: bool = False) -> list:
+def run_tdms_batch_processor(input_dir: str, output_dir: str, dry_run: bool = False) -> list:
     """
     Discovers all subjects under input_dir and runs batch processing.
     
@@ -91,3 +91,24 @@ def process_all_subjects(input_dir: str, output_dir: str, dry_run: bool = False)
             print(f"Error processing subject {subject_id}: {e}")
             
     return summary
+
+if __name__ == "__main__":
+    import argparse
+    
+    parser = argparse.ArgumentParser(
+        description="Run batch processor to parse TDMS files and map them to CSV dataframes."
+    )
+    parser.add_argument("--input_dir", type=str, required=True,
+                        help="Path to the main tdms/ folder (containing subject subfolders).")
+    parser.add_argument("--output_dir", type=str, required=True,
+                        help="Path to the target dataframes/ folder.")
+    parser.add_argument("--dry_run", action='store_true',
+                        help="If set, only prints mapping and does not write files.")
+    
+    args = parser.parse_args()
+    
+    run_tdms_batch_processor(
+        input_dir=args.input_dir,
+        output_dir=args.output_dir,
+        dry_run=args.dry_run
+    )

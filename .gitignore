@@ -65,3 +65,4 @@ venv.bak/
 
 # Project specific exclusions
 archive/
+migration_map.md
