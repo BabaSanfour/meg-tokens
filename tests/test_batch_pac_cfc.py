@@ -1,12 +1,14 @@
 import numpy as np
 
+from meg_tokens.core import PACConfig, ProjectConfig
 from meg_tokens.io import load_array, save_array
-from meg_tokens.utils.batch_hilbert_features import hilbert_feature_derivative_path
-from meg_tokens.utils.batch_pac_cfc import (
+from meg_tokens.workflows.hilbert import hilbert_feature_derivative_path
+from meg_tokens.workflows.pac import (
     find_hilbert_feature_arrays,
     pac_derivative_path,
     run_batch_pac_cfc,
 )
+from meg_tokens.workflows.pac import extract_pac_features
 
 
 def _write_hilbert(root, *, band, feature, data):
@@ -115,3 +117,21 @@ def test_run_batch_pac_cfc_writes_modulation_index_derivative(tmp_path):
     assert meta["method"] == "modulation_index"
     assert meta["input_phase_features"] == [str(phase_path)]
     assert meta["input_amplitude_features"] == [str(amp_path)]
+
+
+def test_pac_workflow_declares_hilbert_inputs_and_output(tmp_path):
+    phase_path, amplitude_path = _write_inputs(tmp_path)
+
+    result = extract_pac_features(
+        ProjectConfig(bids_root=tmp_path),
+        subjects=["H1"],
+        settings=PACConfig(
+            conditions=("Fast",),
+            phase_bands=("theta",),
+            amplitude_bands=("gamma_low",),
+        ),
+    )
+
+    assert result.stage == "pac_features"
+    assert set(result.inputs) == {phase_path, amplitude_path}
+    assert len(result.outputs) == 1

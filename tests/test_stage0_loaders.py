@@ -2,9 +2,9 @@ import numpy as np
 import pytest
 
 from meg_tokens.io import save_array
-from meg_tokens.utils.batch_connectivity import find_roi_timeseries
-from meg_tokens.utils.batch_decoding import load_decoding_inputs
-from meg_tokens.utils.batch_plot_connectivity_circle import load_connectivity_pairs
+from meg_tokens.workflows.connectivity import find_roi_timeseries
+from meg_tokens.workflows.decoding import load_decoding_inputs
+from meg_tokens.reports.connectivity import load_connectivity_pairs
 
 
 def test_load_decoding_inputs_filters_string_conditions(tmp_path):
@@ -41,11 +41,21 @@ def test_find_roi_timeseries_uses_subject_condition_contract(tmp_path):
     assert find_roi_timeseries(tmp_path, "H01", "Fast") == target
 
 
-def test_load_connectivity_pairs_requires_real_before_after_files(tmp_path):
-    before = tmp_path / "H01" / "H01_Fast_alpha_con_before_ROI.npy"
-    after = tmp_path / "H01" / "H01_Fast_alpha_con_after_ROI.npy"
-    save_array(before, np.eye(2), dims=("roi", "roi"))
-    save_array(after, np.eye(2) * 2, dims=("roi", "roi"))
+def test_load_connectivity_pairs_reads_staged_window_array(tmp_path):
+    path = tmp_path / "sub-H01_task-tokens_desc-fast_connectivity.npy"
+    data = np.stack([np.eye(2), np.eye(2) * 2], axis=0)[:, np.newaxis]
+    save_array(
+        path,
+        data,
+        dims=("window", "band", "node_from", "node_to"),
+        coords={
+            "window": ["before", "after"],
+            "band": ["alpha"],
+            "node_from": ["A", "B"],
+            "node_to": ["A", "B"],
+        },
+        metadata={"subject": "H01", "condition": "Fast"},
+    )
 
     before_group, after_group = load_connectivity_pairs(tmp_path, "Fast", "alpha")
 

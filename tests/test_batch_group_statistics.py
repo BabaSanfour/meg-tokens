@@ -1,13 +1,23 @@
 import numpy as np
 import pytest
 
+from meg_tokens.core import (
+    LateralizedStatisticsConfig,
+    ProjectConfig,
+    StatisticsConfig,
+)
 from meg_tokens.io import load_array, save_array, sidecar_path
-from meg_tokens.utils.batch_erp_parcellation import erp_derivative_path
-from meg_tokens.utils.batch_group_statistics import (
+from meg_tokens.workflows.erp import erp_derivative_path
+from meg_tokens.workflows.statistics import (
     discover_subjects,
     find_erp_arrays,
     run_group_statistics_contrast,
     stats_derivative_path,
+)
+from meg_tokens.workflows.statistics import (
+    run_group_statistics,
+    run_lateralized_statistics,
+    run_lateralized_statistics_test,
 )
 
 
@@ -15,7 +25,7 @@ LABELS = ["Label_1-lh", "Label_2-rh"]
 TIMES = [-0.1, 0.0, 0.1]
 
 
-def _write_erp(root, subject, run, condition, data):
+def _write_erp(root, subject, run, condition, data, labels=LABELS):
     path = erp_derivative_path(
         root,
         subject=subject,
@@ -33,7 +43,7 @@ def _write_erp(root, subject, run, condition, data):
         dims=("trial", "label", "time"),
         coords={
             "trial": list(range(1, np.asarray(data).shape[0] + 1)),
-            "label": LABELS,
+            "label": labels,
             "time_sec": TIMES,
         },
         metadata={
@@ -104,7 +114,7 @@ def test_run_group_statistics_contrast_saves_derivatives(tmp_path, monkeypatch):
         return np.arange(data.shape[1]), np.linspace(0.01, 0.2, data.shape[1]), np.array([1.0, 2.0])
 
     monkeypatch.setattr(
-        "meg_tokens.utils.batch_group_statistics.compute_permutation_t_test",
+        "meg_tokens.workflows.statistics.compute_permutation_t_test",
         fixed_t_test,
     )
 
@@ -149,3 +159,87 @@ def test_run_group_statistics_requires_two_subjects(tmp_path):
             conditions=("Fast", "Slow"),
             subjects_list=["H01"],
         )
+
+
+def test_statistics_workflow_declares_group_inputs_and_outputs(tmp_path, monkeypatch):
+    _write_group_inputs(tmp_path)
+    monkeypatch.setattr(
+        "meg_tokens.workflows.statistics.compute_permutation_t_test",
+        lambda data, n_permutations, tail, n_jobs: (
+            np.ones(data.shape[1]),
+            np.full(data.shape[1], 0.5),
+            np.ones(2),
+        ),
+    )
+
+    result = run_group_statistics(
+        ProjectConfig(bids_root=tmp_path),
+        subjects=["H01", "H02"],
+        settings=StatisticsConfig(permutations=2),
+    )
+
+    assert result.stage == "group_statistics"
+    assert len(result.inputs) == 4
+    assert len(result.outputs) == 5
+
+
+def test_lateralized_statistics_uses_homologous_label_difference(tmp_path, monkeypatch):
+    labels = ["Motor-lh", "Motor-rh"]
+    subject_1 = np.stack(
+        [np.vstack([np.full(3, 5.0), np.full(3, 2.0)]) for _ in range(2)]
+    )
+    subject_2 = np.stack(
+        [np.vstack([np.full(3, 7.0), np.full(3, 3.0)]) for _ in range(2)]
+    )
+    _write_erp(tmp_path, "H01", "Fast1", "Fast", subject_1, labels=labels)
+    _write_erp(tmp_path, "H02", "Fast1", "Fast", subject_2, labels=labels)
+    captured = {}
+
+    def fixed_t_test(data, n_permutations, tail, n_jobs):
+        captured["data"] = data.copy()
+        return np.ones(data.shape[1]), np.full(data.shape[1], 0.01), np.ones(2)
+
+    monkeypatch.setattr(
+        "meg_tokens.workflows.statistics.compute_permutation_t_test",
+        fixed_t_test,
+    )
+    outputs = run_lateralized_statistics_test(
+        str(tmp_path),
+        str(tmp_path),
+        "Fast",
+        subjects_list=["H01", "H02"],
+        n_permutations=2,
+    )
+
+    lateralization = load_array(outputs["lateralization"], require_sidecar=True)
+    assert captured["data"].shape == (2, 3)
+    assert np.allclose(captured["data"][0], 3.0)
+    assert np.allclose(captured["data"][1], 4.0)
+    assert lateralization.data.shape == (2, 1, 3)
+    assert lateralization.metadata["coords"]["label"] == ["Motor"]
+    assert lateralization.metadata["metadata"]["contrast"] == "left-right"
+
+
+def test_lateralized_statistics_workflow_declares_inputs(tmp_path, monkeypatch):
+    labels = ["Motor-lh", "Motor-rh"]
+    values = np.ones((2, 2, 3))
+    _write_erp(tmp_path, "H01", "Fast1", "Fast", values, labels=labels)
+    _write_erp(tmp_path, "H02", "Fast1", "Fast", values, labels=labels)
+    monkeypatch.setattr(
+        "meg_tokens.workflows.statistics.compute_permutation_t_test",
+        lambda data, n_permutations, tail, n_jobs: (
+            np.ones(data.shape[1]),
+            np.ones(data.shape[1]),
+            np.ones(2),
+        ),
+    )
+
+    result = run_lateralized_statistics(
+        ProjectConfig(bids_root=tmp_path),
+        subjects=["H01", "H02"],
+        settings=LateralizedStatisticsConfig(condition="Fast", permutations=2),
+    )
+
+    assert result.stage == "lateralized_statistics"
+    assert len(result.inputs) == 2
+    assert len(result.outputs) == 5

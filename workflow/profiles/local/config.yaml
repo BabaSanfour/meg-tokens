@@ -1,0 +1,5 @@
+cores: 4
+printshellcmds: true
+rerun-incomplete: true
+keep-going: true
+

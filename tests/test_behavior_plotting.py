@@ -1,11 +1,15 @@
 import numpy as np
 import pytest
 import matplotlib.pyplot as plt
-from meg_tokens.behavior.plotting import (
+import pandas as pd
+
+from meg_tokens.reports.behavior import (
     plot_fast_slow_distributions,
     plot_trial_class_distributions,
     plot_comparison_bars
 )
+from meg_tokens.io import DerivativeLayout, save_table, sidecar_path
+from meg_tokens.reports.behavior_summary import run_behavior_plotting
 
 def test_plot_fast_slow_distributions():
     dt_fast = np.linspace(600, 800, 50)
@@ -40,3 +44,20 @@ def test_plot_comparison_bars():
     
     assert isinstance(fig, plt.Figure)
     plt.close(fig)
+
+
+def test_behavior_report_reads_staged_tsv_and_writes_derivative(tmp_path):
+    layout = DerivativeLayout(tmp_path)
+    for condition, values in (("Fast", [500.0, 600.0]), ("Slow", [900.0, 1000.0])):
+        path = layout.behavior(subject="H01", run=f"{condition}1", condition=condition)
+        save_table(
+            path,
+            pd.DataFrame({"rawRT": values}),
+            metadata={"subject": "H01", "condition": condition},
+        )
+
+    outputs = run_behavior_plotting(str(tmp_path), str(tmp_path), ["H01"])
+
+    assert len(outputs) == 1
+    assert outputs[0].is_file()
+    assert sidecar_path(outputs[0]).is_file()

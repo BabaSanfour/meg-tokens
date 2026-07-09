@@ -1,0 +1,34 @@
+jobs: 64
+latency-wait: 120
+printshellcmds: true
+rerun-incomplete: true
+cluster: >-
+  sbatch
+  --parsable
+  --account={resources.slurm_account}
+  --cpus-per-task={threads}
+  --mem={resources.mem_mb}M
+  --time={resources.runtime}
+default-resources:
+  - mem_mb=8000
+  - runtime=240
+  - slurm_account=YOUR_ACCOUNT
+set-resources:
+  preprocess:
+    mem_mb: 32000
+    runtime: 1440
+  epochs:
+    mem_mb: 64000
+    runtime: 1440
+  source_models:
+    mem_mb: 32000
+    runtime: 2880
+  source_run:
+    mem_mb: 32000
+    runtime: 2880
+  power:
+    mem_mb: 32000
+    runtime: 1440
+  decoding:
+    mem_mb: 32000
+    runtime: 480

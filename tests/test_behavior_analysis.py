@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 import pytest
-from meg_tokens.behavior.analysis import (
+from meg_tokens.behavior.metrics import (
     calculate_motor_baseline,
     calculate_decision_times,
     compare_fast_slow,

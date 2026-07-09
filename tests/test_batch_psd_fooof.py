@@ -3,13 +3,15 @@ import json
 import mne
 import numpy as np
 
+from meg_tokens.core import ProjectConfig, SpectralConfig
 from meg_tokens.io import derivative_path, load_array, sidecar_path
-from meg_tokens.utils.batch_psd_fooof import (
+from meg_tokens.workflows.spectral import (
     find_epoch_derivatives,
     process_epochs_psd,
     psd_derivative_path,
     run_psd_specparam,
 )
+from meg_tokens.workflows.spectral import extract_spectral_features
 
 
 def _write_epochs(root):
@@ -121,3 +123,26 @@ def test_run_psd_specparam_can_skip_model_fit(tmp_path):
 
     assert len(outputs["H01"]) == 1
     assert set(outputs["H01"][0]) == {"psd"}
+
+
+def test_spectral_workflow_declares_epoch_and_psd_output(tmp_path):
+    epochs_path = _write_epochs(tmp_path)
+
+    result = extract_spectral_features(
+        ProjectConfig(bids_root=tmp_path),
+        subjects=["H01"],
+        settings=SpectralConfig(
+            condition="Fast",
+            alignment="go",
+            fmin=2.0,
+            fmax=40.0,
+            n_fft=128,
+            n_overlap=0,
+            fit_model=False,
+        ),
+    )
+
+    assert result.stage == "spectral_features"
+    assert result.inputs == (epochs_path,)
+    assert len(result.outputs) == 1
+    assert result.outputs[0].is_file()

@@ -1,14 +1,16 @@
 import numpy as np
 import pandas as pd
 
+from meg_tokens.core import DecodingConfig, ProjectConfig
 from meg_tokens.io import load_array, save_array, save_table, sidecar_path
-from meg_tokens.utils.batch_decoding import (
+from meg_tokens.workflows.decoding import (
     _load_feature_array,
     build_decoding_dataset,
     find_feature_arrays,
     run_batch_decoding,
 )
-from meg_tokens.utils.batch_erp_parcellation import erp_derivative_path
+from meg_tokens.workflows.erp import erp_derivative_path
+from meg_tokens.workflows.decoding import run_decoding
 
 
 LABELS = ["Pair-lh", "Pair-rh"]
@@ -198,7 +200,7 @@ def test_run_batch_decoding_writes_derivatives_and_preserves_invalid_times(tmp_p
         return np.array([[0.50, 0.60], [0.55, 0.65]])
 
     monkeypatch.setattr(
-        "meg_tokens.utils.batch_decoding.compute_time_resolved_decoding",
+        "meg_tokens.workflows.decoding.compute_time_resolved_decoding",
         fixed_decoding,
     )
 
@@ -221,3 +223,23 @@ def test_run_batch_decoding_writes_derivatives_and_preserves_invalid_times(tmp_p
     assert splits.data.shape == (2, 3)
     assert sidecar_path(outputs["plot"]).is_file()
     assert scores.metadata["metadata"]["valid_time_mask"] == [True, True, False]
+
+
+def test_decoding_workflow_declares_features_and_outputs(tmp_path, monkeypatch):
+    _write_decoding_inputs(tmp_path)
+    monkeypatch.setattr(
+        "meg_tokens.workflows.decoding.compute_time_resolved_decoding",
+        lambda X, y, groups, balance, n_jobs: np.array([[0.5, 0.6, 0.7]]),
+    )
+
+    result = run_decoding(
+        ProjectConfig(bids_root=tmp_path),
+        subjects=["H01", "H02"],
+        settings=DecodingConfig(labels=("Pair-lh",), n_jobs=1),
+    )
+
+    assert result.stage == "decoding"
+    assert len(result.inputs) == 4
+    assert any(path.name.endswith("_decoding.npy") for path in result.outputs)
+    assert any(path.name.endswith("_decodingsplits.npy") for path in result.outputs)
+    assert any(path.name.endswith("_decodingplot.png") for path in result.outputs)

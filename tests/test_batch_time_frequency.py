@@ -2,13 +2,15 @@ import numpy as np
 import pandas as pd
 import mne
 
+from meg_tokens.core import PowerConfig, ProjectConfig
 from meg_tokens.io import load_array, save_table
 from meg_tokens.meg.sources import source_derivative_path
-from meg_tokens.utils.batch_time_frequency import (
+from meg_tokens.workflows.power import (
     extract_power_from_manifest,
     find_stc_manifest,
     parse_frequency_bands,
 )
+from meg_tokens.workflows.power import extract_power_features
 
 
 def _write_stage3_manifest(root):
@@ -100,3 +102,23 @@ def test_extract_power_from_manifest_writes_bids_array_with_sidecar(tmp_path):
     assert meta["input_manifest"] == str(manifest)
     assert meta["band"] == "alpha"
     assert meta["condition"] == "Slow"
+
+
+def test_power_workflow_declares_manifest_and_band_output(tmp_path):
+    manifest = _write_stage3_manifest(tmp_path)
+
+    result = extract_power_features(
+        ProjectConfig(bids_root=tmp_path),
+        subjects=["H1"],
+        settings=PowerConfig(
+            run="Slow1",
+            bands=(("alpha", 8.0, 12.0),),
+            width=50,
+            step=25,
+        ),
+    )
+
+    assert result.stage == "source_power"
+    assert result.inputs == (manifest,)
+    assert len(result.outputs) == 1
+    assert result.outputs[0].is_file()

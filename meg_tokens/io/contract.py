@@ -153,6 +153,7 @@ def save_array(
 
     sidecar = {
         "format": "npy+json",
+        "schema_version": 1,
         "shape": list(array.shape),
         "dtype": str(array.dtype),
         "dims": list(dims),
@@ -204,6 +205,7 @@ def save_table(
     table.to_csv(out_path, index=False, sep=sep)
     sidecar = {
         "format": "tsv+json" if sep == "\t" else "csv+json",
+        "schema_version": 1,
         "n_rows": int(len(table)),
         "columns": list(table.columns),
         "metadata": _json_ready(metadata or {}),

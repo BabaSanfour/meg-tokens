@@ -5,7 +5,7 @@ import pandas as pd
 import pytest
 import mne
 from mne.io import RawArray
-from meg_tokens.utils.epochs_builder import (
+from meg_tokens.meg.epoching import (
     build_epochs_with_metadata,
     find_behavior_table,
     get_event_id,

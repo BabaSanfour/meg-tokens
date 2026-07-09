@@ -1,6 +1,6 @@
 import numpy as np
 import mne
-from meg_tokens.meg.time_frequency import (
+from meg_tokens.features.time_frequency import (
     compute_window_times,
     _slide_window,
     compute_hilbert_band_features,

@@ -2,8 +2,8 @@ import numpy as np
 import pandas as pd
 
 from meg_tokens.io import derivative_path, save_array, save_table, sidecar_path
-from meg_tokens.utils.batch_group_statistics import stats_derivative_path
-from meg_tokens.utils.batch_plot_statistics import (
+from meg_tokens.workflows.statistics import stats_derivative_path
+from meg_tokens.reports.statistics import (
     build_stats_summary,
     load_group_stats,
     run_group_statistics_plotting,

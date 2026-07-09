@@ -1,0 +1,70 @@
+project_config: config/tokens.toml
+bids_root: /path/to/tokens-bids
+raw_path_template: /path/to/raw-meg/{subject}/{run}.ds
+
+subjects:
+  - H01
+  - H02
+  - H03
+  - H04
+  - H05
+  - H06
+  - H07
+  - H08
+  - H09
+  - H10
+  - H11
+  - H12
+  - H13
+  - H14
+  - H15
+  - H16
+  - H17
+  - H18
+  - H19
+  - H20
+  - H21
+  - H22
+  - H23
+  - H24
+  - H25
+  - H26
+  - H27
+  - H28
+  - H29
+  - H30
+  - H31
+  - H32
+
+runs:
+  Fast:
+    - Fast1
+  Slow:
+    - Slow1
+
+alignment: go
+source_method: dSPM
+spacing: oct6
+parcellation: HCPMMP1
+feature_space: parcellated
+power_method: hilbert
+power_bands:
+  - theta
+  - alpha
+  - beta
+
+preprocessing:
+  high_pass: 0.5
+  low_pass: 150.0
+  run_ica: false
+
+statistics:
+  permutations: 1000
+  n_jobs: 1
+
+decoding:
+  permutations: 100
+  n_jobs: 4
+
+decomposition:
+  n_components: 20

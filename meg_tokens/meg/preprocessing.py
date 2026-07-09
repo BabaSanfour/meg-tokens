@@ -6,9 +6,8 @@ from mne.io import read_raw_ctf
 from mne.preprocessing import ICA, create_eog_epochs, create_ecg_epochs
 from typing import Optional
 
-from meg_tokens.io import derivative_path, ensure_dir, sidecar_path
-from meg_tokens.utils.batch_processor import normalize_subject_id
-from meg_tokens.utils.epochs_builder import parse_run_label
+from meg_tokens.core import normalize_subject_id, parse_run_label
+from meg_tokens.io import DerivativeLayout, ensure_dir, sidecar_path
 
 def load_and_filter_raw(
     raw_path: str,
@@ -64,23 +63,18 @@ def save_clean_raw(
     subject = normalize_subject_id(subject_id)
     run, inferred_condition = parse_run_label(run_id)
     condition = condition or inferred_condition
-    description = condition.lower() if condition else processing
-    raw_path = derivative_path(
-        output_root,
+    raw_path = DerivativeLayout(output_root).preprocessed_raw(
         subject=subject,
-        datatype="meg",
-        task="tokens",
         run=run,
         processing=processing,
-        description=description,
-        suffix="raw",
-        extension=".fif",
+        condition=condition,
     )
     ensure_dir(raw_path.parent)
     raw.save(str(raw_path), overwrite=overwrite)
     with sidecar_path(raw_path).open("w", encoding="utf-8") as f:
         json.dump(
             {
+                "schema_version": 1,
                 "format": "mne-raw-fif",
                 "stage": "preprocessing",
                 "subject": subject,
@@ -279,4 +273,3 @@ def realign_epochs(
     )
     
     return realigned_epochs
-

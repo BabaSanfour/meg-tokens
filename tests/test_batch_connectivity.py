@@ -1,11 +1,13 @@
 import numpy as np
 import pandas as pd
 
+from meg_tokens.core import ConnectivityConfig, ProjectConfig
 from meg_tokens.io import load_array, save_array, save_table
-from meg_tokens.utils.batch_connectivity import connectivity_derivative_path, run_batch_connectivity
-from meg_tokens.utils.batch_erp_parcellation import erp_derivative_path
-from meg_tokens.utils.batch_plot_connectivity_circle import load_connectivity_pairs_with_metadata
-from meg_tokens.utils.batch_plot_seed_connectivity import run_batch_plot_seed_connectivity
+from meg_tokens.workflows.connectivity import connectivity_derivative_path, run_batch_connectivity
+from meg_tokens.workflows.erp import erp_derivative_path
+from meg_tokens.reports.connectivity import load_connectivity_pairs_with_metadata
+from meg_tokens.reports.seed_connectivity import run_batch_plot_seed_connectivity
+from meg_tokens.workflows.connectivity import extract_connectivity_features
 
 
 LABELS = ["NodeA-lh", "NodeB-rh"]
@@ -101,7 +103,7 @@ def test_run_batch_connectivity_writes_window_band_derivative(tmp_path, monkeypa
         return np.array([[[0.0, value], [value, 0.0]]])
 
     monkeypatch.setattr(
-        "meg_tokens.utils.batch_connectivity.compute_spectral_connectivity",
+        "meg_tokens.workflows.connectivity.compute_spectral_connectivity",
         fixed_connectivity,
     )
 
@@ -123,6 +125,30 @@ def test_run_batch_connectivity_writes_window_band_derivative(tmp_path, monkeypa
     assert loaded.metadata["coords"]["band"] == ["alpha"]
     assert loaded.metadata["coords"]["node_from"] == LABELS
     assert loaded.metadata["metadata"]["input_feature"].endswith("_erp.npy")
+
+
+def test_connectivity_workflow_declares_erp_and_output(tmp_path, monkeypatch):
+    data = np.arange(2 * 2 * 5, dtype=float).reshape(2, 2, 5)
+    input_path = _write_erp(tmp_path, "H01", "Fast1", "Fast", data)
+
+    monkeypatch.setattr(
+        "meg_tokens.workflows.connectivity.compute_spectral_connectivity",
+        lambda window_data, **kwargs: np.zeros((1, 2, 2)),
+    )
+    result = extract_connectivity_features(
+        ProjectConfig(bids_root=tmp_path),
+        subjects=["H01"],
+        settings=ConnectivityConfig(
+            conditions=("Fast",),
+            bands=(("alpha", 8.0, 15.0),),
+            before_window=(0.0, 1.0),
+            after_window=(1.0, 2.0),
+        ),
+    )
+
+    assert result.stage == "connectivity_features"
+    assert result.inputs == (input_path,)
+    assert len(result.outputs) == 1
 
 
 def test_load_connectivity_pairs_averages_runs_within_subject(tmp_path):
@@ -153,7 +179,7 @@ def test_seed_connectivity_writes_node_vector_derivatives(tmp_path, monkeypatch)
         return np.array([0.0, 5.0]), np.array([1.0, 0.01]), np.array([0.0, 1.0])
 
     monkeypatch.setattr(
-        "meg_tokens.utils.batch_plot_seed_connectivity.permutation_t_test",
+        "meg_tokens.reports.seed_connectivity.permutation_t_test",
         fixed_ttest,
     )
 

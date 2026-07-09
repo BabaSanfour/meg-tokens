@@ -1,0 +1,93 @@
+"""Project-level paths and defaults loaded from a portable TOML file."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, fields
+from pathlib import Path
+from typing import Any, Mapping, Optional
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover - Python 3.10 compatibility
+    import tomli as tomllib
+
+
+def _optional_path(value: object, *, base_dir: Path) -> Optional[Path]:
+    if value is None:
+        return None
+    path = Path(str(value)).expanduser()
+    return path if path.is_absolute() else base_dir / path
+
+
+@dataclass(frozen=True)
+class ProjectConfig:
+    """Filesystem roots and stable naming defaults for a Tokens project."""
+
+    bids_root: Path
+    raw_meg_root: Optional[Path] = None
+    behavior_root: Optional[Path] = None
+    subjects_dir: Optional[Path] = None
+    trans_dir: Optional[Path] = None
+    noise_dir: Optional[Path] = None
+    task: str = "tokens"
+    pipeline: str = "meg-tokens"
+
+    def __post_init__(self) -> None:
+        for field_name in (
+            "bids_root",
+            "raw_meg_root",
+            "behavior_root",
+            "subjects_dir",
+            "trans_dir",
+            "noise_dir",
+        ):
+            value = getattr(self, field_name)
+            if value is not None:
+                object.__setattr__(self, field_name, Path(value).expanduser())
+        if not self.task.strip():
+            raise ValueError("task must not be empty")
+        if not self.pipeline.strip():
+            raise ValueError("pipeline must not be empty")
+
+    @classmethod
+    def from_mapping(
+        cls,
+        values: Mapping[str, Any],
+        *,
+        base_dir: str | Path = ".",
+    ) -> "ProjectConfig":
+        """Build configuration from a mapping and resolve relative paths."""
+        section = values.get("project", values)
+        if not isinstance(section, Mapping):
+            raise ValueError("Project configuration must be a table")
+
+        known = {item.name for item in fields(cls)}
+        unknown = sorted(set(section) - known)
+        if unknown:
+            raise ValueError(f"Unknown project configuration fields: {unknown}")
+        if "bids_root" not in section:
+            raise ValueError("Project configuration requires 'bids_root'")
+
+        root = Path(base_dir).expanduser()
+        kwargs = dict(section)
+        for name in (
+            "bids_root",
+            "raw_meg_root",
+            "behavior_root",
+            "subjects_dir",
+            "trans_dir",
+            "noise_dir",
+        ):
+            if name in kwargs:
+                kwargs[name] = _optional_path(kwargs[name], base_dir=root)
+        return cls(**kwargs)
+
+    @classmethod
+    def from_toml(cls, path: str | Path) -> "ProjectConfig":
+        """Load a project configuration from TOML."""
+        config_path = Path(path).expanduser()
+        if not config_path.is_file():
+            raise FileNotFoundError(f"Project configuration does not exist: {config_path}")
+        with config_path.open("rb") as stream:
+            values = tomllib.load(stream)
+        return cls.from_mapping(values, base_dir=config_path.parent)

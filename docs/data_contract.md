@@ -28,6 +28,7 @@ MNE-Python, BIDS/MNE-BIDS-style derivatives, and explicit analysis tensors.
 Every `.npy` derivative written by the refactored pipeline should have a JSON
 sidecar containing:
 
+- `schema_version`
 - `shape`
 - `dtype`
 - `dims`
@@ -35,6 +36,11 @@ sidecar containing:
 - `metadata`
 
 Downstream stages should validate the sidecar before consuming an array.
+
+The Python API may load these files as `xarray.DataArray` objects through
+`meg_tokens.io.load_dataarray`. Named dimensions and one-dimensional
+coordinates come from the existing JSON sidecar; this does not introduce a new
+on-disk format. `save_dataarray` writes the same `.npy` plus JSON pair.
 
 ## Behavior Tables
 
@@ -62,6 +68,16 @@ Required trial columns include:
 
 Subject labels are normalized to `H01` style. The behavior parser validates
 sequential trial indices and basic event ordering before writing a table.
+
+The behavior analysis workflow consumes these run tables and writes:
+
+```text
+derivatives/meg-tokens/sub-group/beh/sub-group_task-tokens_desc-summary_beh.tsv
+```
+
+This table contains one row per subject with motor baseline, Fast/Slow decision
+times, accuracy, trial-class decision times, and post-error measures. Its JSON
+sidecar records the contributing run tables.
 
 ## Preprocessed Raw Files
 
@@ -113,8 +129,8 @@ derivatives/meg-tokens/sub-H01/meg/sub-H01_task-tokens_run-1_desc-slow-go-dSPM_i
 ```
 
 Mixed surface+volume source spaces are explicit and do not overwrite
-cortical-only derivatives. When `batch_sources.py` is run with
-`--volume_labels`, the source-space derivative uses:
+cortical-only derivatives. When `meg-tokens meg source` is run with
+`--volume-labels`, the source-space derivative uses:
 
 ```text
 derivatives/meg-tokens/sub-H01/meg/sub-H01_task-tokens_space-subject_desc-oct6-mixed_src.fif
@@ -198,8 +214,7 @@ The `specparam.tsv` table stores one row per channel with aperiodic parameters,
 fit metrics, and the number of fitted peaks. The `specparampeaks.tsv` table
 stores one row per fitted periodic peak with center frequency, power, and
 bandwidth. This replaces the old FOOOF runtime dependency with the declared
-`specparam` dependency while keeping the legacy command name as a compatibility
-entry point.
+`specparam` dependency.
 
 ## ERP Slicing And Parcellation
 
@@ -239,8 +254,8 @@ The same command can write source-coordinate variants when legacy all-source or
 deep/volume analyses are required:
 
 ```bash
-python -m meg_tokens.utils.batch_erp_parcellation --feature_space all_source ...
-python -m meg_tokens.utils.batch_erp_parcellation --feature_space volume ...
+meg-tokens features erp --feature-space all_source ...
+meg-tokens features erp --feature-space volume ...
 ```
 
 All-source output uses:
@@ -492,9 +507,9 @@ raise a clear input error rather than recomputing or fabricating features.
 Real-subject validation is run from a JSON comparison config:
 
 ```bash
-python -m meg_tokens.utils.batch_validate_golden \
-  --config /path/to/golden_validation.json \
-  --out_tsv /path/to/tokens-bids/derivatives/meg-tokens/sub-group/meg/sub-group_task-tokens_desc-golden-validation_validation.tsv
+meg-tokens validate golden \
+  --comparison-config /path/to/golden_validation.json \
+  --out-tsv /path/to/tokens-bids/derivatives/meg-tokens/sub-group/meg/sub-group_task-tokens_desc-golden-validation_validation.tsv
 ```
 
 The config contains a non-empty `comparisons` list. Each item names a modern
@@ -525,7 +540,7 @@ derivative, a frozen real-reference derivative, and a comparison kind:
 ```
 
 Missing files raise a clear input error. Mismatches are written to the report
-and cause the command to exit nonzero unless `--allow_failures` is supplied.
+and cause the command to exit nonzero unless `--allow-failures` is supplied.
 
 ## Path Convention
 

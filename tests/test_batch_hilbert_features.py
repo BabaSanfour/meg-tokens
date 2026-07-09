@@ -1,11 +1,13 @@
 import numpy as np
 
+from meg_tokens.core import HilbertConfig, ProjectConfig
 from meg_tokens.io import load_array, save_array
-from meg_tokens.utils.batch_erp_parcellation import erp_derivative_path
-from meg_tokens.utils.batch_hilbert_features import (
+from meg_tokens.workflows.erp import erp_derivative_path
+from meg_tokens.workflows.hilbert import (
     hilbert_feature_derivative_path,
     run_batch_hilbert_features,
 )
+from meg_tokens.workflows.hilbert import extract_hilbert_features
 
 
 def _write_erp(root):
@@ -86,3 +88,22 @@ def test_run_batch_hilbert_features_writes_sidecar_backed_arrays(tmp_path):
     assert loaded.metadata["metadata"]["stage"] == "hilbert_features"
     assert loaded.metadata["metadata"]["feature"] == "amplitude"
     assert loaded.metadata["metadata"]["input_feature"] == str(input_path)
+
+
+def test_hilbert_workflow_declares_erp_and_outputs(tmp_path):
+    input_path = _write_erp(tmp_path)
+
+    result = extract_hilbert_features(
+        ProjectConfig(bids_root=tmp_path),
+        subjects=["H1"],
+        settings=HilbertConfig(
+            conditions=("Fast",),
+            labels=("Alpha-lh",),
+            bands=(("alpha", 8.0, 12.0),),
+            features=("amplitude", "phase"),
+        ),
+    )
+
+    assert result.stage == "hilbert_features"
+    assert result.inputs == (input_path,)
+    assert len(result.outputs) == 2

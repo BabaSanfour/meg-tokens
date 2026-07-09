@@ -1,6 +1,6 @@
 import numpy as np
 
-from meg_tokens.meg.pac import modulation_index, select_time_window
+from meg_tokens.features.pac import modulation_index, select_time_window
 
 
 def test_modulation_index_detects_phase_locked_amplitude():

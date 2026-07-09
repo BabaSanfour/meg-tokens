@@ -5,7 +5,7 @@ import mne
 import tempfile
 import os
 
-from meg_tokens.meg.erp import (
+from meg_tokens.features.erp import (
     align_and_pad_epochs,
     parcellate_source_estimates,
     export_neural_space
@@ -89,7 +89,7 @@ def test_parcellate_source_estimates(monkeypatch):
 
     label_sets = {"lh": [label_lh], "rh": [label_rh]}
     monkeypatch.setattr(
-        "meg_tokens.meg.erp.mne.read_labels_from_annot",
+        "meg_tokens.features.erp.mne.read_labels_from_annot",
         lambda subject, parc, hemi, subjects_dir: label_sets[hemi],
     )
     

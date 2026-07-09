@@ -1,7 +1,7 @@
 import os
 import pytest
 import pandas as pd
-from meg_tokens.utils.tdms_parser import parse_single_trial, parse_tdms_file, validate_behavior_dataframe
+from meg_tokens.behavior.tdms import parse_single_trial, parse_tdms_file, validate_behavior_dataframe
 
 # Sample Events string mimicking the real TDMS structure
 EVENTS_STR = """sTaskType: 'TokensMvt'

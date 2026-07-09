@@ -1,0 +1,9 @@
+[project]
+bids_root = "/path/to/tokens-bids"
+raw_meg_root = "/path/to/raw-meg"
+behavior_root = "/path/to/tdms"
+subjects_dir = "/path/to/freesurfer-subjects"
+trans_dir = "/path/to/trans-files"
+noise_dir = "/path/to/noise-recordings"
+task = "tokens"
+pipeline = "meg-tokens"

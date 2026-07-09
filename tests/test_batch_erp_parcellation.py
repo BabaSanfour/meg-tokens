@@ -3,13 +3,15 @@ import pandas as pd
 import pytest
 import mne
 
+from meg_tokens.core import ERPConfig, ProjectConfig
 from meg_tokens.io import derivative_path, load_array, save_table
 from meg_tokens.meg.sources import source_derivative_path
-from meg_tokens.utils.batch_erp_parcellation import (
+from meg_tokens.workflows.erp import (
     erp_derivative_path,
     extract_parcellated_erp_from_manifest,
     run_erp_parcellation_pipeline,
 )
+from meg_tokens.workflows.erp import extract_erp_features
 
 
 def _write_stage_inputs(root, n_trials=2):
@@ -117,7 +119,7 @@ def test_extract_parcellated_erp_from_manifest_writes_array_and_trials(tmp_path,
         return ["Label_1-lh", "Label_2-rh"], stc.data
 
     monkeypatch.setattr(
-        "meg_tokens.utils.batch_erp_parcellation.parcellate_source_estimates",
+        "meg_tokens.workflows.erp.parcellate_source_estimates",
         simple_parcellation,
     )
 
@@ -152,7 +154,7 @@ def test_extract_parcellated_erp_rejects_trial_count_mismatch(tmp_path, monkeypa
     save_table(behavior, table, metadata={"stage": "behavior_parsing"})
 
     monkeypatch.setattr(
-        "meg_tokens.utils.batch_erp_parcellation.parcellate_source_estimates",
+        "meg_tokens.workflows.erp.parcellate_source_estimates",
         lambda stc, **kwargs: (["Label"], stc.data[:1]),
     )
 
@@ -211,7 +213,7 @@ def test_run_erp_parcellation_pipeline_finds_stage_inputs(tmp_path, monkeypatch)
     _write_stage_inputs(tmp_path)
 
     monkeypatch.setattr(
-        "meg_tokens.utils.batch_erp_parcellation.parcellate_source_estimates",
+        "meg_tokens.workflows.erp.parcellate_source_estimates",
         lambda stc, **kwargs: (["Label_1-lh", "Label_2-rh"], stc.data),
     )
 
@@ -229,3 +231,22 @@ def test_run_erp_parcellation_pipeline_finds_stage_inputs(tmp_path, monkeypatch)
 
     assert "H01" in outputs
     assert outputs["H01"]["data"].is_file()
+
+
+def test_erp_workflow_declares_inputs_and_outputs(tmp_path):
+    manifest, behavior = _write_stage_inputs(tmp_path)
+
+    result = extract_erp_features(
+        ProjectConfig(bids_root=tmp_path),
+        subjects=["H1"],
+        settings=ERPConfig(
+            run="Slow1",
+            feature_space="all_source",
+            max_duration_samples=300,
+        ),
+    )
+
+    assert result.stage == "erp_features"
+    assert result.inputs == (manifest, behavior)
+    assert len(result.outputs) == 2
+    assert all(path.is_file() for path in result.outputs)

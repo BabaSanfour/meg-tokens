@@ -2,12 +2,12 @@ import os
 import pytest
 import pandas as pd
 
-from meg_tokens.utils.batch_processor import (
+from meg_tokens.behavior.tdms import (
     FILENAME_RE,
-    behavior_output_path,
     parse_tdms_filename,
-    process_subject_tdms,
 )
+from meg_tokens.io import DerivativeLayout
+from meg_tokens.workflows.behavior import ingest_subject_behavior
 
 # Test regex match groupings
 @pytest.mark.parametrize("filename,expected", [
@@ -43,7 +43,12 @@ def test_batch_process_dry_run(tmp_path):
             fh.write("")
             
     # Run process in dry_run mode
-    results = process_subject_tdms("H1", str(input_dir), str(output_dir), dry_run=True)
+    results = ingest_subject_behavior(
+        "H1",
+        input_root=input_dir,
+        output_root=output_dir,
+        dry_run=True,
+    )
     
     assert len(results) == 3
     assert results[0]['output'].endswith(
@@ -82,12 +87,22 @@ def test_batch_process_writes_behavior_derivative(tmp_path, monkeypatch):
         "nProb": [[0.6, 0.8], 0],
     })
 
-    monkeypatch.setattr("meg_tokens.utils.batch_processor.parse_tdms_file", lambda _: parsed_df)
+    monkeypatch.setattr("meg_tokens.workflows.behavior.parse_tdms_file", lambda _: parsed_df)
 
-    results = process_subject_tdms("H1", str(input_dir), str(output_dir), dry_run=False)
+    results = ingest_subject_behavior(
+        "H1",
+        input_root=input_dir,
+        output_root=output_dir,
+        dry_run=False,
+    )
 
     assert len(results) == 1
-    out_path = behavior_output_path(str(output_dir), parse_tdms_filename("H1Fast2_180131.tdms"))
+    run = parse_tdms_filename("H1Fast2_180131.tdms")
+    out_path = DerivativeLayout(output_dir).behavior(
+        subject=run.subject,
+        run=run.run,
+        condition=run.condition,
+    )
     sidecar_path = out_path.with_suffix(".json")
     assert out_path.exists()
     assert sidecar_path.exists()

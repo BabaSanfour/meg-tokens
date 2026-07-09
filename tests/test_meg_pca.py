@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from meg_tokens.meg.pca import apply_neural_transform, fit_condition_pca
+from meg_tokens.analysis.decomposition import apply_neural_transform, fit_condition_pca
 
 
 def test_fit_condition_pca_projects_raw_condition_means_like_nmdata():

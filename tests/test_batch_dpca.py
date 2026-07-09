@@ -1,9 +1,11 @@
 import numpy as np
 import pandas as pd
 
+from meg_tokens.core import DecompositionConfig, ProjectConfig
 from meg_tokens.io import load_array, save_array, save_table
-from meg_tokens.utils.batch_dpca import build_dpca_tensor, run_pca_trajectory
-from meg_tokens.utils.batch_erp_parcellation import erp_derivative_path
+from meg_tokens.workflows.decomposition import build_dpca_tensor, run_pca_trajectory
+from meg_tokens.workflows.erp import erp_derivative_path
+from meg_tokens.workflows.decomposition import run_decomposition
 
 
 LABELS = ["Pair-lh", "Pair-rh"]
@@ -134,3 +136,23 @@ def test_build_dpca_tensor_uses_real_trial_metadata_cells():
     assert values == {"sTrialClass": ["1", "2"], "nChoiceMade": ["left", "right"]}
     assert counts["n_trials"].tolist() == [1, 1, 1, 1]
     np.testing.assert_array_equal(mean_tensor[:, 0, 0, :], X[0])
+
+
+def test_decomposition_workflow_declares_features_and_outputs(tmp_path):
+    base = np.arange(2 * 2 * 3, dtype=float).reshape(2, 2, 3)
+    inputs = [
+        _write_erp(tmp_path, "H01", "Fast1", "Fast", base + 1),
+        _write_erp(tmp_path, "H01", "Slow1", "Slow", base + 11),
+        _write_erp(tmp_path, "H02", "Fast1", "Fast", base + 21),
+        _write_erp(tmp_path, "H02", "Slow1", "Slow", base + 31),
+    ]
+
+    result = run_decomposition(
+        ProjectConfig(bids_root=tmp_path),
+        subjects=["H01", "H02"],
+        settings=DecompositionConfig(n_components=2),
+    )
+
+    assert result.stage == "pca_decomposition"
+    assert set(result.inputs) == set(inputs)
+    assert len(result.outputs) == 7
