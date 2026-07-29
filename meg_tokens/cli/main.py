@@ -26,6 +26,7 @@ from meg_tokens.core import (
     SpatialDecodingConfig,
     SpectralConfig,
     StatisticsConfig,
+    normalize_subject_id,
 )
 
 
@@ -1368,6 +1369,15 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     """Execute one workflow command."""
     parser = build_parser()
     args = parser.parse_args(argv)
+    # The one place a subject label enters the system. Normalizing here means
+    # `--subjects H1`, `h01` and `H01` are the same run from this line on, and
+    # nothing downstream has to re-check: the disk is canonical after
+    # BIDSification, so the only non-canonical labels are the ones typed here.
+    if getattr(args, "subjects", None):
+        try:
+            args.subjects = [normalize_subject_id(s) for s in args.subjects]
+        except ValueError as error:
+            parser.error(str(error))
     command = getattr(args, _COMMAND_DEST[args.domain])
     try:
         project = _project_from_args(args)

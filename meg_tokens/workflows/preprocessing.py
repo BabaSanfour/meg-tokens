@@ -15,7 +15,6 @@ from meg_tokens.core import (
     ProjectConfig,
     RunSpec,
     WorkflowResult,
-    normalize_subject_id,
 )
 from meg_tokens.io import DerivativeLayout
 from meg_tokens.meg.epoching import (
@@ -133,7 +132,7 @@ def preprocess_subjects(
             "and `meg-tokens meg apply-raw-staging` before preprocessing."
         )
 
-    selected = [normalize_subject_id(s) for s in (subjects or staged_subjects(bids_root))]
+    selected = list(subjects or staged_subjects(bids_root))
     if not selected:
         raise FileNotFoundError(f"No staged subject MEG was found under {bids_root}")
 
@@ -189,8 +188,7 @@ def epoch_subjects(
     inputs = []
     outputs = []
 
-    for subject_value in subjects:
-        subject = normalize_subject_id(subject_value)
+    for subject in subjects:
         runs = preprocessed_meg_runs(raw_layout, subject)
         if not runs:
             raise FileNotFoundError(
@@ -268,7 +266,7 @@ def epoch_subjects(
         inputs=tuple(inputs),
         outputs=tuple(outputs),
         settings={
-            "subjects": [normalize_subject_id(subject) for subject in subjects],
+            "subjects": list(subjects),
             "alignment": settings.alignment,
             "tmin": settings.tmin,
             "tmax": settings.tmax,
