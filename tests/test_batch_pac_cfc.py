@@ -120,10 +120,11 @@ def test_run_batch_pac_cfc_writes_modulation_index_derivative(tmp_path):
 
 
 def test_pac_workflow_declares_hilbert_inputs_and_output(tmp_path):
-    phase_path, amplitude_path = _write_inputs(tmp_path)
+    project = ProjectConfig(data_root=tmp_path)
+    phase_path, amplitude_path = _write_inputs(project.bids_root)
 
     result = extract_pac_features(
-        ProjectConfig(bids_root=tmp_path),
+        project,
         subjects=["H1"],
         settings=PACConfig(
             conditions=("Fast",),

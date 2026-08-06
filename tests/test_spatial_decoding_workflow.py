@@ -49,7 +49,7 @@ def test_spatial_decoding_workflow_saves_labeled_scores(tmp_path, monkeypatch):
     )
 
     result = run_spatial_decoding(
-        ProjectConfig(bids_root=tmp_path),
+        ProjectConfig(data_root=tmp_path),
         settings=SpatialDecodingConfig(),
         data_dir=tmp_path,
     )

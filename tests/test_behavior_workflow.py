@@ -3,6 +3,7 @@ import json
 import pandas as pd
 import pytest
 
+from meg_tokens.behavior.tdms import OUTCOME_NEVER_STARTED
 from meg_tokens.cli import main
 from meg_tokens.core import ProjectConfig
 from meg_tokens.io import DerivativeLayout, save_table, sidecar_path
@@ -19,6 +20,10 @@ def _behavior_table(subject, condition, run, enter_times, choices, correct):
             "source_file": [f"{subject}{condition}{run}_recording.tdms"] * n_trials,
             "nTrialIndex": list(range(1, n_trials + 1)),
             "sTrialClass": list(range(1, n_trials + 1)),
+            "sTrialClassRaw": ["e", "a"][:n_trials],
+            "trial_class_source": ["design"] * n_trials,
+            "trial_class_rule": ["recorded_label"] * n_trials,
+            "sp_design_correct": ["[0.6, 0.8]"] * n_trials,
             "nInitialTime": [0] * n_trials,
             "nChoiceMade": choices,
             "nCorrectChoice": correct,
@@ -26,8 +31,13 @@ def _behavior_table(subject, condition, run, enter_times, choices, correct):
             "tEnterTarget": enter_times,
             "tTrialEnd": [value + 200 for value in enter_times],
             "sTokenDirs": ["121"] * n_trials,
+            "nTokenNum": ["[1, 2]"] * n_trials,
+            "nTokenDir": ["[1, 2]"] * n_trials,
             "tTime": ["[1100, 1300]"] * n_trials,
             "nProb": ["[0.6, 0.8]"] * n_trials,
+            "token_log_rows": [2] * n_trials,
+            "token_log_short": [False] * n_trials,
+            "nOutcome": [0] * n_trials,
             "rawRT": [value - 1000 for value in enter_times],
             "isCorrect": [
                 choice == expected
@@ -37,8 +47,8 @@ def _behavior_table(subject, condition, run, enter_times, choices, correct):
     )
 
 
-def _write_behavior_inputs(root):
-    layout = DerivativeLayout(root)
+def _write_behavior_inputs(bids_root):
+    layout = DerivativeLayout(bids_root)
     tables = [
         _behavior_table("H01", "RT", 1, [1300, 1400], [1, 2], [1, 2]),
         _behavior_table("H01", "Fast", 2, [1900, 2100], [1, 2], [1, 1]),
@@ -55,31 +65,66 @@ def _write_behavior_inputs(root):
 
 
 def test_analyze_behavior_writes_group_summary(tmp_path):
-    _write_behavior_inputs(tmp_path)
-    project = ProjectConfig(bids_root=tmp_path)
+    project = ProjectConfig(data_root=tmp_path)
+    _write_behavior_inputs(project.bids_root)
 
     result = analyze_behavior(project)
 
     assert result.stage == "behavior_analysis"
-    assert result.outputs == (DerivativeLayout(tmp_path).behavior_summary(),)
+    assert result.outputs == (DerivativeLayout(project.bids_root).behavior_summary(),)
     summary = pd.read_csv(result.outputs[0], sep="\t")
     assert summary["subject"].tolist() == ["H01"]
     assert summary["motor_baseline_ms"].iloc[0] == pytest.approx(350.0)
     assert summary["mean_fast_dt_ms"].iloc[0] == pytest.approx(650.0)
     assert summary["mean_slow_dt_ms"].iloc[0] == pytest.approx(1150.0)
     assert summary["percent_correct"].iloc[0] == pytest.approx(75.0)
+    assert summary["n_spd_all_logged"].iloc[0] == 4
+    assert summary["mean_spd_all_logged"].iloc[0] == pytest.approx(0.8)
+    assert summary["n_spd_validated_15row"].iloc[0] == 0
+    assert pd.isna(summary["mean_spd_validated_15row"].iloc[0])
 
     metadata = json.loads(sidecar_path(result.outputs[0]).read_text(encoding="utf-8"))
     assert metadata["schema_version"] == 1
     assert metadata["metadata"]["stage"] == "behavior_analysis"
+    assert metadata["metadata"]["spd"]["views"] == [
+        "all_logged",
+        "validated_15row",
+    ]
+    assert metadata["metadata"]["spd"]["short_log_design_alignment"] == "forbidden"
+
+
+def test_analyze_behavior_excludes_never_started_trials_but_preserves_input(tmp_path):
+    project = ProjectConfig(data_root=tmp_path)
+    _write_behavior_inputs(project.bids_root)
+    layout = DerivativeLayout(project.bids_root)
+    fast_path = layout.behavior(subject="H01", run="2", condition="Fast")
+    fast = pd.read_csv(fast_path, sep="\t")
+    fast.loc[0, ["nOutcome", "tGO", "nChoiceMade", "tEnterTarget"]] = [
+        OUTCOME_NEVER_STARTED,
+        0,
+        0,
+        0,
+    ]
+    fast.loc[0, "rawRT"] = float("nan")
+    fast["isCorrect"] = fast["isCorrect"].astype("boolean")
+    fast.loc[0, "isCorrect"] = pd.NA
+    save_table(fast_path, fast, metadata={"stage": "behavior_parsing"})
+
+    result = analyze_behavior(project)
+
+    summary = pd.read_csv(result.outputs[0], sep="\t").iloc[0]
+    assert summary["n_fast_trials"] == 1
+    assert summary["n_never_started_trials"] == 1
+    assert summary["mean_fast_dt_ms"] == pytest.approx(750.0)
+    preserved = pd.read_csv(fast_path, sep="\t")
+    assert preserved["nOutcome"].tolist() == [OUTCOME_NEVER_STARTED, 0]
 
 
 def test_ingest_behavior_dry_run_declares_outputs(tmp_path):
-    input_root = tmp_path / "tdms"
-    subject_dir = input_root / "H1"
+    project = ProjectConfig(data_root=tmp_path)
+    subject_dir = project.behavior_root / "H1"
     subject_dir.mkdir(parents=True)
     (subject_dir / "H1Slow1_180131.tdms").write_text("", encoding="utf-8")
-    project = ProjectConfig(bids_root=tmp_path / "bids", behavior_root=input_root)
 
     result = ingest_behavior(project, dry_run=True)
 
@@ -90,26 +135,27 @@ def test_ingest_behavior_dry_run_declares_outputs(tmp_path):
 
 
 def test_unified_cli_runs_behavior_analysis(tmp_path, capsys):
-    _write_behavior_inputs(tmp_path)
+    project = ProjectConfig(data_root=tmp_path)
+    _write_behavior_inputs(project.bids_root)
 
     exit_code = main(
         [
             "behavior",
             "analyze",
-            "--bids-root",
+            "--data-root",
             str(tmp_path),
         ]
     )
 
     assert exit_code == 0
-    assert str(DerivativeLayout(tmp_path).behavior_summary()) in capsys.readouterr().out
+    assert str(DerivativeLayout(project.bids_root).behavior_summary()) in capsys.readouterr().out
 
 
 def test_unified_cli_help_is_side_effect_free(capsys):
     with pytest.raises(SystemExit) as error:
         main(["behavior", "ingest", "--help"])
     assert error.value.code == 0
-    assert "--input-dir" in capsys.readouterr().out
+    assert "--data-root" in capsys.readouterr().out
 
 
 def test_unified_meg_cli_help_is_available(capsys):

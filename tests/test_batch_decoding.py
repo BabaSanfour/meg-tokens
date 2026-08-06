@@ -226,14 +226,15 @@ def test_run_batch_decoding_writes_derivatives_and_preserves_invalid_times(tmp_p
 
 
 def test_decoding_workflow_declares_features_and_outputs(tmp_path, monkeypatch):
-    _write_decoding_inputs(tmp_path)
+    project = ProjectConfig(data_root=tmp_path)
+    _write_decoding_inputs(project.bids_root)
     monkeypatch.setattr(
         "meg_tokens.workflows.decoding.compute_time_resolved_decoding",
         lambda X, y, groups, balance, n_jobs: np.array([[0.5, 0.6, 0.7]]),
     )
 
     result = run_decoding(
-        ProjectConfig(bids_root=tmp_path),
+        project,
         subjects=["H01", "H02"],
         settings=DecodingConfig(labels=("Pair-lh",), n_jobs=1),
     )

@@ -76,6 +76,10 @@ def test_batch_process_writes_behavior_derivative(tmp_path, monkeypatch):
     parsed_df = pd.DataFrame({
         "nTrialIndex": [1, 2],
         "sTrialClass": [1, 2],
+        "sTrialClassRaw": ["e", "a"],
+        "trial_class_source": ["design", "design"],
+        "trial_class_rule": ["recorded_label", "recorded_label"],
+        "sp_design_correct": [[0.6, 0.8], [0.6, 0.8]],
         "nInitialTime": [10, 20],
         "nChoiceMade": [1, 0],
         "nCorrectChoice": [1, 2],
@@ -83,8 +87,13 @@ def test_batch_process_writes_behavior_derivative(tmp_path, monkeypatch):
         "tEnterTarget": [1400, 0],
         "tTrialEnd": [1700, 2100],
         "sTokenDirs": ["121", "212"],
+        "nTokenNum": [[1, 2], 0],
+        "nTokenDir": [[1, 2], 0],
         "tTime": [[1100, 1300], 0],
         "nProb": [[0.6, 0.8], 0],
+        "token_log_rows": [2, 0],
+        "token_log_short": [False, False],
+        "nOutcome": [0, 0],
     })
 
     monkeypatch.setattr("meg_tokens.workflows.behavior.parse_tdms_file", lambda _: parsed_df)
@@ -114,3 +123,66 @@ def test_batch_process_writes_behavior_derivative(tmp_path, monkeypatch):
     assert written["rawRT"].iloc[0] == 400
     assert pd.isna(written["rawRT"].iloc[1])
     assert written["isCorrect"].iloc[0] is True or written["isCorrect"].iloc[0] == True
+
+
+def test_batch_process_raises_on_unrecognized_filename(tmp_path):
+    input_dir = tmp_path / "tdms"
+    output_dir = tmp_path / "dataframes"
+    subject_input_dir = input_dir / "H1"
+    os.makedirs(subject_input_dir, exist_ok=True)
+
+    (subject_input_dir / "H1Slow1_180131.tdms").write_text("")
+    (subject_input_dir / "temp_180131.tdms").write_text("")
+
+    with pytest.raises(ValueError, match="temp_180131.tdms"):
+        ingest_subject_behavior(
+            "H1",
+            input_root=input_dir,
+            output_root=output_dir,
+            dry_run=True,
+        )
+
+
+def test_batch_process_ignore_files_excludes_unrecognized_filename(tmp_path):
+    input_dir = tmp_path / "tdms"
+    output_dir = tmp_path / "dataframes"
+    subject_input_dir = input_dir / "H1"
+    os.makedirs(subject_input_dir, exist_ok=True)
+
+    (subject_input_dir / "H1Slow1_180131.tdms").write_text("")
+    (subject_input_dir / "temp_180131.tdms").write_text("")
+
+    results = ingest_subject_behavior(
+        "H1",
+        input_root=input_dir,
+        output_root=output_dir,
+        dry_run=True,
+        ignore_files=["temp_180131.tdms"],
+    )
+
+    assert len(results) == 1
+    assert results[0]["condition"] == "Slow"
+
+
+def test_batch_process_raises_on_duplicate_run(tmp_path):
+    input_dir = tmp_path / "tdms"
+    output_dir = tmp_path / "dataframes"
+    subject_input_dir = input_dir / "H1"
+    os.makedirs(subject_input_dir, exist_ok=True)
+
+    # Two distinct source dates parsing to the same (subject, condition, run).
+    (subject_input_dir / "H1Slow1_180131.tdms").write_text("")
+    (subject_input_dir / "H1Slow1_190101.tdms").write_text("")
+
+    with pytest.raises(ValueError, match="Duplicate TDMS run"):
+        ingest_subject_behavior(
+            "H1",
+            input_root=input_dir,
+            output_root=output_dir,
+            dry_run=True,
+        )
+
+
+def test_filename_regex_rejects_non_six_digit_date():
+    assert FILENAME_RE.match("H1Slow1_18013.tdms") is None
+    assert FILENAME_RE.match("H1Slow1_2018-01-31.tdms") is None

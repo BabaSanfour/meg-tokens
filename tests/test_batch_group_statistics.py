@@ -162,7 +162,8 @@ def test_run_group_statistics_requires_two_subjects(tmp_path):
 
 
 def test_statistics_workflow_declares_group_inputs_and_outputs(tmp_path, monkeypatch):
-    _write_group_inputs(tmp_path)
+    project = ProjectConfig(data_root=tmp_path)
+    _write_group_inputs(project.bids_root)
     monkeypatch.setattr(
         "meg_tokens.workflows.statistics.compute_permutation_t_test",
         lambda data, n_permutations, tail, n_jobs: (
@@ -173,7 +174,7 @@ def test_statistics_workflow_declares_group_inputs_and_outputs(tmp_path, monkeyp
     )
 
     result = run_group_statistics(
-        ProjectConfig(bids_root=tmp_path),
+        project,
         subjects=["H01", "H02"],
         settings=StatisticsConfig(permutations=2),
     )
@@ -221,10 +222,11 @@ def test_lateralized_statistics_uses_homologous_label_difference(tmp_path, monke
 
 
 def test_lateralized_statistics_workflow_declares_inputs(tmp_path, monkeypatch):
+    project = ProjectConfig(data_root=tmp_path)
     labels = ["Motor-lh", "Motor-rh"]
     values = np.ones((2, 2, 3))
-    _write_erp(tmp_path, "H01", "Fast1", "Fast", values, labels=labels)
-    _write_erp(tmp_path, "H02", "Fast1", "Fast", values, labels=labels)
+    _write_erp(project.bids_root, "H01", "Fast1", "Fast", values, labels=labels)
+    _write_erp(project.bids_root, "H02", "Fast1", "Fast", values, labels=labels)
     monkeypatch.setattr(
         "meg_tokens.workflows.statistics.compute_permutation_t_test",
         lambda data, n_permutations, tail, n_jobs: (
@@ -235,7 +237,7 @@ def test_lateralized_statistics_workflow_declares_inputs(tmp_path, monkeypatch):
     )
 
     result = run_lateralized_statistics(
-        ProjectConfig(bids_root=tmp_path),
+        project,
         subjects=["H01", "H02"],
         settings=LateralizedStatisticsConfig(condition="Fast", permutations=2),
     )

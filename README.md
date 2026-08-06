@@ -42,21 +42,22 @@ The analysis pipeline is designed to be executed sequentially from raw data inge
 ## 💾 Data Locations
 
 > [!NOTE]
-> The raw data files are large and are stored on external drives rather than tracked in this repository.
+> The raw data files are large and are stored outside this repository.
 
-*   **Raw MEG Brain Recordings**
-    *   `[Hamza Drive] /media/karim/Hamza/DDM-tthiery/`
+All project data lives under one convention data root, `meg-tokens`:
+
+*   **`raw/`** — Raw MEG brain recordings.
     *   Contains raw CTF MEG datasets (`.ds` folders), digitized head shapes, and fiducial photos.
-*   **Behavioral Logs (TDMS)**
-    *   `[cc197cfe-12fc-4d55-b0a8-4f52a93ef003 Drive] /media/karim/cc197cfe-12fc-4d55-b0a8-4f52a93ef003/DDM/tdms/`
+*   **`tdms/`** — Raw behavioral logs (TDMS).
     *   Contains LabVIEW behavioral event logs for all 32 subjects (`H1` to `H32`).
-*   **Parsed Behavioral Derivatives**
-    *   Choose a BIDS derivatives root, for example `/path/to/tokens-bids/`.
-    *   Stage 1 writes tables such as `derivatives/meg-tokens/sub-H01/beh/sub-H01_task-tokens_run-1_desc-slow_beh.tsv`.
+*   **`BIDS/`** — Parsed and derived outputs (where the pipeline writes).
 
-Project roots can be collected in a TOML file based on
-[`config/tokens.toml.template`](config/tokens.toml.template). Relative paths
-are resolved from the configuration file location.
+Set `data_root` once in a TOML file based on 
+[`config/tokens.toml.template`](config/tokens.toml.template) and `raw_meg_root`, `behavior_root`,
+and `bids_root` default to `data_root/raw`, `data_root/tdms`, and `data_root/BIDS` respectively
+— no per-field paths to keep in sync. Any of the three can still be overridden individually 
+(e.g. if raw MEG stays on a separate external drive) by uncommenting the matching line in the 
+template. Relative paths are resolved from the configuration file location.
 
 ---
 *Note: This repository was refactored and organized starting 2026-06-25.*

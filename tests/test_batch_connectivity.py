@@ -128,15 +128,16 @@ def test_run_batch_connectivity_writes_window_band_derivative(tmp_path, monkeypa
 
 
 def test_connectivity_workflow_declares_erp_and_output(tmp_path, monkeypatch):
+    project = ProjectConfig(data_root=tmp_path)
     data = np.arange(2 * 2 * 5, dtype=float).reshape(2, 2, 5)
-    input_path = _write_erp(tmp_path, "H01", "Fast1", "Fast", data)
+    input_path = _write_erp(project.bids_root, "H01", "Fast1", "Fast", data)
 
     monkeypatch.setattr(
         "meg_tokens.workflows.connectivity.compute_spectral_connectivity",
         lambda window_data, **kwargs: np.zeros((1, 2, 2)),
     )
     result = extract_connectivity_features(
-        ProjectConfig(bids_root=tmp_path),
+        project,
         subjects=["H01"],
         settings=ConnectivityConfig(
             conditions=("Fast",),

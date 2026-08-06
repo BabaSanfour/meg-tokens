@@ -8,11 +8,12 @@ from meg_tokens.workflows import epoch_subjects
 
 
 def test_epoch_subjects_consumes_staged_raw_and_behavior(tmp_path):
-    layout = DerivativeLayout(tmp_path)
+    project = ProjectConfig(data_root=tmp_path)
+    layout = DerivativeLayout(project.bids_root)
     raw_path = layout.preprocessed_raw(
         subject="H1",
         run="1",
-        condition="Slow",
+        condition="Fast",
         processing="filt",
     )
     raw_path.parent.mkdir(parents=True)
@@ -26,15 +27,19 @@ def test_epoch_subjects_consumes_staged_raw_and_behavior(tmp_path):
     data[1, 2000] = 524288
     mne.io.RawArray(data, info).save(raw_path, overwrite=True)
 
-    behavior_path = layout.behavior(subject="H1", run="1", condition="Slow")
+    behavior_path = layout.behavior(subject="H1", run="1", condition="Fast")
     behavior = pd.DataFrame(
         {
             "subject": ["H01", "H01"],
-            "condition": ["Slow", "Slow"],
+            "condition": ["Fast", "Fast"],
             "run": [1, 1],
-            "source_file": ["H1Slow1_recording.tdms"] * 2,
+            "source_file": ["H1Fast1_recording.tdms"] * 2,
             "nTrialIndex": [1, 2],
             "sTrialClass": [1, 2],
+            "sTrialClassRaw": ["e", "a"],
+            "trial_class_source": ["design", "design"],
+            "trial_class_rule": ["recorded_label", "recorded_label"],
+            "sp_design_correct": ["[0.6]", "[0.6]"],
             "nInitialTime": [0, 0],
             "nChoiceMade": [1, 2],
             "nCorrectChoice": [1, 2],
@@ -42,8 +47,13 @@ def test_epoch_subjects_consumes_staged_raw_and_behavior(tmp_path):
             "tEnterTarget": [1400, 2400],
             "tTrialEnd": [1600, 2600],
             "sTokenDirs": ["121", "212"],
+            "nTokenNum": ["[1]", "[1]"],
+            "nTokenDir": ["[1]", "[2]"],
             "tTime": ["[1100]", "[2100]"],
             "nProb": ["[0.6]", "[0.6]"],
+            "token_log_rows": [1, 1],
+            "token_log_short": [False, False],
+            "nOutcome": [0, 0],
             "rawRT": [400, 400],
             "isCorrect": [True, True],
         }
@@ -51,7 +61,7 @@ def test_epoch_subjects_consumes_staged_raw_and_behavior(tmp_path):
     save_table(behavior_path, behavior, metadata={"stage": "behavior_parsing"})
 
     result = epoch_subjects(
-        ProjectConfig(bids_root=tmp_path),
+        project,
         subjects=["H1"],
         settings=EpochingConfig(tmin=-0.1, tmax=0.2, alignment="go"),
     )
@@ -60,14 +70,14 @@ def test_epoch_subjects_consumes_staged_raw_and_behavior(tmp_path):
     assert layout.epochs(
         subject="H1",
         run="1",
-        condition="Slow",
+        condition="Fast",
         alignment="go",
     ) in result.outputs
     epochs = mne.read_epochs(
         layout.epochs(
             subject="H1",
             run="1",
-            condition="Slow",
+            condition="Fast",
             alignment="go",
         ),
         preload=False,

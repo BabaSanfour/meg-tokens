@@ -5,7 +5,7 @@ from meg_tokens.workflows.sources import reconstruct_sources
 
 
 def test_source_workflow_requires_declared_noise_root(tmp_path):
-    project = ProjectConfig(bids_root=tmp_path)
+    project = ProjectConfig(data_root=tmp_path)
 
     with pytest.raises(ValueError, match="noise_dir"):
         reconstruct_sources(

@@ -19,8 +19,12 @@ from meg_tokens.core import (
 from meg_tokens.io import DerivativeLayout
 from meg_tokens.meg.epoching import (
     build_epochs_with_metadata,
+    exclude_unrecoverable_trials,
     get_event_id,
     load_behavior_table,
+    mismatch_policy,
+    needs_go_reconstruction,
+    reconstruct_missing_go_events,
     save_epochs_and_events,
 )
 from meg_tokens.meg.preprocessing import (
@@ -128,6 +132,41 @@ def epoch_subjects(
             events = mne.find_events(raw)
             behavior = load_behavior_table(str(behavior_path))
             event_id = get_event_id(settings.alignment, run.subject)
+            if settings.alignment.lower() == "go" and needs_go_reconstruction(
+                run.subject, run.condition, run.run
+            ):
+                print(
+                    f"{run.subject} {run.condition}{run.run}: reconstructing "
+                    "missing go-cue event(s) from trial-start pulses + tGO "
+                    "(confirmed trigger dropout -- see "
+                    "docs/behavior_qc_report.md)"
+                )
+                events = reconstruct_missing_go_events(
+                    events,
+                    behavior,
+                    raw.info['sfreq'],
+                    start_code=get_event_id('start', run.subject)['Start'],
+                    go_code=event_id['Go'],
+                )
+            before_exclusion = len(behavior)
+            behavior = exclude_unrecoverable_trials(
+                run.subject, run.condition, run.run, behavior
+            )
+            if len(behavior) != before_exclusion:
+                print(
+                    f"{run.subject} {run.condition}{run.run}: excluding "
+                    f"{before_exclusion - len(behavior)} trial(s) with no "
+                    "MEG event at all for this run (confirmed unrecoverable "
+                    "-- see docs/behavior_qc_report.md)"
+                )
+            policy = mismatch_policy(run.subject, run.condition, run.run)
+            if policy == "truncate":
+                print(
+                    f"{run.subject} {run.condition}{run.run}: applying known "
+                    "trailing-trial truncation (aborted final trial, "
+                    "confirmed via MEG timing cross-check -- see "
+                    "docs/behavior_qc_report.md)"
+                )
             epochs = build_epochs_with_metadata(
                 raw=raw,
                 events=events,
@@ -135,7 +174,7 @@ def epoch_subjects(
                 tmin=settings.tmin,
                 tmax=settings.tmax,
                 behavior_df=behavior,
-                on_mismatch="error",
+                on_mismatch=policy,
             )
             saved = save_epochs_and_events(
                 epochs,

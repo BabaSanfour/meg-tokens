@@ -1,8 +1,12 @@
 """Behavioral metrics for the Tokens task."""
 
+from ast import literal_eval
+
 import numpy as np
 import pandas as pd
 from scipy import stats
+
+from meg_tokens.behavior.success_probability import probability_at_decision
 
 
 def calculate_motor_baseline(rt_dfs: list) -> float:
@@ -29,6 +33,81 @@ def calculate_decision_times(df: pd.DataFrame, motor_baseline: float) -> pd.Seri
     valid_mask = df['nChoiceMade'] > 0
     dt = (df.loc[valid_mask, 'tEnterTarget'] - df.loc[valid_mask, 'tGO']) - motor_baseline
     return dt
+
+
+def _float_sequence(value: object, *, field: str) -> list[float]:
+    parsed = literal_eval(value) if isinstance(value, str) else value
+    if isinstance(parsed, np.ndarray):
+        parsed = parsed.tolist()
+    if not isinstance(parsed, (list, tuple)):
+        raise ValueError(f"{field} must contain a sequence")
+    return [float(item) for item in parsed]
+
+
+def _boolean_value(value: object, *, field: str) -> bool:
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"true", "1"}:
+            return True
+        if normalized in {"false", "0"}:
+            return False
+        raise ValueError(f"{field} must be boolean")
+    return bool(value)
+
+
+def analyze_logged_spd(dfs: list[pd.DataFrame], motor_baseline: float) -> dict:
+    """Summarize logged chosen-target SPD for all logs and 15-row sensitivity."""
+    records: list[tuple[int, float, int]] = []
+    for df in dfs:
+        if df.empty:
+            continue
+        for _, trial in df.loc[df['nChoiceMade'] > 0].iterrows():
+            probabilities = _float_sequence(trial['nProb'], field='nProb')
+            token_times = _float_sequence(trial['tTime'], field='tTime')
+            log_rows = int(trial['token_log_rows'])
+            log_short = _boolean_value(
+                trial['token_log_short'],
+                field='token_log_short',
+            )
+            if len(probabilities) != log_rows or len(token_times) != log_rows:
+                raise ValueError(
+                    "nProb, tTime, and token_log_rows must describe the same rows"
+                )
+            if log_short != (log_rows == 14):
+                raise ValueError("token_log_short must be true exactly for 14-row logs")
+            spd, _ = probability_at_decision(
+                probabilities,
+                token_times,
+                decision_time=float(trial['tEnterTarget']) - float(motor_baseline),
+            )
+            records.append((int(trial['sTrialClass']), spd, log_rows))
+
+    class_names = {1: 'easy', 2: 'ambiguous', 3: 'misleading'}
+
+    def summarize(selected: list[tuple[int, float, int]]) -> dict:
+        values = [spd for _, spd, _ in selected]
+        classes = {}
+        for trial_class, name in class_names.items():
+            class_values = [
+                spd for observed_class, spd, _ in selected
+                if observed_class == trial_class
+            ]
+            classes[name] = {
+                'n_trials': len(class_values),
+                'mean_spd': float(np.mean(class_values)) if class_values else np.nan,
+            }
+        return {
+            'n_trials': len(values),
+            'mean_spd': float(np.mean(values)) if values else np.nan,
+            'classes': classes,
+        }
+
+    return {
+        'all_logged': summarize(records),
+        'validated_15row': summarize(
+            [record for record in records if record[2] == 15]
+        ),
+    }
 
 def compare_fast_slow(
     fast_dfs: list,

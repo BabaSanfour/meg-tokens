@@ -1,9 +1,20 @@
 [project]
-bids_root = "/path/to/tokens-bids"
-raw_meg_root = "/path/to/raw-meg"
-behavior_root = "/path/to/tdms"
+# The data for this project lives in this folder. It must contain raw/ (raw MEG),
+# tdms/ (behavioral logs), and BIDS/ (bids-compliant raw and derivatives).
+data_root = "/path/to/meg-tokens"
+
 subjects_dir = "/path/to/freesurfer-subjects"
 trans_dir = "/path/to/trans-files"
 noise_dir = "/path/to/noise-recordings"
 task = "tokens"
 pipeline = "meg-tokens"
+
+# TDMS files under data_root/tdms that are deliberately NOT ingested. Each is
+# a short aborted/practice block whose trials do not belong to any named run;
+# all three were verified against their same-day siblings (they overlap no
+# named run's time range and immediately precede a restarted run).
+behavior_ignore_files = [
+    "temp_180214.tdms",  # H03: 9 trials, 09:57-09:59, between RT1 and Fast1
+    "temp_181024.tdms",  # H18: 12 trials, ends 14:47, ~1 min before RT2 start
+    "temp_181121.tdms",  # H23: 3 trials, 9 seconds total, ~3 min before RT2
+]

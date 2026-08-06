@@ -23,24 +23,20 @@ def _optional_path(value: object, *, base_dir: Path) -> Optional[Path]:
 class ProjectConfig:
     """Filesystem roots and stable naming defaults for a Tokens project."""
 
-    bids_root: Path
-    raw_meg_root: Optional[Path] = None
-    behavior_root: Optional[Path] = None
+    data_root: Path
     subjects_dir: Optional[Path] = None
     trans_dir: Optional[Path] = None
     noise_dir: Optional[Path] = None
     task: str = "tokens"
     pipeline: str = "meg-tokens"
+    behavior_ignore_files: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
-        for field_name in (
-            "bids_root",
-            "raw_meg_root",
-            "behavior_root",
-            "subjects_dir",
-            "trans_dir",
-            "noise_dir",
-        ):
+        object.__setattr__(self, "data_root", Path(self.data_root).expanduser())
+        object.__setattr__(
+            self, "behavior_ignore_files", tuple(self.behavior_ignore_files)
+        )
+        for field_name in ("subjects_dir", "trans_dir", "noise_dir"):
             value = getattr(self, field_name)
             if value is not None:
                 object.__setattr__(self, field_name, Path(value).expanduser())
@@ -48,6 +44,18 @@ class ProjectConfig:
             raise ValueError("task must not be empty")
         if not self.pipeline.strip():
             raise ValueError("pipeline must not be empty")
+
+    @property
+    def raw_meg_root(self) -> Path:
+        return self.data_root / "raw"
+
+    @property
+    def behavior_root(self) -> Path:
+        return self.data_root / "tdms"
+
+    @property
+    def bids_root(self) -> Path:
+        return self.data_root / "BIDS"
 
     @classmethod
     def from_mapping(
@@ -65,19 +73,12 @@ class ProjectConfig:
         unknown = sorted(set(section) - known)
         if unknown:
             raise ValueError(f"Unknown project configuration fields: {unknown}")
-        if "bids_root" not in section:
-            raise ValueError("Project configuration requires 'bids_root'")
+        if "data_root" not in section:
+            raise ValueError("Project configuration requires 'data_root'")
 
         root = Path(base_dir).expanduser()
         kwargs = dict(section)
-        for name in (
-            "bids_root",
-            "raw_meg_root",
-            "behavior_root",
-            "subjects_dir",
-            "trans_dir",
-            "noise_dir",
-        ):
+        for name in ("data_root", "subjects_dir", "trans_dir", "noise_dir"):
             if name in kwargs:
                 kwargs[name] = _optional_path(kwargs[name], base_dir=root)
         return cls(**kwargs)

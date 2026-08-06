@@ -23,6 +23,27 @@ MNE-Python, BIDS/MNE-BIDS-style derivatives, and explicit analysis tensors.
   labeled coordinates are essential.
 - New primary outputs should not be `.mat`, `.h5`, or undocumented pickle files.
 
+## Filename Entities (`desc` Convention)
+
+Output filenames follow BIDS-Derivatives entity ordering
+(`sub-ses-task-acq-run-proc-space-desc-suffix`, see
+`meg_tokens/io/contract.py`), but `desc` is used more broadly than strict
+BIDS-Derivatives semantics: it is a hyphen-joined, growing tag list that
+encodes experimental condition (`slow`/`fast`/`rt`) plus every downstream
+processing choice (alignment, source method, parcellation, band, method),
+e.g. `desc-slow-go-dSPM-HCPMMP1`. This is a deliberate, project-wide
+convention, not an oversight or a stand-in for missing sidecar metadata:
+
+- Every value chained into `desc` is also recorded verbatim in the JSON
+  sidecar's `metadata` (e.g. `condition`, `alignment`, `parcellation`).
+  `desc` exists so that files stay distinguishable and greppable by name;
+  the sidecar remains the source of truth for structured queries.
+- Do not add a value to `desc` without also adding it to the JSON sidecar
+  metadata, and vice versa — the two must never disagree.
+- This repository does not treat `desc`-as-condition as a bug to fix. A
+  change to this convention is a breaking change across every workflow that
+  builds paths via `DerivativeLayout`, not a local fix in one module.
+
 ## Array Sidecars
 
 Every `.npy` derivative written by the refactored pipeline should have a JSON
@@ -44,6 +65,22 @@ on-disk format. `save_dataarray` writes the same `.npy` plus JSON pair.
 
 ## Behavior Tables
 
+### TDMS Input Contract
+
+Every `*.tdms` file under a subject's `behavior_root` directory must match
+`H<subject><Condition><run>_<YYMMDD>.tdms` (e.g. `H01Slow1_180131.tdms`),
+where `<Condition>` is `Slow`, `Fast`, or `RT`. Ingestion
+(`ingest_subject_behavior` / `meg-tokens behavior ingest`) never skips a
+non-matching file silently:
+
+- A `.tdms` file that does not match the pattern raises `ValueError` unless
+  its exact filename is listed in `behavior_ignore_files` in the project
+  TOML (or passed via `ignore_files=`). Add a file to that list only after
+  confirming by hand that it is not a real run (e.g. a scratch/test export),
+  and record why in the config comment.
+- Two files that resolve to the same `(subject, condition, run)` raise
+  `ValueError` instead of one silently overwriting the other's output.
+
 Stage 1 writes one table per TDMS run using:
 
 ```text
@@ -58,16 +95,43 @@ Required trial columns include:
 - `source_file`
 - `nTrialIndex`
 - `sTrialClass`
+- `sTrialClassRaw`
+- `trial_class_source`
+- `trial_class_rule`
+- `sp_design_correct`
 - `nChoiceMade`
 - `nCorrectChoice`
 - `tGO`
 - `tEnterTarget`
 - `tTrialEnd`
+- `sTokenDirs`
+- `nTokenNum`
+- `nTokenDir`
+- `tTime`
+- `nProb`
+- `token_log_rows`
+- `token_log_short`
+- `nOutcome`
 - `rawRT`
 - `isCorrect`
 
 Subject labels are normalized to `H01` style. The behavior parser validates
-sequential trial indices and basic event ordering before writing a table.
+sequential trial indices, basic event ordering, and equal lengths for the
+per-token `nTokenNum`, `nTokenDir`, `tTime`, and `nProb` arrays before writing a
+table. `sTokenDirs` retains the trial-level designed sequence; `nTokenDir`
+independently retains the directions recorded in the runtime token rows.
+`sTrialClassRaw` preserves the LabVIEW label. `sTrialClass` retains recorded
+designed labels and is inferred only for raw `'x'` trials from
+`sp_design_correct`; `trial_class_source` and `trial_class_rule` record that
+provenance. `sp_design_correct` is unavailable when LabVIEW records no correct
+target. `token_log_rows` and `token_log_short` describe the runtime log without
+changing the class rule, while `nProb` and `tTime` remain the paired runtime
+series.
+Stage-1 derivatives created before these token and classification-provenance
+fields were added must be re-ingested from TDMS before they can be used by the
+current pipeline.
+Rows with `nOutcome == 7003` are retained for provenance but must have
+`tGO == 0` and `nChoiceMade == 0`, consistent with a trial that never started.
 
 The behavior analysis workflow consumes these run tables and writes:
 
@@ -76,8 +140,17 @@ derivatives/meg-tokens/sub-group/beh/sub-group_task-tokens_desc-summary_beh.tsv
 ```
 
 This table contains one row per subject with motor baseline, Fast/Slow decision
-times, accuracy, trial-class decision times, and post-error measures. Its JSON
-sidecar records the contributing run tables.
+times, accuracy, trial-class decision times, post-error measures, and logged
+chosen-target SPD. SPD is always reported in paired columns: `*_all_logged`
+uses every available runtime log, while `*_validated_15row` is the required
+15-row-only sensitivity analysis. Counts and means are reported overall and for
+easy, ambiguous, and misleading trials. Design-derived SP is never aligned to
+runtime time and design-derived SPD is never computed when `token_log_short` is
+true. Trials
+with `nOutcome == 7003` are excluded from those analyses and from
+`n_rt_trials`, `n_fast_trials`, and `n_slow_trials`; their retained source-row
+count is reported separately as `n_never_started_trials`. The JSON sidecar
+records the contributing run tables.
 
 ## Preprocessed Raw Files
 

@@ -76,6 +76,10 @@ def _write_stage_inputs(root, n_trials=2):
         "source_file": ["H1Slow1_180131.tdms"] * n_trials,
         "nTrialIndex": list(range(1, n_trials + 1)),
         "sTrialClass": [1] * n_trials,
+        "sTrialClassRaw": ["e"] * n_trials,
+        "trial_class_source": ["design"] * n_trials,
+        "trial_class_rule": ["recorded_label"] * n_trials,
+        "sp_design_correct": ["[]"] * n_trials,
         "nInitialTime": [0] * n_trials,
         "nChoiceMade": [1] * n_trials,
         "nCorrectChoice": [1] * n_trials,
@@ -83,8 +87,13 @@ def _write_stage_inputs(root, n_trials=2):
         "tEnterTarget": [2500.0, 1500.0][:n_trials],
         "tTrialEnd": [3000.0] * n_trials,
         "sTokenDirs": ["0"] * n_trials,
+        "nTokenNum": ["[]"] * n_trials,
+        "nTokenDir": ["[]"] * n_trials,
         "tTime": ["[]"] * n_trials,
         "nProb": ["[]"] * n_trials,
+        "token_log_rows": [0] * n_trials,
+        "token_log_short": [False] * n_trials,
+        "nOutcome": [0] * n_trials,
         "rawRT": [1500.0, 500.0][:n_trials],
         "isCorrect": [True] * n_trials,
     })
@@ -234,10 +243,11 @@ def test_run_erp_parcellation_pipeline_finds_stage_inputs(tmp_path, monkeypatch)
 
 
 def test_erp_workflow_declares_inputs_and_outputs(tmp_path):
-    manifest, behavior = _write_stage_inputs(tmp_path)
+    project = ProjectConfig(data_root=tmp_path)
+    manifest, behavior = _write_stage_inputs(project.bids_root)
 
     result = extract_erp_features(
-        ProjectConfig(bids_root=tmp_path),
+        project,
         subjects=["H1"],
         settings=ERPConfig(
             run="Slow1",

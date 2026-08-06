@@ -8,6 +8,7 @@ from typing import Optional, Sequence
 import pandas as pd
 
 from meg_tokens.behavior.metrics import (
+    analyze_logged_spd,
     analyze_post_error_slowing,
     analyze_trial_classes,
     calculate_motor_baseline,
@@ -15,6 +16,8 @@ from meg_tokens.behavior.metrics import (
     compare_fast_slow,
 )
 from meg_tokens.behavior.tdms import (
+    OUTCOME_NEVER_STARTED,
+    TdmsRunInfo,
     add_run_metadata,
     parse_tdms_file,
     parse_tdms_filename,
@@ -45,18 +48,60 @@ def ingest_subject_behavior(
     input_root: str | Path,
     output_root: str | Path,
     dry_run: bool = False,
+    ignore_files: Sequence[str] = (),
 ) -> tuple[dict[str, object], ...]:
-    """Parse every standard TDMS run for one subject."""
+    """Parse every standard TDMS run for one subject.
+
+    Every ``*.tdms`` file under the subject directory must either match the
+    canonical ``H<subject><Condition><run>_<YYMMDD>.tdms`` naming pattern or
+    have its filename listed in ``ignore_files``. A file that matches
+    neither is a data-quality problem, not something to skip quietly, so it
+    raises instead of being dropped. The same guard applies to duplicate
+    ``(subject, condition, run)`` combinations, which would otherwise
+    silently overwrite one another's derivative output.
+    """
     input_root = Path(input_root)
     subject_dir = _subject_input_dir(input_root, subject)
     layout = DerivativeLayout(output_root)
-    records = []
+    ignore = set(ignore_files)
 
-    for input_path in sorted(subject_dir.glob("*.tdms")):
+    candidates = sorted(subject_dir.glob("*.tdms"))
+    parsed: list[tuple[Path, TdmsRunInfo]] = []
+    unmatched: list[Path] = []
+    for input_path in candidates:
+        if input_path.name in ignore:
+            continue
         try:
             run_info = parse_tdms_filename(input_path.name)
         except ValueError:
+            unmatched.append(input_path)
             continue
+        parsed.append((input_path, run_info))
+
+    if unmatched:
+        raise ValueError(
+            "Refusing to silently skip .tdms files with non-canonical "
+            f"names under {subject_dir}: "
+            f"{[path.name for path in unmatched]}. Rename them to match "
+            "H<subject><Condition><run>_<YYMMDD>.tdms, or pass their exact "
+            "filenames via ignore_files (behavior_ignore_files in the "
+            "project TOML) to exclude them explicitly."
+        )
+
+    seen: dict[tuple[str, str, str], Path] = {}
+    for input_path, run_info in parsed:
+        key = (run_info.subject, run_info.condition, run_info.run)
+        if key in seen:
+            raise ValueError(
+                f"Duplicate TDMS run for subject={key[0]} "
+                f"condition={key[1]} run={key[2]}: found in both "
+                f"{seen[key].name} and {input_path.name}. Resolve the "
+                "collision before ingesting."
+            )
+        seen[key] = input_path
+
+    records = []
+    for input_path, run_info in parsed:
         output_path = layout.behavior(
             subject=run_info.subject,
             run=run_info.run,
@@ -128,6 +173,7 @@ def ingest_behavior(
                 input_root=project.behavior_root,
                 output_root=project.bids_root,
                 dry_run=dry_run,
+                ignore_files=project.behavior_ignore_files,
             )
         )
     return WorkflowResult(
@@ -148,6 +194,17 @@ def _condition_runs(tables: Sequence[pd.DataFrame], condition: str) -> list[pd.D
         for table in tables
         if not table.empty
         and str(table["condition"].iloc[0]).lower() == condition.lower()
+    ]
+
+
+def _started_condition_runs(
+    tables: Sequence[pd.DataFrame],
+    condition: str,
+) -> list[pd.DataFrame]:
+    """Return analysis views containing only trials that received a go cue."""
+    return [
+        table.loc[table["nOutcome"] != OUTCOME_NEVER_STARTED].copy()
+        for table in _condition_runs(tables, condition)
     ]
 
 
@@ -178,15 +235,22 @@ def analyze_behavior(
 
     rows = []
     for subject, tables in sorted(by_subject.items()):
-        rt_runs = _condition_runs(tables, "RT")
-        fast_runs = _condition_runs(tables, "Fast")
-        slow_runs = _condition_runs(tables, "Slow")
+        n_never_started = sum(
+            int((table["nOutcome"] == OUTCOME_NEVER_STARTED).sum())
+            for table in tables
+        )
+        rt_runs = _started_condition_runs(tables, "RT")
+        fast_runs = _started_condition_runs(tables, "Fast")
+        slow_runs = _started_condition_runs(tables, "Slow")
         task_runs = fast_runs + slow_runs
         motor_baseline = calculate_motor_baseline(rt_runs)
         speed = compare_fast_slow(fast_runs, slow_runs, motor_baseline)
         accuracy = compare_correct_error(task_runs, motor_baseline)
         classes = analyze_trial_classes(task_runs, motor_baseline)
+        spd = analyze_logged_spd(task_runs, motor_baseline)
         post_error = analyze_post_error_slowing(task_runs, motor_baseline)
+        all_logged_spd = spd["all_logged"]
+        validated_spd = spd["validated_15row"]
         rows.append(
             {
                 "subject": subject,
@@ -194,6 +258,7 @@ def analyze_behavior(
                 "n_rt_trials": sum(len(table) for table in rt_runs),
                 "n_fast_trials": sum(len(table) for table in fast_runs),
                 "n_slow_trials": sum(len(table) for table in slow_runs),
+                "n_never_started_trials": n_never_started,
                 "mean_fast_dt_ms": speed["mean_fast"],
                 "mean_slow_dt_ms": speed["mean_slow"],
                 "fast_vs_slow_t": speed["t_stat"],
@@ -204,6 +269,26 @@ def analyze_behavior(
                 "mean_easy_dt_ms": classes["means"]["easy"],
                 "mean_ambiguous_dt_ms": classes["means"]["ambiguous"],
                 "mean_misleading_dt_ms": classes["means"]["misleading"],
+                "n_spd_all_logged": all_logged_spd["n_trials"],
+                "mean_spd_all_logged": all_logged_spd["mean_spd"],
+                "n_spd_validated_15row": validated_spd["n_trials"],
+                "mean_spd_validated_15row": validated_spd["mean_spd"],
+                **{
+                    f"n_{name}_spd_all_logged": all_logged_spd["classes"][name]["n_trials"]
+                    for name in ("easy", "ambiguous", "misleading")
+                },
+                **{
+                    f"mean_{name}_spd_all_logged": all_logged_spd["classes"][name]["mean_spd"]
+                    for name in ("easy", "ambiguous", "misleading")
+                },
+                **{
+                    f"n_{name}_spd_validated_15row": validated_spd["classes"][name]["n_trials"]
+                    for name in ("easy", "ambiguous", "misleading")
+                },
+                **{
+                    f"mean_{name}_spd_validated_15row": validated_spd["classes"][name]["mean_spd"]
+                    for name in ("easy", "ambiguous", "misleading")
+                },
                 "mean_post_correct_dt_ms": post_error["mean_post_correct"],
                 "mean_post_error_dt_ms": post_error["mean_post_error"],
             }
@@ -216,6 +301,11 @@ def analyze_behavior(
         metadata={
             "stage": "behavior_analysis",
             "subjects": sorted(by_subject),
+            "spd": {
+                "source": "logged chosen-target nProb paired with tTime",
+                "views": ["all_logged", "validated_15row"],
+                "short_log_design_alignment": "forbidden",
+            },
             "input_files": [
                 str(path)
                 for subject in sorted(source_paths)

@@ -56,7 +56,7 @@ def test_project_config_loads_relative_toml_paths(tmp_path):
         "\n".join(
             [
                 "[project]",
-                'bids_root = "dataset"',
+                'data_root = "meg-tokens"',
                 'subjects_dir = "freesurfer"',
                 'task = "tokens"',
             ]
@@ -66,14 +66,30 @@ def test_project_config_loads_relative_toml_paths(tmp_path):
 
     config = ProjectConfig.from_toml(config_path)
 
-    assert config.bids_root == tmp_path / "dataset"
+    assert config.data_root == tmp_path / "meg-tokens"
     assert config.subjects_dir == tmp_path / "freesurfer"
     assert config.pipeline == "meg-tokens"
 
 
 def test_project_config_rejects_unknown_fields():
     with pytest.raises(ValueError, match="Unknown project configuration fields"):
-        ProjectConfig.from_mapping({"bids_root": "/data", "unexpected": "value"})
+        ProjectConfig.from_mapping({"data_root": "/data", "unexpected": "value"})
+
+
+def test_project_config_derives_roots_from_data_root(tmp_path):
+    config = ProjectConfig(data_root=tmp_path / "meg-tokens")
+
+    assert config.raw_meg_root == tmp_path / "meg-tokens" / "raw"
+    assert config.behavior_root == tmp_path / "meg-tokens" / "tdms"
+    assert config.bids_root == tmp_path / "meg-tokens" / "BIDS"
+
+
+def test_project_config_requires_data_root():
+    with pytest.raises(TypeError):
+        ProjectConfig()
+
+    with pytest.raises(ValueError, match="requires 'data_root'"):
+        ProjectConfig.from_mapping({"task": "tokens"})
 
 
 def test_workflow_result_normalizes_paths():

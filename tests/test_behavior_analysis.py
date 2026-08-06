@@ -1,7 +1,7 @@
-import numpy as np
 import pandas as pd
 import pytest
 from meg_tokens.behavior.metrics import (
+    analyze_logged_spd,
     calculate_motor_baseline,
     calculate_decision_times,
     compare_fast_slow,
@@ -117,3 +117,30 @@ def test_analyze_post_error_slowing(sample_behavior_data):
     # 3: Correct (last, skipped next)
     assert pytest.approx(res['mean_post_correct']) == 790.0 # (840+740)/2
     assert pytest.approx(res['mean_post_error']) == 690.0
+
+
+def test_analyze_logged_spd_reports_all_and_15row_sensitivity():
+    short_probabilities = [0.6, 0.7] + [0.7] * 12
+    complete_probabilities = [0.8, 0.9] + [0.9] * 13
+    df = pd.DataFrame(
+        {
+            'nChoiceMade': [1, 1],
+            'sTrialClass': [1, 1],
+            'tEnterTarget': [1450, 1450],
+            'nProb': [short_probabilities, complete_probabilities],
+            'tTime': [
+                list(range(1100, 3900, 200)),
+                list(range(1100, 4100, 200)),
+            ],
+            'token_log_rows': [14, 15],
+            'token_log_short': [True, False],
+        }
+    )
+
+    result = analyze_logged_spd([df], motor_baseline=100)
+
+    assert result['all_logged']['n_trials'] == 2
+    assert result['all_logged']['mean_spd'] == pytest.approx(0.8)
+    assert result['validated_15row']['n_trials'] == 1
+    assert result['validated_15row']['mean_spd'] == pytest.approx(0.9)
+    assert result['validated_15row']['classes']['easy']['n_trials'] == 1

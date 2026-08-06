@@ -126,10 +126,11 @@ def test_run_psd_specparam_can_skip_model_fit(tmp_path):
 
 
 def test_spectral_workflow_declares_epoch_and_psd_output(tmp_path):
-    epochs_path = _write_epochs(tmp_path)
+    project = ProjectConfig(data_root=tmp_path)
+    epochs_path = _write_epochs(project.bids_root)
 
     result = extract_spectral_features(
-        ProjectConfig(bids_root=tmp_path),
+        project,
         subjects=["H01"],
         settings=SpectralConfig(
             condition="Fast",

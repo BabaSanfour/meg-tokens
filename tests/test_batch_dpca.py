@@ -139,16 +139,17 @@ def test_build_dpca_tensor_uses_real_trial_metadata_cells():
 
 
 def test_decomposition_workflow_declares_features_and_outputs(tmp_path):
+    project = ProjectConfig(data_root=tmp_path)
     base = np.arange(2 * 2 * 3, dtype=float).reshape(2, 2, 3)
     inputs = [
-        _write_erp(tmp_path, "H01", "Fast1", "Fast", base + 1),
-        _write_erp(tmp_path, "H01", "Slow1", "Slow", base + 11),
-        _write_erp(tmp_path, "H02", "Fast1", "Fast", base + 21),
-        _write_erp(tmp_path, "H02", "Slow1", "Slow", base + 31),
+        _write_erp(project.bids_root, "H01", "Fast1", "Fast", base + 1),
+        _write_erp(project.bids_root, "H01", "Slow1", "Slow", base + 11),
+        _write_erp(project.bids_root, "H02", "Fast1", "Fast", base + 21),
+        _write_erp(project.bids_root, "H02", "Slow1", "Slow", base + 31),
     ]
 
     result = run_decomposition(
-        ProjectConfig(bids_root=tmp_path),
+        project,
         subjects=["H01", "H02"],
         settings=DecompositionConfig(n_components=2),
     )

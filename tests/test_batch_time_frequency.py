@@ -105,10 +105,11 @@ def test_extract_power_from_manifest_writes_bids_array_with_sidecar(tmp_path):
 
 
 def test_power_workflow_declares_manifest_and_band_output(tmp_path):
-    manifest = _write_stage3_manifest(tmp_path)
+    project = ProjectConfig(data_root=tmp_path)
+    manifest = _write_stage3_manifest(project.bids_root)
 
     result = extract_power_features(
-        ProjectConfig(bids_root=tmp_path),
+        project,
         subjects=["H1"],
         settings=PowerConfig(
             run="Slow1",

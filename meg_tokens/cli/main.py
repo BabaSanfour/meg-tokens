@@ -30,10 +30,12 @@ from meg_tokens.core import (
 
 def _add_root_option(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
-        "--bids-root",
-        "--bids_root",
-        dest="bids_root",
-        help="BIDS dataset root containing derivatives/meg-tokens.",
+        "--data-root",
+        dest="data_root",
+        help=(
+            "Data root containing raw/ (raw MEG), tdms/ (behavioral logs), "
+            "and BIDS/ (derivatives) as siblings. Only used without --config."
+        ),
     )
 
 
@@ -52,14 +54,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="Parse TDMS runs into behavior derivatives.",
     )
     _add_root_option(ingest)
-    ingest.add_argument(
-        "--input-dir",
-        "--input_dir",
-        dest="input_dir",
-        help="TDMS root containing subject directories.",
-    )
     ingest.add_argument("--subjects", nargs="+")
-    ingest.add_argument("--dry-run", "--dry_run", dest="dry_run", action="store_true")
+    ingest.add_argument("--dry-run", dest="dry_run", action="store_true")
 
     analyze = behavior_commands.add_parser(
         "analyze",
@@ -76,15 +72,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="Filter one CTF recording and optionally apply ICA.",
     )
     _add_root_option(preprocess)
-    preprocess.add_argument("--raw-path", "--raw_path", dest="raw_path", required=True)
+    preprocess.add_argument("--raw-path", dest="raw_path", required=True)
     preprocess.add_argument("--subject", required=True)
     preprocess.add_argument("--run", required=True)
     preprocess.add_argument("--condition")
-    preprocess.add_argument("--high-pass", "--high_pass", dest="high_pass", type=float, default=0.5)
-    preprocess.add_argument("--low-pass", "--low_pass", dest="low_pass", type=float, default=150.0)
+    preprocess.add_argument("--high-pass", dest="high_pass", type=float, default=0.5)
+    preprocess.add_argument("--low-pass", dest="low_pass", type=float, default=150.0)
     preprocess.add_argument("--notch-freqs", dest="notch_freqs", type=float, nargs="+")
-    preprocess.add_argument("--run-ica", "--run_ica", dest="run_ica", action="store_true")
-    preprocess.add_argument("--ica-exclude", "--ica_exclude", dest="ica_exclude", type=int, nargs="*")
+    preprocess.add_argument("--run-ica", dest="run_ica", action="store_true")
+    preprocess.add_argument("--ica-exclude", dest="ica_exclude", type=int, nargs="*")
 
     epoch = meg_commands.add_parser(
         "epoch",
@@ -422,16 +418,11 @@ def _project_from_args(args: argparse.Namespace) -> ProjectConfig:
     if args.config:
         project = ProjectConfig.from_toml(args.config)
     else:
-        if not args.bids_root:
-            raise ValueError("Provide --config or --bids-root")
-        project = ProjectConfig(bids_root=Path(args.bids_root))
+        if not args.data_root:
+            raise ValueError("Provide --config or --data-root")
+        project = ProjectConfig(data_root=Path(args.data_root))
 
     updates = {}
-    if args.bids_root:
-        updates["bids_root"] = Path(args.bids_root)
-    input_dir = getattr(args, "input_dir", None)
-    if input_dir:
-        updates["behavior_root"] = Path(input_dir)
     for argument, field_name in (
         ("subjects_dir", "subjects_dir"),
         ("trans_dir", "trans_dir"),

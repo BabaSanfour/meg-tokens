@@ -2,22 +2,34 @@
 
 import re
 from dataclasses import dataclass
+from typing import Final
 
 import pandas as pd
 from nptdms import TdmsFile
 
+from meg_tokens.behavior.success_probability import (
+    classify_design_profile_with_rule,
+    success_probability_profile,
+)
 from meg_tokens.core import normalize_subject_id
 
 
 TRIAL_COLUMNS = [
-    'nTrialIndex', 'sTrialClass', 'nInitialTime', 'nChoiceMade',
+    'nTrialIndex', 'sTrialClass', 'sTrialClassRaw', 'trial_class_source',
+    'trial_class_rule', 'sp_design_correct', 'nInitialTime', 'nChoiceMade',
     'nCorrectChoice', 'tGO', 'tEnterTarget', 'tTrialEnd',
-    'sTokenDirs', 'tTime', 'nProb'
+    'sTokenDirs', 'nTokenNum', 'nTokenDir', 'tTime', 'nProb',
+    'token_log_rows', 'token_log_short', 'nOutcome'
 ]
+
+# LabVIEW nOutcome code for trials that never received a go cue. Such trials
+# have no corresponding MEG go event and must be excluded during MEG/behavior
+# alignment. See docs/behavior_qc_report.md.
+OUTCOME_NEVER_STARTED: Final[int] = 7003
 
 FILENAME_RE = re.compile(
     r"^(?P<subject>H(?:0[1-9]|[1-9][0-9]*))"
-    r"(?P<condition>Slow|Fast|RT)(?P<run>[0-9]+)_(?P<date>.*)\.tdms$",
+    r"(?P<condition>Slow|Fast|RT)(?P<run>[0-9]+)_(?P<date>[0-9]{6})\.tdms$",
     re.IGNORECASE,
 )
 
@@ -36,6 +48,7 @@ def parse_tdms_filename(filename: str) -> TdmsRunInfo:
     if match is None:
         raise ValueError(f"Non-standard TDMS filename: {filename}")
     raw_condition = match.group("condition")
+    # "RT".capitalize() would produce "Rt"; RT is an initialism, not a word.
     return TdmsRunInfo(
         subject=normalize_subject_id(match.group("subject")),
         condition="RT" if raw_condition.upper() == "RT" else raw_condition.capitalize(),
@@ -55,6 +68,9 @@ def add_run_metadata(
     out.insert(1, "condition", run_info.condition)
     out.insert(2, "run", int(run_info.run))
     out.insert(3, "source_file", source_file)
+    # A trial with no choice has no reaction time and no correctness verdict;
+    # both become NaN rather than 0/False so aggregates (means, accuracy)
+    # correctly exclude no-choice trials instead of treating them as failures.
     out["rawRT"] = (out["tEnterTarget"] - out["tGO"]).where(out["nChoiceMade"] > 0)
     out["isCorrect"] = (
         out["nChoiceMade"] == out["nCorrectChoice"]
@@ -63,17 +79,49 @@ def add_run_metadata(
 
 
 def validate_behavior_dataframe(df: pd.DataFrame) -> None:
-    """Validate columns and basic event timing for a parsed behavior table."""
+    """Validate columns and basic event timing for a parsed behavior table.
+
+    nTrialIndex is a session-scoped LabVIEW counter, not reset per .tdms
+    file: a run legitimately starting above 1 (its earlier trials logged
+    under a prior/aborted file) is not corruption. MEG-cross-checked on real
+    data (see docs/behavior_qc_report.md): every genuine run is gap-free and
+    duplicate-free once it starts, so a strict consecutive run is still
+    required -- gaps, duplicates, or reordering remain hard errors. Whether a
+    run's trial count actually matches its MEG recording is a separate,
+    already-enforced check (epoching.synchronize_events_and_behavior).
+
+    Rows marked OUTCOME_NEVER_STARTED must also have tGO == 0 and
+    nChoiceMade == 0. This verifies LabVIEW's structural meaning for that
+    outcome without removing the row from the parsed behavior table.
+    """
     missing = [col for col in TRIAL_COLUMNS if col not in df.columns]
     if missing:
         raise ValueError(f"Behavior table is missing required columns: {missing}")
 
     if not df.empty:
-        expected_index = list(range(1, len(df) + 1))
         actual_index = df['nTrialIndex'].astype(int).tolist()
+        if actual_index[0] < 1:
+            raise ValueError("nTrialIndex must start at 1 or above")
+        expected_index = list(range(actual_index[0], actual_index[0] + len(df)))
         if actual_index != expected_index:
-            raise ValueError("nTrialIndex must be sequential and start at 1")
+            raise ValueError(
+                "nTrialIndex must be a gap-free consecutive sequence "
+                f"(got {actual_index})"
+            )
 
+    never_started = df['nOutcome'] == OUTCOME_NEVER_STARTED
+    invalid_never_started = never_started & (
+        (df['tGO'] != 0) | (df['nChoiceMade'] != 0)
+    )
+    if invalid_never_started.any():
+        rows = df.loc[invalid_never_started, 'nTrialIndex'].tolist()
+        raise ValueError(
+            "OUTCOME_NEVER_STARTED trials must have tGO == 0 and "
+            f"nChoiceMade == 0 (trials: {rows})"
+        )
+
+    # Timing order is only meaningful for chosen trials; see the matching
+    # NaN handling for no-choice trials in add_run_metadata.
     chosen = df['nChoiceMade'] > 0
     invalid_order = chosen & (
         (df['tGO'] > df['tEnterTarget']) |
@@ -92,18 +140,42 @@ def parse_single_trial(events_str: str) -> dict:
         
     Returns:
         A dictionary of parsed trial metrics.
+
+    Notes:
+        LabVIEW writes ``nProb`` in whichever notation it pleases: most rows
+        are plain decimals, but values near 0 and 1 are emitted in scientific
+        notation (for example, ``5.46875E-1`` and
+        ``-2.22044604925031E-16``). A digits-and-dots pattern silently drops
+        both the sign and the exponent, turning ``5.46875E-1`` into
+        ``5.46875``—an out-of-range success probability that then corrupts
+        trial classification.
+
+        The parser builds ``nTokenNum``, ``nTokenDir``, ``tTime``, and
+        ``nProb`` independently from the same ``Tokens.Data`` rows. If a row
+        matches only some patterns, the arrays become misaligned and every
+        subsequent index-based criterion is corrupted, so their lengths must
+        match.
+
+        Because ``nProb`` is a probability, values outside [0, 1] indicate a
+        parsing error rather than a real experimental outcome. Validation uses
+        a small tolerance for LabVIEW's floating-point representation of zero,
+        which it may write as ``-2.22044604925031E-16``.
     """
     # Normalize line endings and split
     lines = [line.strip() for line in events_str.replace('\r\n', '\n').split('\n') if line.strip()]
     
     meta = {}
+    n_token_num_list = []
+    n_token_dir_list = []
     t_time_list = []
     n_prob_list = []
     
-    # Regular expressions for parsing token steps
+    # Regular expressions for parsing token steps.
+    token_num_re = re.compile(r'nTokenNum:\s*(\d+)')
+    token_dir_re = re.compile(r'nTokenDir:\s*(\d+)')
     time_re = re.compile(r'tTime:\s*(\d+)')
-    prob_re = re.compile(r'nProb:\s*([\d\.]+)')
-    
+    prob_re = re.compile(r'nProb:\s*(-?\d+(?:\.\d*)?(?:[eE][+-]?\d+)?)')
+
     in_tokens = False
     for line in lines:
         if line.startswith("Tokens.Data:"):
@@ -114,8 +186,14 @@ def parse_single_trial(events_str: str) -> dict:
                 in_tokens = False
                 continue
             # Parse step metrics
+            token_num_match = token_num_re.search(line)
+            token_dir_match = token_dir_re.search(line)
             time_match = time_re.search(line)
             prob_match = prob_re.search(line)
+            if token_num_match:
+                n_token_num_list.append(int(token_num_match.group(1)))
+            if token_dir_match:
+                n_token_dir_list.append(int(token_dir_match.group(1)))
             if time_match:
                 t_time_list.append(int(time_match.group(1)))
             if prob_match:
@@ -127,55 +205,128 @@ def parse_single_trial(events_str: str) -> dict:
                 val = v.strip().strip("'").strip('"')
                 meta[k.strip()] = val
 
+    # These fields describe trial structure that exists regardless of
+    # whether the subject responded (trial index, go cue, trial end, the
+    # predetermined correct target, the token sequence). Their absence means
+    # this trial's Events block is truncated or corrupted, not a real
+    # experimental outcome, so it is a hard error rather than a 0 default.
+    required_fields = (
+        'nTrialIndex', 'nInitialTime', 'nCorrectChoice', 'tGO', 'tTrialEnd',
+        'sTokenDirs', 'nOutcome',
+    )
+    missing_fields = [key for key in required_fields if key not in meta]
+    if missing_fields:
+        trial_hint = meta.get('nTrialIndex', '?')
+        raise ValueError(
+            f"Trial {trial_hint}: Events block is missing required "
+            f"field(s) {missing_fields}"
+        )
+
     # Extract base variables
-    n_trial_index = int(meta.get('nTrialIndex', 0))
-    n_initial_time = int(meta.get('nInitialTime', 0))
+    n_trial_index = int(meta['nTrialIndex'])
+    n_initial_time = int(meta['nInitialTime'])
     n_choice_made = int(meta.get('nChoiceMade', 0))
-    n_correct_choice = int(meta.get('nCorrectChoice', 0))
-    
-    t_go = int(meta.get('tGO', 0))
+    n_correct_choice = int(meta['nCorrectChoice'])
+
+    n_outcome = int(meta['nOutcome'])
+    t_go = int(meta['tGO'])
+    # tEnterTarget only exists once a target has actually been entered, so
+    # it is legitimately absent (not corrupted) on a skipped trial.
     t_enter_target = int(meta.get('tEnterTarget', 0))
-    t_trial_end = int(meta.get('tTrialEnd', 0))
-    
+    t_trial_end = int(meta['tTrialEnd'])
+
     # sTokenDirs is a string representation of token directions
-    s_token_dirs = meta.get('sTokenDirs', '0')
-    
-    # Parse and map sTrialClass
+    s_token_dirs = meta['sTokenDirs']
+
+    if n_correct_choice in (1, 2):
+        try:
+            sp_design_correct = success_probability_profile(
+                s_token_dirs,
+                target=n_correct_choice,
+            )
+        except ValueError as error:
+            raise ValueError(
+                f"Trial {n_trial_index}: invalid designed token sequence: {error}"
+            ) from error
+    else:
+        sp_design_correct = None
+
+    # Preserve recorded designed labels. Only random ('x') trials are assigned
+    # a posteriori from the complete, correct-target designed SP profile.
     trial_class_raw = meta.get('sTrialClass', 'x')
-    if trial_class_raw == 'x':
+    normalized_trial_class = str(trial_class_raw).lower()
+    recorded_classes = {'e': 1, 'a': 2, 'm': 3}
+    if normalized_trial_class in recorded_classes:
+        s_trial_class = recorded_classes[normalized_trial_class]
+        trial_class_source = 'design'
+        trial_class_rule = 'recorded_label'
+    elif normalized_trial_class == 'x':
+        if sp_design_correct is None:
+            s_trial_class = 0
+            trial_class_source = 'unclassified'
+            trial_class_rule = 'no_correct_target'
+        else:
+            s_trial_class, trial_class_rule = classify_design_profile_with_rule(
+                sp_design_correct
+            )
+            trial_class_source = 'inferred' if s_trial_class else 'unclassified'
+    elif normalized_trial_class == 'r':
         s_trial_class = 0
-    elif trial_class_raw == 'e':
-        s_trial_class = 1
-    elif trial_class_raw == 'a':
-        s_trial_class = 2
-    elif trial_class_raw == 'm':
-        s_trial_class = 3
+        trial_class_source = 'not_applicable'
+        trial_class_rule = 'not_applicable'
     else:
         try:
             s_trial_class = int(trial_class_raw)
         except ValueError:
-            s_trial_class = 0
+            raise ValueError(
+                f"Trial {n_trial_index}: unrecognized sTrialClass value "
+                f"{trial_class_raw!r} (expected 'x', 'e', 'a', 'm', or an "
+                "integer)"
+            )
+        trial_class_source = 'design' if s_trial_class in (1, 2, 3) else 'unclassified'
+        trial_class_rule = 'recorded_numeric_label'
+
+    token_log_rows = len(n_prob_list)
+    token_log_short = token_log_rows == 14
 
     # Handle token time series arrays
     if n_choice_made == 0:
+        n_token_num = 0
+        n_token_dir = 0
         t_time = 0
         n_prob = 0
     else:
+        n_token_num = n_token_num_list
+        n_token_dir = n_token_dir_list
         t_time = t_time_list
         n_prob = n_prob_list
-        
-        # Replicate DDM logic rules for sTrialClass override
-        if len(n_prob) >= 8:
-            if n_prob[1] > 0.6 and n_prob[4] > 0.75 and n_prob[7] > 0.75:
-                s_trial_class = 1 # 1 = Easy
-            elif n_prob[1] == 0.5 and n_prob[2] > 0.38 and n_prob[2] < 0.65 and n_prob[4] > 0.35 and n_prob[4] < 0.65:
-                s_trial_class = 2 # 2 = Ambiguous
-            elif n_prob[2] < 0.4:
-                s_trial_class = 3 # 3 = Misleading (Fixed bug from previous member codebase)
+
+        token_field_lengths = {
+            'nTokenNum': len(n_token_num),
+            'nTokenDir': len(n_token_dir),
+            'tTime': len(t_time),
+            'nProb': len(n_prob),
+        }
+        if len(set(token_field_lengths.values())) != 1:
+            raise ValueError(
+                f"Trial {n_trial_index}: Tokens.Data field lengths differ: "
+                f"{token_field_lengths}"
+            )
+        out_of_range = [value for value in n_prob if not -1e-9 <= value <= 1 + 1e-9]
+        if out_of_range:
+            raise ValueError(
+                f"Trial {n_trial_index}: nProb values outside [0, 1]: "
+                f"{out_of_range}"
+            )
+        n_prob = [min(1.0, max(0.0, value)) for value in n_prob]
 
     return {
         'nTrialIndex': n_trial_index,
         'sTrialClass': s_trial_class,
+        'sTrialClassRaw': trial_class_raw,
+        'trial_class_source': trial_class_source,
+        'trial_class_rule': trial_class_rule,
+        'sp_design_correct': sp_design_correct,
         'nInitialTime': n_initial_time,
         'nChoiceMade': n_choice_made,
         'nCorrectChoice': n_correct_choice,
@@ -183,8 +334,13 @@ def parse_single_trial(events_str: str) -> dict:
         'tEnterTarget': t_enter_target,
         'tTrialEnd': t_trial_end,
         'sTokenDirs': s_token_dirs,
+        'nTokenNum': n_token_num,
+        'nTokenDir': n_token_dir,
         'tTime': t_time,
-        'nProb': n_prob
+        'nProb': n_prob,
+        'token_log_rows': token_log_rows,
+        'token_log_short': token_log_short,
+        'nOutcome': n_outcome,
     }
 
 def parse_tdms_file(file_path: str) -> pd.DataFrame:
@@ -198,15 +354,33 @@ def parse_tdms_file(file_path: str) -> pd.DataFrame:
         A pandas DataFrame containing parsed trial data.
     """
     tdms_file = TdmsFile(file_path)
-    
+
     trial_data = []
+    missing_events = []
     for group in tdms_file.groups():
-        if group.name.startswith("TrialData"):
-            events_str = group.properties.get('Events', '')
-            if events_str:
-                trial_dict = parse_single_trial(events_str)
-                trial_data.append(trial_dict)
-                
+        if not group.name.startswith("TrialData"):
+            continue
+        events_str = group.properties.get('Events', '')
+        if not events_str:
+            missing_events.append(group.name)
+            continue
+        try:
+            trial_dict = parse_single_trial(events_str)
+        except ValueError as error:
+            raise ValueError(f"{file_path}: {error}") from error
+        trial_data.append(trial_dict)
+
+    if missing_events:
+        raise ValueError(
+            f"{file_path}: TrialData group(s) with no 'Events' property: "
+            f"{missing_events}"
+        )
+    if not trial_data:
+        raise ValueError(f"{file_path}: no TrialData groups with trial data found")
+
     df = pd.DataFrame(trial_data, columns=TRIAL_COLUMNS)
-    validate_behavior_dataframe(df)
+    try:
+        validate_behavior_dataframe(df)
+    except ValueError as error:
+        raise ValueError(f"{file_path}: {error}") from error
     return df

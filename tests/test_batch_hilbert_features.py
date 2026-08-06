@@ -91,10 +91,11 @@ def test_run_batch_hilbert_features_writes_sidecar_backed_arrays(tmp_path):
 
 
 def test_hilbert_workflow_declares_erp_and_outputs(tmp_path):
-    input_path = _write_erp(tmp_path)
+    project = ProjectConfig(data_root=tmp_path)
+    input_path = _write_erp(project.bids_root)
 
     result = extract_hilbert_features(
-        ProjectConfig(bids_root=tmp_path),
+        project,
         subjects=["H1"],
         settings=HilbertConfig(
             conditions=("Fast",),
