@@ -9,6 +9,10 @@ noise_dir = "/path/to/noise-recordings"
 task = "tokens"
 pipeline = "meg-tokens"
 
+# Subjects excluded from group analyses after MEG/data-quality review. Leave
+# empty until the four preprint exclusions are confirmed.
+subject_exclusions = []
+
 # TDMS files under data_root/tdms that are deliberately NOT ingested. Each is
 # a short aborted/practice block whose trials do not belong to any named run;
 # all three were verified against their same-day siblings (they overlap no

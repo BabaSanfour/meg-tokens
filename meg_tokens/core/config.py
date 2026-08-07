@@ -6,6 +6,8 @@ from dataclasses import dataclass, fields
 from pathlib import Path
 from typing import Any, Mapping, Optional
 
+from .entities import normalize_subject_id
+
 try:
     import tomllib
 except ModuleNotFoundError:  # pragma: no cover - Python 3.10 compatibility
@@ -30,11 +32,17 @@ class ProjectConfig:
     task: str = "tokens"
     pipeline: str = "meg-tokens"
     behavior_ignore_files: tuple[str, ...] = ()
+    subject_exclusions: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "data_root", Path(self.data_root).expanduser())
         object.__setattr__(
             self, "behavior_ignore_files", tuple(self.behavior_ignore_files)
+        )
+        object.__setattr__(
+            self,
+            "subject_exclusions",
+            tuple(normalize_subject_id(subject) for subject in self.subject_exclusions),
         )
         for field_name in ("subjects_dir", "trans_dir", "noise_dir"):
             value = getattr(self, field_name)

@@ -92,6 +92,7 @@ def _write_behavior_derivatives(root):
                 "sTokenDirs": ["0", "0"],
                 "tTime": ["[]", "[]"],
                 "nProb": ["[]", "[]"],
+                "nOutcome": [0, 0],
                 "rawRT": [rt, rt],
                 "isCorrect": [True, True],
             })

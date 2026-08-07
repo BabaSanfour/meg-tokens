@@ -34,6 +34,11 @@ FILENAME_RE = re.compile(
 )
 
 
+def started_trials(df: pd.DataFrame) -> pd.DataFrame:
+    """Return trials that received a go cue and are eligible for analysis."""
+    return df.loc[df["nOutcome"] != OUTCOME_NEVER_STARTED].copy()
+
+
 @dataclass(frozen=True)
 class TdmsRunInfo:
     subject: str

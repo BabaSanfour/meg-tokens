@@ -137,6 +137,8 @@ The behavior analysis workflow consumes these run tables and writes:
 
 ```text
 derivatives/meg-tokens/sub-group/beh/sub-group_task-tokens_desc-summary_beh.tsv
+derivatives/meg-tokens/sub-group/beh/sub-group_task-tokens_desc-groupstats_beh.tsv
+derivatives/meg-tokens/sub-group/beh/sub-group_task-tokens_desc-trialfeatures_beh.tsv
 ```
 
 This table contains one row per subject with motor baseline, Fast/Slow decision
@@ -146,11 +148,37 @@ uses every available runtime log, while `*_validated_15row` is the required
 15-row-only sensitivity analysis. Counts and means are reported overall and for
 easy, ambiguous, and misleading trials. Design-derived SP is never aligned to
 runtime time and design-derived SPD is never computed when `token_log_short` is
-true. Trials
-with `nOutcome == 7003` are excluded from those analyses and from
+true. Trials with `nOutcome == 7003` are excluded from those analyses and from
 `n_rt_trials`, `n_fast_trials`, and `n_slow_trials`; their retained source-row
 count is reported separately as `n_never_started_trials`. The JSON sidecar
 records the contributing run tables.
+
+DT summaries retain all finite `rawRT - motor_baseline` values without an upper
+cutoff or winsorization. `n_fast_dt_anticipations` and
+`n_slow_dt_anticipations` count values below zero; these trials remain in the
+primary summaries. Trials without a valid response time do not enter DT
+metrics.
+
+The group-statistics table contains paired subject-level contrasts for
+Fast/Slow DT, Fast/Slow error counts, the three DT class contrasts, and the
+three SPD class contrasts for both logged-SPD views. Each row reports the two
+labels and source columns, contributing subject count, mean and SEM for each
+side, mean difference, paired `t`, `p`, `df`, and Cohen's `dz`.
+
+The trial-feature table contains one row per staged trial for the selected
+analysis subjects. Its MEG join key is `subject`, `condition`, `run`, and
+`run_trial_index`; `nTrialIndex` is retained separately because it is a
+session-scoped LabVIEW index. `block_index` currently equals the condition run
+number, and `started_trial_index` gives the within-run order after removing
+never-started rows.
+
+Task rows contain `dt_ms`, logged chosen-target SPD, the one-based token index
+available at decision (`0` means before the first token), and centered evidence
+`logged_spd - 0.5`. RT rows retain `rawRT` and motor baseline but leave DT and
+SPD fields missing. The 15-row SPD sensitivity field is missing for short logs.
+QC columns identify started trials, choices, no-responses, DT anticipations,
+SPD availability, valid design-time alignment, and primary-analysis
+eligibility. Never-started rows remain present with missing decision features.
 
 ## Preprocessed Raw Files
 

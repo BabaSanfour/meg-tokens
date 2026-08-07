@@ -52,7 +52,7 @@ def test_behavior_report_reads_staged_tsv_and_writes_derivative(tmp_path):
         path = layout.behavior(subject="H01", run=f"{condition}1", condition=condition)
         save_table(
             path,
-            pd.DataFrame({"rawRT": values}),
+            pd.DataFrame({"rawRT": values, "nOutcome": [0] * len(values)}),
             metadata={"subject": "H01", "condition": condition},
         )
 

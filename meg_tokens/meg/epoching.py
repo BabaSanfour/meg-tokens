@@ -8,7 +8,11 @@ import mne
 from pathlib import Path
 from typing import Optional, Tuple
 
-from meg_tokens.behavior.tdms import OUTCOME_NEVER_STARTED, validate_behavior_dataframe
+from meg_tokens.behavior.tdms import (
+    OUTCOME_NEVER_STARTED,
+    started_trials,
+    validate_behavior_dataframe,
+)
 from meg_tokens.core import normalize_subject_id, parse_run_label
 from meg_tokens.io import DerivativeLayout, ensure_dir, save_table, sidecar_path
 
@@ -279,7 +283,7 @@ def synchronize_events_and_behavior(
     matching_codes = list(event_ids.values())
     matched_events = events[np.isin(events[:, 2], matching_codes)]
 
-    behavior_df = behavior_df.loc[behavior_df['nOutcome'] != OUTCOME_NEVER_STARTED]
+    behavior_df = started_trials(behavior_df)
 
     n_events = len(matched_events)
     n_trials = len(behavior_df)

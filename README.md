@@ -73,12 +73,19 @@ Extracts trial-by-trial logs from the raw LabVIEW directories into behavior TSV 
 meg-tokens --config tokens.toml behavior ingest
 ```
 
-Compute one validated behavioral summary row per subject from those staged TSV
-files:
+Compute subject summaries, paired group statistics, and the trial-level
+MEG-joinable feature table from those staged TSV files:
 
 ```bash
 meg-tokens --config tokens.toml behavior analyze
 ```
+
+Re-run the source-log success-probability/SPD validation and print its summary:
+
+```bash
+meg-tokens --config tokens.toml behavior qc
+```
+
 
 ### Stage 2: Epoch Extraction & Alignment
 Filters raw continuous MEG data and slices it into event-locked trial epochs. Epoching consumes Stage 1 behavior TSV derivatives and cleaned/filtered raw FIF derivatives.

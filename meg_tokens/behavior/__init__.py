@@ -17,6 +17,9 @@ _EXPORTS = {
     "analyze_logged_spd": ("meg_tokens.behavior.metrics", "analyze_logged_spd"),
     "compare_correct_error": ("meg_tokens.behavior.metrics", "compare_correct_error"),
     "analyze_post_error_slowing": ("meg_tokens.behavior.metrics", "analyze_post_error_slowing"),
+    "behavior_group_statistics": ("meg_tokens.behavior.metrics", "behavior_group_statistics"),
+    "paired_subject_statistics": ("meg_tokens.behavior.metrics", "paired_subject_statistics"),
+    "logged_spd_at_decision": ("meg_tokens.behavior.metrics", "logged_spd_at_decision"),
     "probability_at_decision": ("meg_tokens.behavior.success_probability", "probability_at_decision"),
     "implied_target_counts": ("meg_tokens.behavior.success_probability", "implied_target_counts"),
     "success_probability": ("meg_tokens.behavior.success_probability", "success_probability"),
@@ -28,6 +31,7 @@ _EXPORTS = {
     "parse_single_trial": ("meg_tokens.behavior.tdms", "parse_single_trial"),
     "parse_tdms_filename": ("meg_tokens.behavior.tdms", "parse_tdms_filename"),
     "parse_tdms_file": ("meg_tokens.behavior.tdms", "parse_tdms_file"),
+    "started_trials": ("meg_tokens.behavior.tdms", "started_trials"),
     "validate_behavior_dataframe": ("meg_tokens.behavior.tdms", "validate_behavior_dataframe"),
 }
 

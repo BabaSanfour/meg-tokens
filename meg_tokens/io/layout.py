@@ -162,6 +162,26 @@ class DerivativeLayout:
             extension=".tsv",
         )
 
+    def behavior_group_statistics(self) -> Path:
+        """Return the paired group behavior statistics derivative path."""
+        return self.path(
+            subject="group",
+            datatype="beh",
+            description="groupstats",
+            suffix="beh",
+            extension=".tsv",
+        )
+
+    def behavior_trial_features(self) -> Path:
+        """Return the trial-level behavior feature derivative path."""
+        return self.path(
+            subject="group",
+            datatype="beh",
+            description="trialfeatures",
+            suffix="beh",
+            extension=".tsv",
+        )
+
     def preprocessed_raw(
         self,
         *,

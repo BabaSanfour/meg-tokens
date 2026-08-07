@@ -31,6 +31,7 @@ from meg_tokens.io import (
     save_table,
 )
 from meg_tokens.reports.meg import plot_correlation
+from meg_tokens.behavior.tdms import started_trials
 
 
 def stats_derivative_path(
@@ -366,7 +367,7 @@ def mean_raw_rt_by_subject(behavior_dir: str, subjects: Sequence[str], condition
         subject = normalize_subject_id(subject)
         rt_values = []
         for path in _behavior_tables_for_subject(behavior_dir, subject, conditions):
-            table = pd.read_csv(path, sep="\t")
+            table = started_trials(pd.read_csv(path, sep="\t"))
             if "rawRT" in table.columns:
                 series = table["rawRT"]
             else:

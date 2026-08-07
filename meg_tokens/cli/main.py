@@ -64,6 +64,12 @@ def build_parser() -> argparse.ArgumentParser:
     _add_root_option(analyze)
     analyze.add_argument("--subjects", nargs="+")
 
+    qc = behavior_commands.add_parser(
+        "qc",
+        help="Validate source TDMS success-probability and SPD profiles.",
+    )
+    _add_root_option(qc)
+
     meg = domains.add_parser("meg", help="MEG preprocessing and epoching.")
     meg_commands = meg.add_subparsers(dest="meg_command", required=True)
 
@@ -452,6 +458,16 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             from meg_tokens.workflows.behavior import analyze_behavior
 
             result = analyze_behavior(project, subjects=args.subjects)
+        elif args.domain == "behavior" and args.behavior_command == "qc":
+            from meg_tokens.validation import run_spd_validation
+
+            summary, details = run_spd_validation(
+                project.behavior_root,
+                ignore_files=project.behavior_ignore_files,
+            )
+            print(summary.to_string(index=False))
+            print(f"Validated trials: {len(details)}")
+            return 0
         elif args.domain == "meg" and args.meg_command == "preprocess":
             from meg_tokens.workflows.preprocessing import preprocess_run
 

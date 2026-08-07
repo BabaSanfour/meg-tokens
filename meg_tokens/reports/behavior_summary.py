@@ -8,6 +8,7 @@ from pathlib import Path
 import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
+from meg_tokens.behavior.tdms import started_trials
 from meg_tokens.io import DerivativeLayout, require_file, save_sidecar
 from meg_tokens.reports.behavior import plot_fast_slow_distributions
 from meg_tokens.reports.meg import plot_correlation
@@ -39,6 +40,7 @@ def run_behavior_plotting(
         table = pd.read_csv(path, sep="\t")
         if "rawRT" not in table.columns:
             raise ValueError(f"Behavior derivative {path} is missing canonical rawRT")
+        table = started_trials(table)
         values = pd.to_numeric(table["rawRT"], errors="coerce").dropna().to_numpy()
         key = condition.lower()
         if key in values_by_condition:
@@ -59,7 +61,7 @@ def run_behavior_plotting(
     figure = plot_fast_slow_distributions(
         dt_fast=np.asarray(values_by_condition["fast"]),
         dt_slow=np.asarray(values_by_condition["slow"]),
-        title="Decision Time Distribution: Fast vs Slow",
+        title="Raw Response Time Distribution: Fast vs Slow",
         save_path=str(figure_path),
     )
     plt.close(figure)
@@ -67,7 +69,7 @@ def run_behavior_plotting(
         figure_path,
         {
             "stage": "behavior_report",
-            "kind": "decision_time_distribution",
+            "kind": "raw_response_time_distribution",
             "conditions": ["Fast", "Slow"],
             "metric": "rawRT",
             "inputs": [str(path) for path in tables],
@@ -82,22 +84,22 @@ def run_behavior_plotting(
         if missing:
             raise ValueError(f"Neural metrics table is missing columns: {sorted(missing)}")
 
-        mean_subj_dts = []
+        mean_subject_rts = []
         neural_peaks = []
         for subject, values in sorted(values_by_subject.items()):
             metric_rows = metrics.loc[metrics["subject"] == subject, "neural_peak_ms"]
             if values and not metric_rows.empty:
-                mean_subj_dts.append(float(np.mean(values)))
+                mean_subject_rts.append(float(np.mean(values)))
                 neural_peaks.append(float(metric_rows.iloc[0]))
 
-        if len(mean_subj_dts) < 3:
+        if len(mean_subject_rts) < 3:
             raise ValueError("At least three subjects with behavior and neural metrics are required for correlation")
 
         fig, ax = plt.subplots(figsize=(8, 8))
         plot_correlation(
-            x_data=np.asarray(mean_subj_dts),
+            x_data=np.asarray(mean_subject_rts),
             y_data=np.asarray(neural_peaks),
-            x_label='Behavioral Decision Time (ms)',
+            x_label='Mean raw response time (ms)',
             y_label='Neural Peak Commitment (ms)',
             title='Correlation: Behavior vs. Neural Peak',
             ax=ax

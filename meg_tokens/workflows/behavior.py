@@ -11,9 +11,11 @@ from meg_tokens.behavior.metrics import (
     analyze_logged_spd,
     analyze_post_error_slowing,
     analyze_trial_classes,
+    behavior_group_statistics,
     calculate_motor_baseline,
     compare_correct_error,
     compare_fast_slow,
+    logged_spd_at_decision,
 )
 from meg_tokens.behavior.tdms import (
     OUTCOME_NEVER_STARTED,
@@ -21,6 +23,7 @@ from meg_tokens.behavior.tdms import (
     add_run_metadata,
     parse_tdms_file,
     parse_tdms_filename,
+    started_trials,
     validate_behavior_dataframe,
 )
 from meg_tokens.core import ProjectConfig, WorkflowResult, normalize_subject_id
@@ -203,9 +206,89 @@ def _started_condition_runs(
 ) -> list[pd.DataFrame]:
     """Return analysis views containing only trials that received a go cue."""
     return [
-        table.loc[table["nOutcome"] != OUTCOME_NEVER_STARTED].copy()
+        started_trials(table)
         for table in _condition_runs(tables, condition)
     ]
+
+
+def _trial_feature_table(
+    by_subject: dict[str, list[pd.DataFrame]],
+    motor_baselines: dict[str, float],
+) -> pd.DataFrame:
+    """Build one MEG-joinable feature row per staged behavior trial."""
+    rows = []
+    class_names = {0: "unclassified", 1: "easy", 2: "ambiguous", 3: "misleading"}
+    for subject, tables in sorted(by_subject.items()):
+        motor_baseline = motor_baselines[subject]
+        for table in tables:
+            condition = str(table["condition"].iloc[0])
+            run = int(table["run"].iloc[0])
+            started_index = 0
+            for run_trial_index, (_, trial) in enumerate(table.iterrows(), start=1):
+                is_started = int(trial["nOutcome"]) != OUTCOME_NEVER_STARTED
+                if is_started:
+                    started_index += 1
+                raw_rt = pd.to_numeric(pd.Series([trial["rawRT"]]), errors="coerce").iloc[0]
+                has_choice = bool(pd.notna(raw_rt))
+                is_task = condition.lower() in {"fast", "slow"}
+                dt = float(raw_rt) - motor_baseline if is_task and has_choice else float("nan")
+
+                spd = float("nan")
+                decision_token_index = pd.NA
+                if is_task and has_choice:
+                    spd, zero_based_index = logged_spd_at_decision(
+                        trial,
+                        motor_baseline,
+                    )
+                    decision_token_index = (
+                        0 if zero_based_index is None else zero_based_index + 1
+                    )
+                log_rows = int(trial["token_log_rows"])
+                trial_class = int(trial["sTrialClass"])
+                rows.append({
+                    "trial_id": (
+                        f"sub-{subject}_task-tokens_run-{run}_desc-"
+                        f"{condition.lower()}_trial-{run_trial_index:03d}"
+                    ),
+                    "subject": subject,
+                    "condition": condition,
+                    "run": run,
+                    "block_index": run,
+                    "run_trial_index": run_trial_index,
+                    "started_trial_index": started_index if is_started else pd.NA,
+                    "nTrialIndex": int(trial["nTrialIndex"]),
+                    "source_file": trial["source_file"],
+                    "trial_class": trial_class,
+                    "trial_class_name": class_names.get(trial_class, "unclassified"),
+                    "sTrialClassRaw": trial["sTrialClassRaw"],
+                    "trial_class_source": trial["trial_class_source"],
+                    "trial_class_rule": trial["trial_class_rule"],
+                    "nChoiceMade": int(trial["nChoiceMade"]),
+                    "nCorrectChoice": int(trial["nCorrectChoice"]),
+                    "isCorrect": trial["isCorrect"],
+                    "nOutcome": int(trial["nOutcome"]),
+                    "motor_baseline_ms": motor_baseline,
+                    "rawRT": raw_rt,
+                    "dt_ms": dt,
+                    "logged_spd": spd,
+                    "logged_spd_validated_15row": spd if log_rows == 15 else float("nan"),
+                    "evidence_at_decision": spd - 0.5 if pd.notna(spd) else float("nan"),
+                    "decision_token_index": decision_token_index,
+                    "token_log_rows": log_rows,
+                    "token_log_short": trial["token_log_short"],
+                    "is_started": is_started,
+                    "has_choice": has_choice,
+                    "is_no_response": is_started and not has_choice,
+                    "dt_anticipation": bool(pd.notna(dt) and dt < 0),
+                    "spd_available": bool(pd.notna(spd)),
+                    "design_time_alignment_valid": bool(
+                        is_task and has_choice and log_rows == 15
+                    ),
+                    "primary_analysis_eligible": bool(
+                        is_task and is_started and has_choice
+                    ),
+                })
+    return pd.DataFrame(rows)
 
 
 def analyze_behavior(
@@ -220,6 +303,7 @@ def analyze_behavior(
         task=project.task,
     )
     paths = layout.behavior_tables(subjects=subjects)
+    excluded_subjects = set(project.subject_exclusions)
     by_subject: dict[str, list[pd.DataFrame]] = {}
     source_paths: dict[str, list[Path]] = {}
     for path in paths:
@@ -228,12 +312,15 @@ def analyze_behavior(
         if table.empty:
             continue
         subject = normalize_subject_id(str(table["subject"].iloc[0]))
+        if subject in excluded_subjects:
+            continue
         by_subject.setdefault(subject, []).append(table)
         source_paths.setdefault(subject, []).append(path)
     if not by_subject:
         raise ValueError("Behavior derivatives do not contain any trials")
 
     rows = []
+    motor_baselines = {}
     for subject, tables in sorted(by_subject.items()):
         n_never_started = sum(
             int((table["nOutcome"] == OUTCOME_NEVER_STARTED).sum())
@@ -244,8 +331,11 @@ def analyze_behavior(
         slow_runs = _started_condition_runs(tables, "Slow")
         task_runs = fast_runs + slow_runs
         motor_baseline = calculate_motor_baseline(rt_runs)
+        motor_baselines[subject] = motor_baseline
         speed = compare_fast_slow(fast_runs, slow_runs, motor_baseline)
         accuracy = compare_correct_error(task_runs, motor_baseline)
+        fast_accuracy = compare_correct_error(fast_runs, motor_baseline)
+        slow_accuracy = compare_correct_error(slow_runs, motor_baseline)
         classes = analyze_trial_classes(task_runs, motor_baseline)
         spd = analyze_logged_spd(task_runs, motor_baseline)
         post_error = analyze_post_error_slowing(task_runs, motor_baseline)
@@ -256,16 +346,34 @@ def analyze_behavior(
                 "subject": subject,
                 "motor_baseline_ms": motor_baseline,
                 "n_rt_trials": sum(len(table) for table in rt_runs),
+                "n_rt_baseline_trials": sum(
+                    int(table["rawRT"].notna().sum()) for table in rt_runs
+                ),
                 "n_fast_trials": sum(len(table) for table in fast_runs),
                 "n_slow_trials": sum(len(table) for table in slow_runs),
                 "n_never_started_trials": n_never_started,
+                "n_fast_dt_trials": speed["n_fast"],
+                "n_slow_dt_trials": speed["n_slow"],
+                "n_fast_dt_anticipations": speed["n_fast_anticipations"],
+                "n_slow_dt_anticipations": speed["n_slow_anticipations"],
                 "mean_fast_dt_ms": speed["mean_fast"],
                 "mean_slow_dt_ms": speed["mean_slow"],
-                "fast_vs_slow_t": speed["t_stat"],
-                "fast_vs_slow_p": speed["p_value"],
+                "n_correct_trials": accuracy["n_correct"],
+                "n_error_trials": accuracy["n_error"],
                 "percent_correct": accuracy["percent_correct"],
+                "n_fast_correct_trials": fast_accuracy["n_correct"],
+                "n_fast_error_trials": fast_accuracy["n_error"],
+                "fast_percent_correct": fast_accuracy["percent_correct"],
+                "fast_percent_error": 100.0 - fast_accuracy["percent_correct"],
+                "n_slow_correct_trials": slow_accuracy["n_correct"],
+                "n_slow_error_trials": slow_accuracy["n_error"],
+                "slow_percent_correct": slow_accuracy["percent_correct"],
+                "slow_percent_error": 100.0 - slow_accuracy["percent_correct"],
                 "mean_correct_dt_ms": accuracy["mean_correct"],
                 "mean_error_dt_ms": accuracy["mean_error"],
+                "n_easy_trials": classes["counts"]["easy"],
+                "n_ambiguous_trials": classes["counts"]["ambiguous"],
+                "n_misleading_trials": classes["counts"]["misleading"],
                 "mean_easy_dt_ms": classes["means"]["easy"],
                 "mean_ambiguous_dt_ms": classes["means"]["ambiguous"],
                 "mean_misleading_dt_ms": classes["means"]["misleading"],
@@ -289,18 +397,22 @@ def analyze_behavior(
                     f"mean_{name}_spd_validated_15row": validated_spd["classes"][name]["mean_spd"]
                     for name in ("easy", "ambiguous", "misleading")
                 },
+                "n_post_correct_trials": post_error["n_post_correct"],
+                "n_post_error_trials": post_error["n_post_error"],
                 "mean_post_correct_dt_ms": post_error["mean_post_correct"],
                 "mean_post_error_dt_ms": post_error["mean_post_error"],
             }
         )
 
+    subject_summary = pd.DataFrame(rows)
     output_path = layout.behavior_summary()
     save_table(
         output_path,
-        pd.DataFrame(rows),
+        subject_summary,
         metadata={
             "stage": "behavior_analysis",
             "subjects": sorted(by_subject),
+            "excluded_subjects": sorted(excluded_subjects),
             "spd": {
                 "source": "logged chosen-target nProb paired with tTime",
                 "views": ["all_logged", "validated_15row"],
@@ -313,9 +425,42 @@ def analyze_behavior(
             ],
         },
     )
+    group_path = layout.behavior_group_statistics()
+    save_table(
+        group_path,
+        behavior_group_statistics(subject_summary),
+        metadata={
+            "stage": "behavior_group_statistics",
+            "subjects": sorted(by_subject),
+            "excluded_subjects": sorted(excluded_subjects),
+            "test": "paired_t_test",
+            "effect_size": "cohens_dz",
+            "spd_views": ["all_logged", "validated_15row"],
+            "subject_summary": str(output_path),
+        },
+    )
+    trial_features_path = layout.behavior_trial_features()
+    save_table(
+        trial_features_path,
+        _trial_feature_table(by_subject, motor_baselines),
+        metadata={
+            "stage": "behavior_trial_features",
+            "subjects": sorted(by_subject),
+            "excluded_subjects": sorted(excluded_subjects),
+            "join_key": ["subject", "condition", "run", "run_trial_index"],
+            "dt": "rawRT - subject motor_baseline_ms; task trials only",
+            "spd": "logged chosen-target nProb at the motor-corrected decision time",
+            "evidence_at_decision": "logged_spd - 0.5",
+            "input_files": [str(path) for path in paths],
+        },
+    )
     return WorkflowResult(
         stage="behavior_analysis",
         inputs=tuple(paths),
-        outputs=(output_path,),
-        settings={"subjects": sorted(by_subject), "n_subjects": len(by_subject)},
+        outputs=(output_path, group_path, trial_features_path),
+        settings={
+            "subjects": sorted(by_subject),
+            "excluded_subjects": sorted(excluded_subjects),
+            "n_subjects": len(by_subject),
+        },
     )

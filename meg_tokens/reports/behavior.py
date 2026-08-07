@@ -6,11 +6,11 @@ import seaborn as sns
 def plot_fast_slow_distributions(
     dt_fast: np.ndarray,
     dt_slow: np.ndarray,
-    title: str = "Decision Time: Fast vs. Slow",
+    title: str = "Raw Response Time: Fast vs. Slow",
     save_path: str = None
 ) -> plt.Figure:
     """
-    Plots the probability density distributions (KDE) of Decision Times for Fast vs. Slow trials.
+    Plot raw response-time distributions for Fast and Slow trials.
     """
     fig, ax = plt.subplots(figsize=(8, 6))
     
@@ -20,7 +20,7 @@ def plot_fast_slow_distributions(
     
     ax.legend(fontsize=12)
     ax.set_title(title, fontsize=14)
-    ax.set_xlabel('Decision Time (ms)', fontsize=12)
+    ax.set_xlabel('Raw response time (ms)', fontsize=12)
     ax.set_ylabel('Density', fontsize=12)
     
     if save_path:
