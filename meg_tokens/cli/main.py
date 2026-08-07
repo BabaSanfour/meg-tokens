@@ -91,6 +91,36 @@ def build_parser() -> argparse.ArgumentParser:
     meg = domains.add_parser("meg", help="MEG preprocessing and epoching.")
     meg_commands = meg.add_subparsers(dest="meg_command", required=True)
 
+    stage_raw = meg_commands.add_parser(
+        "stage-raw",
+        help=(
+            "Stage 0: match raw CTF media sessions to already-ingested "
+            "behavior runs and write a reviewable manifest. Plan only -- "
+            "never touches BIDS/."
+        ),
+    )
+    _add_root_option(stage_raw)
+    stage_raw.add_argument("--subjects", nargs="+", required=True)
+    stage_raw.add_argument(
+        "--media-root",
+        dest="media_root",
+        help="Raw CTF media root. Defaults to the project's raw_meg_root.",
+    )
+
+    apply_raw_staging_parser = meg_commands.add_parser(
+        "apply-raw-staging",
+        help=(
+            "Stage 0: materialize BIDS/sub-*/meg and BIDS/sub-*/beh from a "
+            "Stage 0 manifest (fresh from `stage-raw`, or hand-reviewed)."
+        ),
+    )
+    _add_root_option(apply_raw_staging_parser)
+    apply_raw_staging_parser.add_argument("--subjects", nargs="+")
+    apply_raw_staging_parser.add_argument(
+        "--manifest",
+        help="Manifest TSV to apply. Defaults to the project's Stage 0 manifest path.",
+    )
+
     preprocess = meg_commands.add_parser(
         "preprocess",
         help="Filter one CTF recording and optionally apply ICA.",
@@ -494,6 +524,37 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             print(summary.to_string(index=False))
             print(f"Validated trials: {len(details)}")
             return 0
+        elif args.domain == "meg" and args.meg_command == "stage-raw":
+            from meg_tokens.workflows.raw_staging import plan_raw_staging
+
+            result = plan_raw_staging(
+                project,
+                subjects=args.subjects,
+                media_root=args.media_root,
+            )
+            for subject, counts in result.settings["summary_by_subject"].items():
+                counts_text = ", ".join(f"{action}={count}" for action, count in sorted(counts.items()))
+                print(f"{subject}: {counts_text}")
+            review_rows = result.settings["review_rows"]
+            if review_rows:
+                print(f"\n{len(review_rows)} row(s) need review before applying:")
+                for row in review_rows:
+                    reason = row["note"] or (
+                        f"{row['count_agreement']} (MEG start pulses={row['meg_start_pulse_count']}, "
+                        f"behavior trials={row['behavior_trial_count']})"
+                    )
+                    print(f"  {row['subject']} {row['kind']} {row['condition']} {row['run']}: {reason}")
+            print(f"\nManifest: {result.outputs[0]}")
+            print("Review flagged rows, then run `meg-tokens meg apply-raw-staging`.")
+            return 0
+        elif args.domain == "meg" and args.meg_command == "apply-raw-staging":
+            from meg_tokens.workflows.raw_staging import apply_raw_staging
+
+            result = apply_raw_staging(
+                project,
+                manifest_path=args.manifest,
+                subjects=args.subjects,
+            )
         elif args.domain == "meg" and args.meg_command == "preprocess":
             from meg_tokens.workflows.preprocessing import preprocess_run
 

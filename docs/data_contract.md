@@ -85,6 +85,115 @@ The Python API may load these files as `xarray.DataArray` objects through
 coordinates come from the existing JSON sidecar; this does not introduce a new
 on-disk format. `save_dataarray` writes the same `.npy` plus JSON pair.
 
+## Stage 0: Raw BIDSification
+
+Raw CTF acquisition media has no condition/run label in its session names
+(`H02_DDM-tthiery_20180213_03.ds`) -- only a subject prefix, an acquisition
+date, and a sequential session index. `meg-tokens meg stage-raw` matches
+each numbered session to a behavioral run and writes a reviewable manifest.
+`meg-tokens meg apply-raw-staging` reads that manifest -- fresh, or
+hand-edited after review -- and copies the matched data into:
+
+```text
+BIDS/sub-H02/meg/sub-H02_task-tokens_acq-slow_run-1_meg.ds
+BIDS/sub-H02/beh/sub-H02_task-tokens_acq-slow_run-1_beh.tsv
+BIDS/sub-emptyroom/ses-20180213/meg/sub-emptyroom_ses-20180213_task-noise_meg.ds
+```
+
+Stage 0 reads only the raw media and `tdms/` directly -- it has **no
+dependency on `behavior ingest` or any other stage having run first.**
+Matching uses `meg_tokens.behavior.tdms.parse_tdms_file` the same way
+`BIDS/sub-*/beh` itself is written (see "Behavior Raw Layer" below), not
+`behavior ingest`'s `derivatives/meg-tokens/sub-*/beh/` output.
+
+The matching algorithm never guesses: within one duration class (RT or
+Slow/Fast) it pairs candidate sessions to runs 1:1 in chronological order
+only when the candidate count equals the run count -- both lists are
+independently sorted by real timestamps (`.hist` `DATE:` and TDMS
+`nInitialTime`), so this is applying recorded acquisition order, not
+inferring anything. Every accepted pair is still cross-checked against the
+real MEG trial-start pulse count vs. the run's trial count and flagged for
+review, not staged, if they disagree beyond tolerance. Whenever the
+candidate count and run count disagree (a subject has an extra or a
+missing session in that duration class), **nothing is picked
+automatically** -- every run in that class is flagged `ambiguous` with
+every real candidate's trigger-pulse count listed as evidence, for a human
+to resolve by hand-editing the manifest (see "Manifest" below).
+
+Full design and the evidence behind the matching algorithm are in
+`docs/meg_t0_7_raw_bidsification_plan.md`.
+
+### BIDS Entities
+
+Because `desc` is derivatives-only in real BIDS, condition uses the `acq`
+entity instead, and run stays the same run-within-condition number already
+used everywhere in `derivatives/` (`Slow2` -> `acq-slow_run-2`). `task`
+stays singular (`tokens`) -- it is one task with a speed-instruction
+manipulation, not three different tasks. There is no `ses` entity (one
+acquisition date per subject in this dataset).
+
+### Manifest
+
+`meg-tokens meg stage-raw` writes one manifest per staging run to
+`derivatives/meg-tokens/sub-group/meg/sub-group_task-tokens_desc-rawstaging_manifest.tsv`
+(`DerivativeLayout.raw_staging_manifest()`), covering every subject
+requested. Columns: `subject, kind (run|noise|headshape), condition, run,
+date, media_path, match_method (fast_path|ambiguous|found|not_found),
+meg_start_pulse_count, behavior_trial_count, count_agreement
+(exact|within_tolerance|mismatch|not_applicable), action (stage|review),
+note`. Only `action == "stage"` rows are materialized by
+`apply-raw-staging`.
+
+**Resolving an `ambiguous`/`review` row by hand:** its `note` lists every
+real candidate session on the media for that duration class alongside its
+actual Start-pulse count (e.g. `Candidates: ..._09.ds (start pulses=116);
+..._10.ds (start pulses=146)`). Open the manifest TSV, set that row's
+`media_path` to the correct session's full path and `action` to `stage`,
+save, then re-run `apply-raw-staging` (it reads the manifest exactly as
+saved -- it never recomputes the plan, so your edit is never overwritten by
+a re-plan). The same applies to a `mismatch`/`review` row on an otherwise
+fast-path-matched run, and to a missing `noise`/`headshape` row once you've
+located the right file by hand.
+
+### MEG Raw Layer
+
+Each matched `.ds` session is copied into `BIDS/sub-*/meg` via
+`mne_bids.write_raw_bids(..., symlink=False)`, which also generates the
+standard `channels.tsv`, `*_meg.json`, `coordsystem.json`,
+`dataset_description.json`, and `participants.tsv`. `*_events.tsv` is
+derived from the real trigger channel (`mne.find_events`); CTF's own
+`MarkerFile.mrk` annotations are dropped first (`raw.set_annotations(None)`)
+since `write_raw_bids` would otherwise write the union of both, double
+counting every pulse. Empty-room noise is copied under the standard BIDS
+`sub-emptyroom/ses-<date>/meg/` convention and cross-referenced from each
+subject's `*_meg.json` via `AssociatedEmptyRoom`. Originals on the media and
+in `tdms/` are never modified or deleted.
+
+Re-copying a run always passes `overwrite=True`: real CTF head digitization
+varies by a sub-millimeter, run-to-run fitting noise (confirmed against
+real data), but BIDS's `coordsystem.json` is subject+acquisition-scoped,
+not per-run, so `write_raw_bids` refuses on the second run of the same
+`acq` unless told to overwrite. This is harmless here -- this project's own
+coregistration uses a separately-managed `-trans.fif`, never
+`coordsystem.json`.
+
+`meg_tokens/workflows/sources.py`'s existing empty-room lookup
+(`project.noise_dir` + `DerivativeLayout.find_noise`) is unchanged by
+Stage 0 -- it still expects noise staged separately at whatever
+`noise_dir` points to; the `sub-emptyroom` tree does not feed it yet.
+
+### Behavior Raw Layer
+
+`BIDS/sub-<ID>/beh/*_beh.tsv` is a minimally-parsed TDMS export --
+`meg_tokens.behavior.tdms.parse_tdms_file(path, infer_random_classes=False)`
+written under raw-legal BIDS entities -- independent of and additive to
+`derivatives/meg-tokens/sub-*/beh/*_beh.tsv` (the `behavior ingest` output,
+which stays exactly as documented below: it already makes real analysis
+choices such as trial-class inference, so it is correctly a derivative,
+not raw). `apply-raw-staging` stages every strictly-named TDMS file for a
+requested subject regardless of that subject's MEG match status, since
+parsing a TDMS filename needs no raw MEG session at all.
+
 ## Behavior Tables
 
 ### TDMS Input Contract

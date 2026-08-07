@@ -23,6 +23,8 @@ _EXPORTS = {
         "ingest_subject_behavior",
     ),
     "epoch_subjects": ("meg_tokens.workflows.preprocessing", "epoch_subjects"),
+    "plan_raw_staging": ("meg_tokens.workflows.raw_staging", "plan_raw_staging"),
+    "apply_raw_staging": ("meg_tokens.workflows.raw_staging", "apply_raw_staging"),
     "extract_erp_features": ("meg_tokens.workflows.erp", "extract_erp_features"),
     "preprocess_run": ("meg_tokens.workflows.preprocessing", "preprocess_run"),
     "extract_power_features": ("meg_tokens.workflows.power", "extract_power_features"),

@@ -74,6 +74,7 @@ _EXPORTS = {
     "read_behavior_table": ("meg_tokens.behavior.tables", "read_behavior_table"),
     "read_trial_features": ("meg_tokens.behavior.tables", "read_trial_features"),
     "started_trials": ("meg_tokens.behavior.trials", "started_trials"),
+    "write_beh_bids": ("meg_tokens.behavior.tdms_bids", "write_beh_bids"),
 }
 
 __all__ = sorted(_EXPORTS)

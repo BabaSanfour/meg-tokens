@@ -8,6 +8,7 @@ result before it crosses into the table layer.
 
 import re
 from dataclasses import dataclass
+from pathlib import Path
 
 import pandas as pd
 from nptdms import TdmsFile
@@ -22,6 +23,23 @@ from meg_tokens.behavior.schema import (
     validate_behavior_table,
 )
 from meg_tokens.core import normalize_subject_id
+
+
+def find_subject_directory(root: str | Path, subject: str) -> Path:
+    """Resolve one subject's TDMS input directory under ``root``.
+
+    Tolerates the real dataset's on-disk naming quirk: H01's folder is
+    literally ``H1``, not ``H01`` -- zero-padding isn't consistent across
+    subjects. Tries the subject label as given, its canonical ``H01`` form,
+    and the un-padded ``H1`` form, in that order.
+    """
+    root = Path(root)
+    canonical = normalize_subject_id(subject)
+    candidates = [root / subject, root / canonical, root / f"H{int(canonical[1:])}"]
+    for candidate in candidates:
+        if candidate.is_dir():
+            return candidate
+    raise FileNotFoundError(f"Subject input directory does not exist for {subject} under {root}")
 
 
 FILENAME_RE = re.compile(

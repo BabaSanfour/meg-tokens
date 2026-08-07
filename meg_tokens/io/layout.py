@@ -500,6 +500,21 @@ class DerivativeLayout:
             raise ValueError(f"Multiple source-estimate manifests matched: {matches}")
         return matches[0]
 
+    def raw_staging_manifest(self) -> Path:
+        """Path to the group-level Stage 0 raw-BIDSification manifest.
+
+        One manifest covers every subject a ``meg-tokens meg stage-raw``
+        run was asked to plan; re-running the plan overwrites it, matching
+        the other group-level manifests in this layout.
+        """
+        return self.path(
+            subject="group",
+            datatype="meg",
+            description="rawstaging",
+            suffix="manifest",
+            extension=".tsv",
+        )
+
     def erp(
         self,
         *,

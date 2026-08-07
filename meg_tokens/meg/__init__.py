@@ -31,6 +31,16 @@ _EXPORTS = {
     "align_and_pad_epochs": ("meg_tokens.features.erp", "align_and_pad_epochs"),
     "parcellate_source_estimates": ("meg_tokens.features.erp", "parcellate_source_estimates"),
     "export_neural_space": ("meg_tokens.features.erp", "export_neural_space"),
+    "discover_raw_sessions": ("meg_tokens.meg.raw_staging", "discover_raw_sessions"),
+    "discover_noise_session": ("meg_tokens.meg.raw_staging", "discover_noise_session"),
+    "discover_headshape": ("meg_tokens.meg.raw_staging", "discover_headshape"),
+    "load_behavior_runs": ("meg_tokens.meg.raw_staging", "load_behavior_runs"),
+    "count_start_pulses": ("meg_tokens.meg.raw_staging", "count_start_pulses"),
+    "match_subject": ("meg_tokens.meg.raw_staging", "match_subject"),
+    "match_media_to_behavior": ("meg_tokens.meg.raw_staging", "match_media_to_behavior"),
+    "media_subject_prefix": ("meg_tokens.meg.raw_staging", "media_subject_prefix"),
+    "write_meg_bids": ("meg_tokens.meg.bids_raw", "write_meg_bids"),
+    "write_emptyroom_bids": ("meg_tokens.meg.bids_raw", "write_emptyroom_bids"),
 }
 
 __all__ = sorted(_EXPORTS)

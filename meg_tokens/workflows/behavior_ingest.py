@@ -9,6 +9,7 @@ from meg_tokens.behavior.schema import validate_behavior_table
 from meg_tokens.behavior.tables import add_run_metadata
 from meg_tokens.behavior.tdms import (
     TdmsRunInfo,
+    find_subject_directory,
     parse_tdms_file,
     parse_tdms_filename,
 )
@@ -16,21 +17,10 @@ from meg_tokens.core import ProjectConfig, WorkflowResult, normalize_subject_id
 from meg_tokens.io import DerivativeLayout, save_table
 
 
-
-
 def _subject_input_dir(root: Path, subject: str) -> Path:
-    canonical = normalize_subject_id(subject)
-    candidates = [
-        root / subject,
-        root / canonical,
-        root / f"H{int(canonical[1:])}",
-    ]
-    for candidate in candidates:
-        if candidate.is_dir():
-            return candidate
-    raise FileNotFoundError(
-        f"Subject input directory does not exist for {subject} under {root}"
-    )
+    return find_subject_directory(root, subject)
+
+
 def ingest_subject_behavior(
     subject: str,
     *,

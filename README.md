@@ -28,6 +28,7 @@ The analysis pipeline is designed to be executed sequentially from raw data inge
 
 | Step | Stage | Module | Purpose |
 | :--- | :--- | :--- | :--- |
+| **0** | **Raw BIDSification** | [`raw_staging.py`](meg_tokens/meg/raw_staging.py), [`bids_raw.py`](meg_tokens/meg/bids_raw.py), [`tdms_bids.py`](meg_tokens/behavior/tdms_bids.py) | Matches raw CTF media sessions to behavior runs and copies `BIDS/sub-*/meg` + writes `BIDS/sub-*/beh` (a minimally-parsed behavior export); originals on media/`tdms/` stay untouched. |
 | **1** | **Behavioral Log Parsing** | [`tdms.py`](meg_tokens/behavior/tdms.py), [`schema.py`](meg_tokens/behavior/schema.py), [`behavior_ingest.py`](meg_tokens/workflows/behavior_ingest.py) | Parses raw LabVIEW `.tdms` logs, validates the behavioral contract, and writes behavior derivatives. |
 | **2** | **Behavioral Metrics Extraction** | [`features.py`](meg_tokens/behavior/features.py) and [`performance.py`](meg_tokens/behavior/analyses/performance.py) | Computes choice RTs, accuracy, difficulty levels, and behavioral summaries. |
 | **3** | **Behavioral Reporting** | [`behavior.py`](meg_tokens/reports/behavior.py) | Renders performance diagnostics and RT distributions. |
@@ -46,11 +47,14 @@ The analysis pipeline is designed to be executed sequentially from raw data inge
 
 All project data lives under one convention data root, `meg-tokens`:
 
-*   **`raw/`** — Raw MEG brain recordings.
-    *   Contains raw CTF MEG datasets (`.ds` folders), digitized head shapes, and fiducial photos.
+*   **`raw/`** — Raw CTF MEG acquisition media (`.ds` folders, `NOISE_noise_*.ds` empty-room
+    recordings, digitized head shapes, and fiducial photos), read by `meg-tokens meg stage-raw`.
+    Not project-managed: point this at wherever the acquisition media is mounted, or pass
+    `--media-root` explicitly on each `stage-raw` call instead.
 *   **`tdms/`** — Raw behavioral logs (TDMS).
     *   Contains LabVIEW behavioral event logs for all 32 subjects (`H1` to `H32`).
-*   **`BIDS/`** — Parsed and derived outputs (where the pipeline writes).
+*   **`BIDS/`** — Both the BIDS-raw layer Stage 0 writes (`sub-*/meg`, `sub-*/beh`,
+    `sub-emptyroom`) and parsed/derived outputs under `BIDS/derivatives/meg-tokens/`.
 
 Set `data_root` once in a TOML file based on 
 [`config/tokens.toml.template`](config/tokens.toml.template) and `raw_meg_root`, `behavior_root`,
@@ -66,6 +70,23 @@ template. Relative paths are resolved from the configuration file location.
 
 The installed `meg-tokens` command is the supported execution API. All stages
 also have callable workflow functions under `meg_tokens.workflows`.
+
+### Stage 0: Raw BIDSification
+Matches raw CTF media sessions to raw TDMS behavior runs (reads `tdms/` directly -- no
+dependency on Stage 1 or any other stage having run first) and writes a reviewable manifest.
+Never touches `BIDS/` by itself:
+```bash
+meg-tokens --config tokens.toml meg stage-raw --subjects H01 H02 --media-root /path/to/raw-media
+```
+Every flagged (`review`) row's `note` lists the real candidate session(s) and their actual
+MEG trigger-pulse counts as evidence; nothing is auto-picked among them. To resolve one, open
+the manifest TSV, set that row's `media_path` to the correct session and `action` to `stage`,
+save, and re-run `apply-raw-staging` -- it applies the manifest exactly as saved, so a re-plan
+never overwrites your edit. Then copy the reviewed rows into `BIDS/sub-*/meg`, `BIDS/sub-*/beh`,
+and `BIDS/sub-emptyroom` (the originals on the media and in `tdms/` are never modified):
+```bash
+meg-tokens --config tokens.toml meg apply-raw-staging --subjects H01 H02
+```
 
 ### Stage 1: TDMS Behavioral Extraction
 Extracts trial-by-trial logs from the raw LabVIEW directories into behavior TSV derivatives with JSON sidecars.

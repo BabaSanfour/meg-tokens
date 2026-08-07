@@ -1,6 +1,15 @@
 [project]
-# The data for this project lives in this folder. It must contain raw/ (raw MEG),
-# tdms/ (behavioral logs), and BIDS/ (bids-compliant raw and derivatives).
+# The data for this project lives in this folder. It must contain tdms/
+# (raw behavioral logs) and BIDS/ (both the BIDS-raw layer this project
+# writes under BIDS/sub-*/meg and BIDS/sub-*/beh, and the
+# BIDS/derivatives/meg-tokens pipeline outputs).
+#
+# `raw/` is not a project-managed folder: `meg-tokens meg stage-raw`
+# defaults to reading raw CTF media from data_root/raw (this
+# ProjectConfig.raw_meg_root path), so point it at (or symlink it to)
+# wherever the acquisition media is mounted -- or pass `--media-root`
+# explicitly on each `stage-raw` call instead. See
+# docs/meg_t0_7_raw_bidsification_plan.md.
 data_root = "/path/to/meg-tokens"
 
 subjects_dir = "/path/to/freesurfer-subjects"

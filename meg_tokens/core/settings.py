@@ -27,6 +27,24 @@ class PreprocessingConfig:
 
 
 @dataclass(frozen=True)
+class RawStagingConfig:
+    """Settings for Stage 0 raw-BIDSification (media -> BIDS/sub-*/meg,beh)."""
+
+    slowfast_nominal_duration: float = 315.0
+    rt_nominal_duration: float = 135.0
+    duration_tolerance: float = 20.0
+    count_tolerance: int = 3
+
+    def __post_init__(self) -> None:
+        if self.slowfast_nominal_duration <= 0 or self.rt_nominal_duration <= 0:
+            raise ValueError("Nominal durations must be positive")
+        if self.duration_tolerance < 0:
+            raise ValueError("duration_tolerance must be non-negative")
+        if self.count_tolerance < 0:
+            raise ValueError("count_tolerance must be non-negative")
+
+
+@dataclass(frozen=True)
 class EpochingConfig:
     tmin: float = -0.5
     tmax: float = 2.0
