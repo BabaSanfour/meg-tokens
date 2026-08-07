@@ -5,7 +5,7 @@ import pandas as pd
 import pytest
 from scipy import stats
 
-from meg_tokens.behavior.design_effects import (
+from meg_tokens.behavior.analyses.design_effects import (
     choice_side_summary,
     condition_class_cells,
     condition_class_statistics,
@@ -14,35 +14,38 @@ from meg_tokens.behavior.design_effects import (
     lapse_summary,
     time_on_task,
 )
-from meg_tokens.behavior.distributions import (
+from meg_tokens.behavior.analyses.distributions import (
     distribution_summary,
     spd_cumulative_distributions,
 )
-from meg_tokens.behavior.evidence import (
-    MAX_LOG_ODDS,
+from meg_tokens.behavior.analyses.evidence import (
     conditional_accuracy_functions,
     continuous_evidence_effects,
     criterion_decline,
-    log_posterior_odds,
-    parse_token_directions,
     reverse_correlation,
-    sum_log_lr_profile,
-    token_lead_profile,
 )
-from meg_tokens.behavior.individual import (
+from meg_tokens.behavior.analyses.individual import (
     individual_correlations,
     individual_profile,
 )
-from meg_tokens.behavior.regression import (
-    fit_linear,
-    fit_logistic,
+from meg_tokens.behavior.math.inference import (
     one_sample_statistics,
     repeated_measures_anova,
 )
-from meg_tokens.behavior.sequential import choice_history, robust_post_error_slowing
+from meg_tokens.behavior.math.evidence import (
+    MAX_LOG_ODDS,
+    log_posterior_odds,
+    sum_log_lr_profile,
+    token_lead_profile,
+)
+from meg_tokens.behavior.schema import parse_token_directions
+from meg_tokens.behavior.analyses.sequential import (
+    choice_history,
+    robust_post_error_slowing,
+)
 from meg_tokens.core import ProjectConfig
 from meg_tokens.io import DerivativeLayout, save_table
-from meg_tokens.workflows.behavior import analyze_behavior
+from meg_tokens.workflows.behavior_analysis import analyze_behavior
 from meg_tokens.workflows.behavior_extended import (
     ROADMAP_ITEMS,
     analyze_behavior_extended,
@@ -88,62 +91,7 @@ def make_features(**columns) -> pd.DataFrame:
     return table
 
 
-# --- regression and inference -------------------------------------------------
-
-
-def test_fit_linear_matches_least_squares_and_reports_inference():
-    x = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
-    y = np.array([2.1, 3.9, 6.2, 7.8, 10.1])
-    fit = fit_linear(np.column_stack([np.ones_like(x), x]), y, ["intercept", "slope"])
-
-    expected = np.polyfit(x, y, 1)
-    assert fit.coefficient("slope") == pytest.approx(expected[0])
-    assert fit.coefficient("intercept") == pytest.approx(expected[1])
-    assert fit.df_residual == 3.0
-    assert fit.p_values[1] < 0.001
-
-
-def test_fit_linear_refuses_a_rank_deficient_design():
-    x = np.ones(5)
-    fit = fit_linear(np.column_stack([x, x]), np.arange(5.0), ["a", "b"])
-    assert not fit.converged
-    assert np.isnan(fit.coefficients).all()
-
-
-def test_fit_logistic_recovers_the_log_odds_ratio_of_a_two_by_two_table():
-    # 12 successes of 20 when the predictor is 1, 4 of 20 when it is 0. The
-    # maximum-likelihood slope of a saturated logistic model is exactly the
-    # log odds ratio of that table.
-    predictor = np.concatenate([np.ones(20), np.zeros(20)])
-    response = np.concatenate([
-        np.ones(12), np.zeros(8), np.ones(4), np.zeros(16)
-    ])
-    fit = fit_logistic(
-        np.column_stack([np.ones_like(predictor), predictor]),
-        response,
-        ["intercept", "slope"],
-    )
-    odds_ratio = (12 / 8) / (4 / 16)
-    assert fit.converged
-    assert fit.coefficient("slope") == pytest.approx(float(np.log(odds_ratio)))
-    assert fit.coefficient("intercept") == pytest.approx(float(np.log(4 / 16)))
-
-
-def test_fit_logistic_reports_separated_data_as_unconverged():
-    predictor = np.array([0.0, 0.0, 1.0, 1.0])
-    response = np.array([0.0, 0.0, 1.0, 1.0])
-    fit = fit_logistic(
-        np.column_stack([np.ones_like(predictor), predictor]),
-        response,
-        ["intercept", "slope"],
-    )
-    assert not fit.converged
-    assert np.isnan(fit.coefficients).all()
-
-
-def test_fit_logistic_rejects_a_non_binary_response():
-    with pytest.raises(ValueError, match="only 0 and 1"):
-        fit_logistic(np.ones((3, 1)), np.array([0.0, 1.0, 2.0]), ["intercept"])
+# --- inference ---------------------------------------------------------------
 
 
 def test_one_sample_statistics_matches_scipy():
@@ -212,22 +160,38 @@ def test_repeated_measures_anova_interaction_excludes_the_main_effects():
 
 def test_parse_token_directions_rejects_impossible_targets():
     assert parse_token_directions("1221") == [1, 2, 2, 1]
-    assert parse_token_directions(None) == []
     with pytest.raises(ValueError, match="only 1 and 2"):
         parse_token_directions("1231")
+    with pytest.raises(ValueError, match="non-empty string"):
+        parse_token_directions(None)
+    with pytest.raises(ValueError, match="only 1 and 2"):
+        parse_token_directions("1,2")
 
 
 def test_token_lead_profile_tracks_the_running_difference():
-    assert token_lead_profile("1121", target=1) == [1, 2, 1, 2]
-    assert token_lead_profile("1121", target=2) == [-1, -2, -1, -2]
+    assert token_lead_profile([1, 1, 2, 1], target=1) == [1, 2, 1, 2]
+    assert token_lead_profile([1, 1, 2, 1], target=2) == [-1, -2, -1, -2]
+    with pytest.raises(TypeError, match="sequence of integer"):
+        token_lead_profile("1121", target=1)
 
 
 def test_sum_log_lr_profile_follows_success_probability():
-    profile = sum_log_lr_profile("1" * 8 + "2" * 7, target=1)
+    profile = sum_log_lr_profile([1] * 8 + [2] * 7, target=1)
     # The eighth token secures the majority: evidence saturates and stays there.
     assert profile[7] == pytest.approx(MAX_LOG_ODDS)
     assert profile[-1] == pytest.approx(MAX_LOG_ODDS)
     assert profile[0] < profile[3] < profile[7]
+
+
+def test_evidence_profile_lookup_rejects_out_of_range_token_counts():
+    from meg_tokens.behavior.math.evidence import evidence_after_tokens
+
+    assert evidence_after_tokens([0.6, 0.7], 0, prior=0.5) == 0.5
+    assert evidence_after_tokens([0.6, 0.7], 2, prior=0.5) == 0.7
+    with pytest.raises(ValueError, match="non-negative"):
+        evidence_after_tokens([0.6, 0.7], -1, prior=0.5)
+    with pytest.raises(ValueError, match="cannot exceed"):
+        evidence_after_tokens([0.6, 0.7], 3, prior=0.5)
 
 
 def test_log_posterior_odds_flags_certainty_instead_of_returning_infinity():
@@ -297,7 +261,9 @@ def test_continuous_evidence_effects_keep_unclassified_trials():
         dt_ms=[800.0, 1200.0, 1400.0, 900.0],
         isCorrect=[True, True, False, True],
     )
-    effects = continuous_evidence_effects(features, predictors=("sp_design_early",))
+    effects = continuous_evidence_effects(
+        features, predictors={"sp_design_early": 0.5}
+    )
     overall = effects.loc[effects["condition"] == "all"].iloc[0]
     assert overall["n_dt_trials"] == 4
     assert overall["dt_slope_ms_per_unit"] < 0
@@ -328,6 +294,17 @@ def test_condition_class_cells_cover_every_cell_and_feed_the_anova():
         "condition_x_trial_class",
     }
     assert set(statistics["measure"]) == {"mean_dt_ms", "accuracy"}
+
+
+def test_analyses_reject_noncanonical_correctness_values():
+    features = make_features(
+        isCorrect=["true", "false"],
+        run_trial_index=[1, 2],
+    )
+    with pytest.raises(ValueError, match="isCorrect must be boolean"):
+        condition_class_cells(features)
+    with pytest.raises(ValueError, match="isCorrect must be boolean"):
+        choice_history(features)
 
 
 def test_choice_side_summary_reports_balance_and_asymmetry():

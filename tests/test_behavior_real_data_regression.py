@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from meg_tokens.behavior.metrics import behavior_group_statistics
+from meg_tokens.behavior.analyses.performance import behavior_group_statistics
 from meg_tokens.core import ProjectConfig
 from meg_tokens.io import DerivativeLayout
 

@@ -1,11 +1,10 @@
-"""Extended behavioral analyses from ``docs/behavior_analysis_roadmap.md``.
+"""Run the complete extended behavioral analysis pipeline.
 
 ``analyze_behavior`` produces the preprint-comparison summaries. This workflow
-consumes its trial-feature table and runs the roadmap analyses on top of it:
-distributional descriptions (Tier A1-A2), design and session effects (A3-A6),
-continuous evidence, criterion decline, urgency, temporal weighting, and
-conditional accuracy (B1-B5, C3), trial-history effects (B6-B7), and
-individual differences and cross-species comparison (B9, C6).
+consumes its trial-feature table and adds distributional descriptions, design
+and session effects, continuous evidence, criterion decline, urgency, temporal
+weighting, conditional accuracy, trial-history effects, individual
+differences, and cross-species comparison.
 
 Each analysis writes its own subject-level table and, where it has one, a
 matching group-statistics table, so that a single failed model never truncates
@@ -19,7 +18,7 @@ from typing import Optional, Sequence
 
 import pandas as pd
 
-from meg_tokens.behavior.design_effects import (
+from meg_tokens.behavior.analyses.design_effects import (
     choice_side_statistics,
     choice_side_summary,
     condition_class_cells,
@@ -32,12 +31,12 @@ from meg_tokens.behavior.design_effects import (
     time_on_task,
     time_on_task_statistics,
 )
-from meg_tokens.behavior.distributions import (
+from meg_tokens.behavior.analyses.distributions import (
     decision_time_distribution_statistics,
     decision_time_distributions,
     spd_cumulative_distributions,
 )
-from meg_tokens.behavior.evidence import (
+from meg_tokens.behavior.analyses.evidence import (
     conditional_accuracy_functions,
     conditional_accuracy_statistics,
     continuous_evidence_effects,
@@ -47,19 +46,20 @@ from meg_tokens.behavior.evidence import (
     reverse_correlation,
     reverse_correlation_statistics,
 )
-from meg_tokens.behavior.individual import (
+from meg_tokens.behavior.analyses.individual import (
     comparison_statistics,
     individual_correlations,
     individual_profile,
 )
-from meg_tokens.behavior.sequential import (
+from meg_tokens.behavior.analyses.sequential import (
     choice_history,
     choice_history_statistics,
     post_error_statistics,
     robust_post_error_slowing,
 )
+from meg_tokens.behavior.tables import read_trial_features
 from meg_tokens.core import ProjectConfig, WorkflowResult, normalize_subject_id
-from meg_tokens.io import DerivativeLayout, save_table
+from meg_tokens.io import DerivativeLayout, load_table, require_file, save_table
 
 
 # One entry per roadmap item, so that the derivative names state which analysis
@@ -86,22 +86,13 @@ ROADMAP_ITEMS: dict[str, str] = {
 }
 
 
-def _load_table(path: Path, *, purpose: str) -> pd.DataFrame:
-    if not path.is_file():
-        raise FileNotFoundError(
-            f"{purpose} is required by the extended behavioral analyses but "
-            f"does not exist: {path}. Run 'meg-tokens behavior analyze' first."
-        )
-    return pd.read_csv(path, sep="\t")
-
-
 def analyze_behavior_extended(
     project: ProjectConfig,
     *,
     subjects: Optional[Sequence[str]] = None,
     neural_metrics_path: Optional[str | Path] = None,
 ) -> WorkflowResult:
-    """Run every roadmap behavioral analysis over the staged trial features."""
+    """Run the extended behavioral pipeline over staged trial features."""
     layout = DerivativeLayout(
         project.bids_root,
         pipeline=project.pipeline,
@@ -109,8 +100,16 @@ def analyze_behavior_extended(
     )
     features_path = layout.behavior_trial_features()
     summary_path = layout.behavior_summary()
-    features = _load_table(features_path, purpose="The trial-feature table")
-    summary = _load_table(summary_path, purpose="The subject summary table")
+    if not features_path.is_file():
+        raise FileNotFoundError(
+            "The trial-feature table is required by the extended behavioral "
+            f"analyses but does not exist: {features_path}. Run "
+            "'meg-tokens behavior analyze' first."
+        )
+    features = read_trial_features(features_path)
+    summary = load_table(
+        require_file(summary_path, purpose="subject behavior summary")
+    )
 
     excluded = set(project.subject_exclusions)
     if excluded:

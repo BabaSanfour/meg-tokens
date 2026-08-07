@@ -6,8 +6,9 @@ subjects and 399 raw CTF recordings in the `DDM-tthiery` dataset.
 
 ## 1. Stage 1 ingestion
 
-`meg_tokens/behavior/tdms.py` now applies strict structural validation before
-writing one BIDS-derivative behavior table per run:
+`meg_tokens/behavior/tdms.py` parses the source records and
+`meg_tokens/behavior/schema.py` applies strict structural validation before
+the ingestion workflow writes one BIDS-derivative behavior table per run:
 
 - Every `.tdms` filename must match `H<subject><condition><run>_<YYMMDD>.tdms`.
   Non-matching files raise an error unless explicitly listed in
@@ -76,8 +77,8 @@ interval, recorded as `tEnterTarget - tExitCenter`. This build writes both
 timestamps from the same event: the value is **0 ms on 18,833 of 18,846
 chosen trials**, and 1 ms on the remaining 13. Both fields are parsed and
 retained in Stage 1, but no analysis in the package computes a movement
-measure — roadmap Tier B8 (response vigor) is dropped rather than
-implemented against a field that carries nothing.
+measure. Response-vigor analysis is omitted rather than implemented against a
+field that carries no usable variation.
 
 `tTrialEnd - tEnterTarget` is not a substitute: after a choice the remaining
 tokens replay at roughly 20 ms intervals, so that interval is essentially
@@ -179,7 +180,7 @@ residual. `exclude_unrecoverable_trials` removes only
 
 | Area | Final implementation |
 |---|---|
-| TDMS parser (`meg_tokens/behavior/tdms.py`) | Strict filename, event, field, outcome, index, and timing validation; explicit scratch-file allowlist. |
+| TDMS parser and schema (`meg_tokens/behavior/tdms.py`, `meg_tokens/behavior/schema.py`) | Strict filename, event, field, outcome, index, and timing validation; explicit scratch-file allowlist. |
 | MEG epoching (`meg_tokens/meg/epoching.py`, `meg_tokens/workflows/preprocessing.py`) | Never-started filtering, start-event handling, documented trailing policy, go-cue reconstruction, and the H12 unrecoverable-trial exception. |
 | Behavior workflow | Started-trial metrics and separate `n_never_started_trials` reporting. |
 | Configuration | `behavior_ignore_files` with reasons for all three scratch files. |

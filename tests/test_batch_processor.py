@@ -7,7 +7,7 @@ from meg_tokens.behavior.tdms import (
     parse_tdms_filename,
 )
 from meg_tokens.io import DerivativeLayout
-from meg_tokens.workflows.behavior import ingest_subject_behavior
+from meg_tokens.workflows.behavior_ingest import ingest_subject_behavior
 
 # Test regex match groupings
 @pytest.mark.parametrize("filename,expected", [
@@ -89,17 +89,17 @@ def test_batch_process_writes_behavior_derivative(tmp_path, monkeypatch):
         "tEnterTarget": [1400, 0],
         "tTrialEnd": [1700, 2100],
         "sTokenDirs": ["121", "212"],
-        "nTokenNum": [[1, 2], 0],
-        "nTokenDir": [[1, 2], 0],
-        "tTime": [[1100, 1300], 0],
-        "nProb": [[0.6, 0.8], 0],
+        "nTokenNum": [[1, 2], []],
+        "nTokenDir": [[1, 2], []],
+        "tTime": [[1100, 1300], []],
+        "nProb": [[0.6, 0.8], []],
         "token_log_rows": [2, 0],
         "token_log_short": [False, False],
         "nOutcome": [0, 0],
     })
 
     monkeypatch.setattr(
-        "meg_tokens.workflows.behavior.parse_tdms_file",
+        "meg_tokens.workflows.behavior_ingest.parse_tdms_file",
         lambda _, **kwargs: parsed_df,
     )
 

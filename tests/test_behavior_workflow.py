@@ -3,7 +3,7 @@ import json
 import pandas as pd
 import pytest
 
-from meg_tokens.behavior.tdms import OUTCOME_NEVER_STARTED
+from meg_tokens.behavior.schema import OUTCOME_NEVER_STARTED
 from meg_tokens.cli import main
 from meg_tokens.core import ProjectConfig
 from meg_tokens.io import DerivativeLayout, save_table, sidecar_path

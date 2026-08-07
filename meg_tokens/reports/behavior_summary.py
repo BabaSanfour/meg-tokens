@@ -8,7 +8,8 @@ from pathlib import Path
 import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
-from meg_tokens.behavior.tdms import started_trials
+from meg_tokens.behavior.tables import read_behavior_table
+from meg_tokens.behavior.trials import started_trials
 from meg_tokens.io import DerivativeLayout, require_file, save_sidecar
 from meg_tokens.reports.behavior import plot_fast_slow_distributions
 from meg_tokens.reports.meg import plot_correlation
@@ -37,7 +38,7 @@ def run_behavior_plotting(
     values_by_subject: dict[str, list[float]] = {}
     for path in tables:
         subject, condition = _behavior_entities(path)
-        table = pd.read_csv(path, sep="\t")
+        table = read_behavior_table(path)
         if "rawRT" not in table.columns:
             raise ValueError(f"Behavior derivative {path} is missing canonical rawRT")
         table = started_trials(table)

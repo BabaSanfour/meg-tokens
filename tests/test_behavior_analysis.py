@@ -1,16 +1,17 @@
 import numpy as np
 import pandas as pd
 import pytest
-from meg_tokens.behavior.metrics import (
-    analyze_logged_spd,
-    calculate_motor_baseline,
-    calculate_decision_times,
+from meg_tokens.behavior.analyses.performance import (
     compare_fast_slow,
     analyze_trial_classes,
     compare_correct_error,
     analyze_post_error_slowing,
-    paired_subject_statistics,
 )
+from meg_tokens.behavior.features import (
+    calculate_decision_times,
+    calculate_motor_baseline,
+)
+from meg_tokens.behavior.math.inference import paired_subject_statistics
 
 @pytest.fixture
 def sample_behavior_data():
@@ -57,6 +58,31 @@ def sample_behavior_data():
     
     return [rt_df1, rt_df2], fast_df, slow_df
 
+
+def _task_features(fast_df, slow_df=None, *, baseline=360.0):
+    tables = [("Fast", 1, fast_df)]
+    if slow_df is not None:
+        tables.append(("Slow", 2, slow_df))
+    rows = []
+    for condition, run, table in tables:
+        for index, trial in table.reset_index(drop=True).iterrows():
+            rows.append({
+                "subject": "H01",
+                "condition": condition,
+                "run": run,
+                "run_trial_index": index + 1,
+                "primary_analysis_eligible": pd.notna(trial["rawRT"]),
+                "is_started": True,
+                "dt_ms": (
+                    float(trial["rawRT"]) - baseline
+                    if pd.notna(trial["rawRT"])
+                    else np.nan
+                ),
+                "trial_class": int(trial["sTrialClass"]),
+                "isCorrect": trial["isCorrect"],
+            })
+    return pd.DataFrame(rows)
+
 def test_calculate_motor_baseline(sample_behavior_data):
     rt_dfs, _, _ = sample_behavior_data
     baseline = calculate_motor_baseline(rt_dfs)
@@ -67,14 +93,19 @@ def test_calculate_motor_baseline(sample_behavior_data):
     assert pytest.approx(baseline) == 360.0
 
 
-def test_empty_metrics_are_explicit():
+def test_empty_performance_summaries_are_explicit():
     with pytest.raises(ValueError, match="No valid RT trials"):
         calculate_motor_baseline([])
 
-    speed = compare_fast_slow([], [], 0.0)
-    accuracy = compare_correct_error([], 0.0)
-    classes = analyze_trial_classes([], 0.0)
-    post_error = analyze_post_error_slowing([], 0.0)
+    empty = pd.DataFrame(columns=[
+        "subject", "condition", "run", "run_trial_index",
+        "primary_analysis_eligible", "is_started", "dt_ms",
+        "trial_class", "isCorrect",
+    ])
+    speed = compare_fast_slow(empty)
+    accuracy = compare_correct_error(empty)
+    classes = analyze_trial_classes(empty)
+    post_error = analyze_post_error_slowing(empty)
 
     assert (speed["n_fast"], speed["n_slow"]) == (0, 0)
     assert (accuracy["n_correct"], accuracy["n_error"]) == (0, 0)
@@ -98,7 +129,7 @@ def test_paired_subject_statistics_reports_requested_values():
         "second": [2.0, 4.0, 8.0],
     })
 
-    result = paired_subject_statistics(summary, "first", "second")
+    result = paired_subject_statistics(summary["first"], summary["second"])
 
     assert result["n_subjects"] == 3
     assert result["df"] == 2
@@ -121,7 +152,7 @@ def test_compare_fast_slow(sample_behavior_data):
     _, fast_df, slow_df = sample_behavior_data
     baseline = 360.0
     
-    res = compare_fast_slow([fast_df], [slow_df], baseline)
+    res = compare_fast_slow(_task_features(fast_df, slow_df, baseline=baseline))
     
     # Fast DT mean = (640+840+740+690)/4 = 727.5
     # Slow DT mean = ((1500-360)+(1800-360)+(1600-360)+(1700-360))/4 = (1140+1440+1240+1340)/4 = 1290.0
@@ -134,7 +165,7 @@ def test_analyze_trial_classes(sample_behavior_data):
     _, fast_df, _ = sample_behavior_data
     baseline = 360.0
     
-    res = analyze_trial_classes([fast_df], baseline)
+    res = analyze_trial_classes(_task_features(fast_df, baseline=baseline))
     # Trial 1 (Class 1, DT=640)
     # Trial 2 (Class 2, DT=840)
     # Trial 3 (Class 3, DT=740)
@@ -147,7 +178,7 @@ def test_compare_correct_error(sample_behavior_data):
     _, fast_df, _ = sample_behavior_data
     baseline = 360.0
     
-    res = compare_correct_error([fast_df], baseline)
+    res = compare_correct_error(_task_features(fast_df, baseline=baseline))
     
     # Correct choices: trial 1, 2, 4 (DTs: 640, 840, 690). Mean = 723.33
     # Error choices: trial 3 (DT: 740). Mean = 740.0
@@ -160,7 +191,7 @@ def test_analyze_post_error_slowing(sample_behavior_data):
     _, fast_df, _ = sample_behavior_data
     baseline = 360.0
     
-    res = analyze_post_error_slowing([fast_df], baseline)
+    res = analyze_post_error_slowing(_task_features(fast_df, baseline=baseline))
     
     # Fast trials:
     # 0: Correct (made=1, correct=1), DT next = 2200 - 1000 - 360 = 840 (Post-Correct)
@@ -171,7 +202,7 @@ def test_analyze_post_error_slowing(sample_behavior_data):
     assert pytest.approx(res['mean_post_error']) == 690.0
 
 
-def test_metrics_use_canonical_rt_and_correctness_fields():
+def test_performance_uses_canonical_rt_and_correctness_fields():
     df = pd.DataFrame({
         'sTrialClass': [1, 2, 3],
         'rawRT': [100.0, 200.0, 300.0],
@@ -185,44 +216,18 @@ def test_metrics_use_canonical_rt_and_correctness_fields():
 
     assert calculate_motor_baseline([df]) == pytest.approx(200.0)
     assert list(calculate_decision_times(df, 50.0)) == [50.0, 150.0, 250.0]
-    assert analyze_trial_classes([df], 0.0)['means'] == {
+    features = _task_features(df, baseline=0.0)
+    assert analyze_trial_classes(features)['means'] == {
         'easy': 100.0,
         'ambiguous': 200.0,
         'misleading': 300.0,
     }
 
-    correct_error = compare_correct_error([df], 0.0)
+    correct_error = compare_correct_error(features)
     assert correct_error['mean_correct'] == pytest.approx(200.0)
     assert correct_error['mean_error'] == pytest.approx(200.0)
     assert correct_error['percent_correct'] == pytest.approx(2 / 3 * 100)
 
-    post_error = analyze_post_error_slowing([df], 0.0)
+    post_error = analyze_post_error_slowing(features)
     assert post_error['mean_post_correct'] == pytest.approx(200.0)
     assert post_error['mean_post_error'] == pytest.approx(300.0)
-
-
-def test_analyze_logged_spd_reports_all_and_15row_sensitivity():
-    short_probabilities = [0.6, 0.7] + [0.7] * 12
-    complete_probabilities = [0.8, 0.9] + [0.9] * 13
-    df = pd.DataFrame(
-        {
-            'nChoiceMade': [1, 1],
-            'sTrialClass': [1, 1],
-            'tEnterTarget': [1450, 1450],
-            'nProb': [short_probabilities, complete_probabilities],
-            'tTime': [
-                list(range(1100, 3900, 200)),
-                list(range(1100, 4100, 200)),
-            ],
-            'token_log_rows': [14, 15],
-            'token_log_short': [True, False],
-        }
-    )
-
-    result = analyze_logged_spd([df], motor_baseline=100)
-
-    assert result['all_logged']['n_trials'] == 2
-    assert result['all_logged']['mean_spd'] == pytest.approx(0.8)
-    assert result['validated_15row']['n_trials'] == 1
-    assert result['validated_15row']['mean_spd'] == pytest.approx(0.9)
-    assert result['validated_15row']['classes']['easy']['n_trials'] == 1

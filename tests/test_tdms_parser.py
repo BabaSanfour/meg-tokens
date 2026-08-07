@@ -2,12 +2,16 @@ import os
 import re
 import pytest
 import pandas as pd
-from meg_tokens.behavior.tdms import (
+from meg_tokens.behavior.schema import (
     OUTCOME_NEVER_STARTED,
+    validate_behavior_table,
+)
+from meg_tokens.behavior.tables import read_behavior_table
+from meg_tokens.behavior.tdms import (
     parse_single_trial,
     parse_tdms_file,
-    validate_behavior_dataframe,
 )
+from meg_tokens.io import save_table
 
 # Sample Events string mimicking the real TDMS structure
 EVENTS_STR = """sTaskType: 'TokensMvt'
@@ -275,7 +279,7 @@ def test_parse_real_tdms_integration():
         pytest.skip("Real integration TDMS file not accessible.")
 
 
-def test_validate_behavior_dataframe_rejects_invalid_event_order():
+def test_validate_behavior_table_rejects_invalid_event_order():
     df = pd.DataFrame({
         'nTrialIndex': [1],
         'sTrialClass': [1],
@@ -302,7 +306,7 @@ def test_validate_behavior_dataframe_rejects_invalid_event_order():
     })
 
     with pytest.raises(ValueError, match="Invalid event ordering"):
-        validate_behavior_dataframe(df)
+        validate_behavior_table(df)
 
 
 def _make_behavior_df(indices):
@@ -333,27 +337,74 @@ def _make_behavior_df(indices):
     })
 
 
-def test_validate_behavior_dataframe_accepts_consecutive_run_not_starting_at_1():
+def test_read_behavior_table_deserializes_sequence_columns(tmp_path):
+    table = _make_behavior_df([1, 2])
+    table.at[1, 'sp_design_correct'] = None
+    table.at[1, 'nChoiceMade'] = 0
+    table.at[1, 'nTokenNum'] = []
+    table.at[1, 'nTokenDir'] = []
+    table.at[1, 'tTime'] = []
+    table.at[1, 'nProb'] = []
+    table.at[1, 'token_log_rows'] = 0
+    path = tmp_path / 'behavior.tsv'
+    save_table(path, table)
+
+    loaded = read_behavior_table(path)
+
+    assert loaded.at[0, 'sp_design_correct'] == [0.6]
+    assert loaded.at[0, 'nTokenNum'] == [1]
+    assert loaded.at[0, 'nTokenDir'] == [1]
+    assert loaded.at[0, 'tTime'] == [600.0]
+    assert loaded.at[0, 'nProb'] == [0.6]
+    assert loaded.at[1, 'sp_design_correct'] is None
+    assert loaded.at[1, 'nTokenNum'] == []
+    assert loaded.at[1, 'nTokenDir'] == []
+    assert loaded.at[1, 'tTime'] == []
+    assert loaded.at[1, 'nProb'] == []
+    assert bool(loaded.at[0, 'token_log_short']) is False
+
+
+def test_read_behavior_table_rejects_scalar_sequence_fields(tmp_path):
+    table = _make_behavior_df([1])
+    table.at[0, 'nProb'] = 0
+    path = tmp_path / 'behavior.tsv'
+    save_table(path, table)
+
+    with pytest.raises(ValueError, match="nProb must contain a sequence"):
+        read_behavior_table(path)
+
+
+def test_read_behavior_table_rejects_numeric_boolean_fields(tmp_path):
+    table = _make_behavior_df([1])
+    table['token_log_short'] = [0]
+    path = tmp_path / 'behavior.tsv'
+    save_table(path, table)
+
+    with pytest.raises(ValueError, match="token_log_short must be boolean"):
+        read_behavior_table(path)
+
+
+def test_validate_behavior_table_accepts_consecutive_run_not_starting_at_1():
     """Real files show nTrialIndex is a session-scoped counter, not reset per
     .tdms file -- a run starting above 1 is a benign offset, not corruption.
     """
     df = _make_behavior_df([7, 8, 9])
-    validate_behavior_dataframe(df)  # should not raise
+    validate_behavior_table(df)  # should not raise
 
 
-def test_validate_behavior_dataframe_rejects_index_below_1():
+def test_validate_behavior_table_rejects_index_below_1():
     df = _make_behavior_df([0, 1, 2])
     with pytest.raises(ValueError, match="nTrialIndex must start at 1 or above"):
-        validate_behavior_dataframe(df)
+        validate_behavior_table(df)
 
 
-def test_validate_behavior_dataframe_rejects_gap_in_sequence():
+def test_validate_behavior_table_rejects_gap_in_sequence():
     df = _make_behavior_df([5, 6, 8])
     with pytest.raises(ValueError, match="gap-free consecutive sequence"):
-        validate_behavior_dataframe(df)
+        validate_behavior_table(df)
 
 
-def test_validate_behavior_dataframe_accepts_consistent_never_started_trial():
+def test_validate_behavior_table_accepts_consistent_never_started_trial():
     df = _make_behavior_df([1])
     df.loc[0, ["nOutcome", "tGO", "nChoiceMade"]] = [
         OUTCOME_NEVER_STARTED,
@@ -361,14 +412,14 @@ def test_validate_behavior_dataframe_accepts_consistent_never_started_trial():
         0,
     ]
 
-    validate_behavior_dataframe(df)
+    validate_behavior_table(df)
 
 
 @pytest.mark.parametrize(
     ("column", "value"),
     [("tGO", 500), ("nChoiceMade", 1)],
 )
-def test_validate_behavior_dataframe_rejects_inconsistent_never_started_trial(
+def test_validate_behavior_table_rejects_inconsistent_never_started_trial(
     column,
     value,
 ):
@@ -381,7 +432,7 @@ def test_validate_behavior_dataframe_rejects_inconsistent_never_started_trial(
     df.loc[0, column] = value
 
     with pytest.raises(ValueError, match="must have tGO == 0 and nChoiceMade == 0"):
-        validate_behavior_dataframe(df)
+        validate_behavior_table(df)
 
 
 def test_parse_single_trial_reads_scientific_notation_nprob():

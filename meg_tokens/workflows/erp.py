@@ -24,7 +24,8 @@ from meg_tokens.core import (
 )
 from meg_tokens.features.erp import align_and_pad_epochs, parcellate_source_estimates, select_source_feature_data
 from meg_tokens.io import DerivativeLayout, require_file, save_array, save_table
-from meg_tokens.meg.epoching import find_behavior_table, load_behavior_table
+from meg_tokens.behavior.tables import read_behavior_table
+from meg_tokens.meg.epoching import find_behavior_table
 from meg_tokens.meg.sources import source_derivative_path
 
 
@@ -221,7 +222,7 @@ def extract_parcellated_erp_from_manifest(
     manifest_path = Path(require_file(manifest_path, purpose="Stage 3 source-estimate manifest"))
     manifest = _read_manifest(manifest_path)
     behavior_path = Path(require_file(behavior_path, purpose="Stage 1 behavior TSV derivative"))
-    behavior = load_behavior_table(str(behavior_path))
+    behavior = read_behavior_table(behavior_path)
 
     if len(behavior) != len(manifest):
         raise ValueError(
@@ -517,4 +518,3 @@ def extract_erp_features(
             **settings.__dict__,
         },
     )
-

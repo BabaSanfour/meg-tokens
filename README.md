@@ -28,8 +28,8 @@ The analysis pipeline is designed to be executed sequentially from raw data inge
 
 | Step | Stage | Module | Purpose |
 | :--- | :--- | :--- | :--- |
-| **1** | **Behavioral Log Parsing** | [`tdms.py`](meg_tokens/behavior/tdms.py) | Parses raw LabVIEW `.tdms` logs into BIDS-derivatives-style behavior TSV tables with JSON sidecars. |
-| **2** | **Behavioral Metrics Extraction** | [`metrics.py`](meg_tokens/behavior/metrics.py) | Computes choice RTs, accuracy, difficulty levels, and behavioral summaries. |
+| **1** | **Behavioral Log Parsing** | [`tdms.py`](meg_tokens/behavior/tdms.py), [`schema.py`](meg_tokens/behavior/schema.py), [`behavior_ingest.py`](meg_tokens/workflows/behavior_ingest.py) | Parses raw LabVIEW `.tdms` logs, validates the behavioral contract, and writes behavior derivatives. |
+| **2** | **Behavioral Metrics Extraction** | [`features.py`](meg_tokens/behavior/features.py) and [`performance.py`](meg_tokens/behavior/analyses/performance.py) | Computes choice RTs, accuracy, difficulty levels, and behavioral summaries. |
 | **3** | **Behavioral Reporting** | [`behavior.py`](meg_tokens/reports/behavior.py) | Renders performance diagnostics and RT distributions. |
 | **4** | **MEG Preprocessing & Filtering** | [`preprocessing.py`](meg_tokens/meg/preprocessing.py) | Loads raw CTF MEG, applies filters, performs ICA decomposition, and coregisters head points. |
 | **5** | **Epoch Extraction & Event Alignment** | [`epoching.py`](meg_tokens/meg/epoching.py) | Segments MEG data into trial epochs aligned to triggers and behavior. |

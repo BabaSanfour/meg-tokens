@@ -8,6 +8,7 @@ from typing import Optional, Sequence
 import mne
 import numpy as np
 
+from meg_tokens.behavior.tables import read_behavior_table
 from meg_tokens.core import (
     EpochingConfig,
     PreprocessingConfig,
@@ -21,7 +22,6 @@ from meg_tokens.meg.epoching import (
     build_epochs_with_metadata,
     exclude_unrecoverable_trials,
     get_event_id,
-    load_behavior_table,
     mismatch_policy,
     needs_go_reconstruction,
     reconstruct_missing_go_events,
@@ -130,7 +130,7 @@ def epoch_subjects(
             )
             raw = mne.io.read_raw_fif(str(raw_path), preload=True)
             events = mne.find_events(raw)
-            behavior = load_behavior_table(str(behavior_path))
+            behavior = read_behavior_table(behavior_path)
             event_id = get_event_id(settings.alignment, run.subject)
             if settings.alignment.lower() == "go" and needs_go_reconstruction(
                 run.subject, run.condition, run.run

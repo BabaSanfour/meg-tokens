@@ -1,12 +1,12 @@
-"""Trial-to-trial history effects (roadmap Tier B6-B7).
+"""Trial-to-trial history analyses.
 
 The summary post-error measure compares every post-error trial with every
 post-correct trial, which confounds the effect with slow stretches of a
-session. Tier B6 instead compares each post-error trial with the trial
+session. The robust comparison instead pairs each post-error trial with the trial
 immediately *preceding* its error, so both sides of the contrast come from the
-same moment in the session. Tier B7 adds the choice-history effects that the
-same adjacency makes available: win-stay/lose-shift, side autocorrelation, and
-the influence of the previous trial's class and outcome on the current DT.
+same moment in the session. The same adjacency also supports choice-history
+effects: win-stay/lose-shift, side autocorrelation, and the influence of the
+previous trial's class and outcome on the current decision time.
 """
 
 from __future__ import annotations
@@ -14,8 +14,11 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from meg_tokens.behavior.metrics import paired_subject_statistics
-from meg_tokens.behavior.regression import one_sample_statistics
+from meg_tokens.behavior.math.inference import (
+    one_sample_statistics,
+    paired_subject_statistics,
+)
+from meg_tokens.behavior.schema import validate_boolean_values
 from meg_tokens.behavior.trials import (
     CLASS_NAMES,
     TASK_CONDITIONS,
@@ -24,12 +27,41 @@ from meg_tokens.behavior.trials import (
 
 
 def _ordered_task_runs(features: pd.DataFrame) -> pd.DataFrame:
-    """Return started task trials with neighbours attached inside each run.
+    """Attach immediately adjacent trials within each ordered task run.
 
     Adjacency is defined on ``run_trial_index`` within one run, and a pair is
     kept only when the two indices are genuinely consecutive, so a never-started
     row between them breaks the chain instead of silently joining trials that
     were minutes apart.
+
+    Parameters
+    ----------
+    features
+        Canonical trial-feature table containing subject, condition, run,
+        within-run order, decision time, correctness, choice side, trial class,
+        and started status.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Started Fast/Slow rows sorted by subject, condition, run, and
+        ``run_trial_index``. Canonical analysis columns ``dt``, ``is_correct``,
+        and ``side`` are accompanied by previous- and next-trial values when
+        the neighbour's index differs by exactly one.
+
+    Raises
+    ------
+    ValueError
+        If Boolean fields, choice sides, run indices, or within-run uniqueness
+        violate the canonical schema.
+
+    Notes
+    -----
+    Decision times are converted to numeric and non-finite values become
+    missing. Choice sides must be 1, 2, or missing; they are never inferred
+    from truthiness. Missing correctness is allowed because lapse rows may
+    interrupt a sequence. This helper defines adjacency only and performs no
+    behavioral or statistical comparison.
     """
     require_columns(
         features,
@@ -45,15 +77,36 @@ def _ordered_task_runs(features: pd.DataFrame) -> pd.DataFrame:
             "is_started",
         ],
     )
+    validate_boolean_values(
+        features["isCorrect"],
+        field="isCorrect",
+        optional=True,
+    )
+    validate_boolean_values(features["is_started"], field="is_started")
     condition = features["condition"].astype(str).str.lower()
     trials = features.loc[
         condition.isin({name.lower() for name in TASK_CONDITIONS})
-        & features["is_started"].astype(bool)
+        & features["is_started"].astype("boolean")
     ].copy()
     trials["condition"] = condition.loc[trials.index]
-    trials["is_correct"] = trials["isCorrect"].map(_as_optional_bool)
-    trials["dt"] = pd.to_numeric(trials["dt_ms"], errors="coerce")
-    trials["side"] = pd.to_numeric(trials["choice_side"], errors="coerce")
+    trials["is_correct"] = trials["isCorrect"].astype("boolean")
+    dt = pd.to_numeric(trials["dt_ms"], errors="coerce")
+    trials["dt"] = dt.where(np.isfinite(dt))
+    trials["side"] = pd.to_numeric(trials["choice_side"], errors="raise")
+    invalid_sides = trials["side"].notna() & ~trials["side"].isin({1, 2})
+    if invalid_sides.any():
+        raise ValueError("choice_side must contain only 1, 2, or missing values")
+    run_trial_index = pd.to_numeric(trials["run_trial_index"], errors="raise")
+    if (
+        run_trial_index.isna().any()
+        or not np.isfinite(run_trial_index).all()
+        or (run_trial_index % 1 != 0).any()
+    ):
+        raise ValueError("run_trial_index must contain finite integers")
+    trials["run_trial_index"] = run_trial_index.astype(int)
+    adjacency_key = ["subject", "condition", "run", "run_trial_index"]
+    if trials.duplicated(adjacency_key).any():
+        raise ValueError("run_trial_index must be unique within each task run")
     trials = trials.sort_values(["subject", "condition", "run", "run_trial_index"])
 
     grouped = trials.groupby(["subject", "condition", "run"], sort=False)
@@ -70,11 +123,37 @@ def _ordered_task_runs(features: pd.DataFrame) -> pd.DataFrame:
 
 
 def robust_post_error_slowing(features: pd.DataFrame) -> pd.DataFrame:
-    """Compare each post-error trial with the trial preceding its error.
+    """Compute local-pair and classical post-error slowing by subject.
 
     ``robust_pes_ms`` is ``DT(error + 1) - DT(error - 1)``. The classical
     contrast (mean post-error minus mean post-correct DT) is reported beside it
     from the same trials so the two definitions can be compared directly.
+
+    Parameters
+    ----------
+    features
+        Canonical trial-feature table accepted by :func:`_ordered_task_runs`.
+
+    Returns
+    -------
+    pandas.DataFrame
+        One row per subject for pooled, Fast, and Slow trials. It reports the
+        number of complete local error pairs, their mean pre-error and
+        post-error decision times, ``robust_pes_ms``, the numbers of finite
+        post-error and post-correct trials, and ``classical_pes_ms``. All times
+        and differences are in milliseconds; unavailable estimates are
+        ``NaN``.
+
+    Notes
+    -----
+    A robust pair requires finite decision times immediately before and after
+    the error, with all three trial indices contiguous in the same run. The
+    error trial's own decision time is not part of that difference. The
+    classical contrast uses every current trial whose immediately preceding
+    contiguous trial has known correctness, then subtracts mean post-correct
+    DT from mean post-error DT. No trimming, imputation, or outlier threshold
+    is applied. ``robust`` refers to local temporal matching, not a robust
+    estimator such as a median or M-estimator.
     """
     trials = _ordered_task_runs(features)
     is_error = trials["is_correct"] == False  # noqa: E712 - keeps NaN out of the mask
@@ -121,7 +200,32 @@ def robust_post_error_slowing(features: pd.DataFrame) -> pd.DataFrame:
 
 
 def post_error_statistics(subject_table: pd.DataFrame) -> pd.DataFrame:
-    """Test both post-error definitions against zero and across conditions."""
+    """Test subject-level post-error slowing at the group level.
+
+    Parameters
+    ----------
+    subject_table
+        Output of :func:`robust_post_error_slowing`, with unique
+        subject-condition rows.
+
+    Returns
+    -------
+    pandas.DataFrame
+        One-sample tests against zero for robust and classical post-error
+        slowing in every available condition, plus subject-paired Fast-minus-
+        Slow contrasts when both condition columns exist.
+
+    Notes
+    -----
+    Non-finite estimates and incomplete Fast/Slow pairs are excluded by the
+    shared inference helpers. No multiplicity correction is applied. Duplicate
+    subject-condition rows cause the paired pivot to raise rather than being
+    silently aggregated.
+    """
+    require_columns(
+        subject_table,
+        ["subject", "condition", "robust_pes_ms", "classical_pes_ms"],
+    )
     rows = []
     for measure in ("robust_pes_ms", "classical_pes_ms"):
         for condition, group in subject_table.groupby("condition", sort=True):
@@ -142,14 +246,41 @@ def post_error_statistics(subject_table: pd.DataFrame) -> pd.DataFrame:
                     "measure": measure,
                     "condition": "fast_vs_slow",
                     "test": "paired_t_test",
-                    **paired_subject_statistics(wide, "fast", "slow"),
+                    **paired_subject_statistics(wide["fast"], wide["slow"]),
                 }
             )
     return pd.DataFrame(rows)
 
 
 def choice_history(features: pd.DataFrame) -> pd.DataFrame:
-    """Return win-stay/lose-shift, side autocorrelation, and previous-trial DT."""
+    """Summarize first-order choice and decision-time history by subject.
+
+    Parameters
+    ----------
+    features
+        Canonical trial-feature table accepted by :func:`_ordered_task_runs`.
+
+    Returns
+    -------
+    pandas.DataFrame
+        One row per subject and nonempty pooled, Fast, or Slow subset.
+        Proportion fields report win-stay, lose-stay, and its complement
+        lose-shift. ``side_autocorrelation_lag1`` is the Pearson correlation
+        between consecutive sides encoded as target 1 = ``+1`` and target 2 =
+        ``-1``. Remaining fields are mean current-trial decision times after
+        each previous outcome and declared trial class.
+
+    Notes
+    -----
+    A linked trial requires valid current and immediately previous choice sides
+    at consecutive indices within the same run. Win/lose proportions further
+    require known previous correctness, so their denominators may be smaller
+    than ``n_linked_trials``. Decision-time means exclude non-finite current
+    times. The side correlation requires at least three linked trials and
+    variation in both lagged-side vectors; this minimum is an explicit
+    stability policy, not inferred from the data. No history state is carried
+    across runs, conditions, missing indices, or never-started trials.
+    """
     trials = _ordered_task_runs(features)
     rows = []
     for subject, subject_trials in trials.groupby("subject", sort=True):
@@ -209,7 +340,43 @@ def choice_history(features: pd.DataFrame) -> pd.DataFrame:
 
 
 def choice_history_statistics(subject_table: pd.DataFrame) -> pd.DataFrame:
-    """Test choice-history effects across subjects."""
+    """Run fixed group contrasts on subject-level choice-history measures.
+
+    Parameters
+    ----------
+    subject_table
+        Output of :func:`choice_history`.
+
+    Returns
+    -------
+    pandas.DataFrame
+        For every available condition: a paired win-stay versus lose-stay
+        contrast, a one-sample lag-one side-correlation test against zero, a
+        paired decision-time-after-error versus after-correct contrast, and the
+        three pairwise previous-class decision-time contrasts.
+
+    Notes
+    -----
+    All comparisons pair summary values within subject. Non-finite values and
+    incomplete pairs are excluded by the shared inference functions. Tests are
+    fixed rather than selected from observed results, and no multiplicity
+    correction or Fast-versus-Slow contrast is applied.
+    """
+    require_columns(
+        subject_table,
+        [
+            "condition",
+            "win_stay",
+            "lose_stay",
+            "side_autocorrelation_lag1",
+            "mean_dt_after_error_ms",
+            "mean_dt_after_correct_ms",
+            *[
+                f"mean_dt_after_{class_name}_ms"
+                for class_name in CLASS_NAMES.values()
+            ],
+        ],
+    )
     rows = []
     for condition, group in subject_table.groupby("condition", sort=True):
         rows.append(
@@ -220,7 +387,10 @@ def choice_history_statistics(subject_table: pd.DataFrame) -> pd.DataFrame:
                 "test": "paired_t_test",
                 "label_a": "win_stay",
                 "label_b": "lose_stay",
-                **paired_subject_statistics(group, "win_stay", "lose_stay"),
+                **paired_subject_statistics(
+                    group["win_stay"],
+                    group["lose_stay"],
+                ),
             }
         )
         rows.append(
@@ -241,7 +411,8 @@ def choice_history_statistics(subject_table: pd.DataFrame) -> pd.DataFrame:
                 "label_a": "after_error",
                 "label_b": "after_correct",
                 **paired_subject_statistics(
-                    group, "mean_dt_after_error_ms", "mean_dt_after_correct_ms"
+                    group["mean_dt_after_error_ms"],
+                    group["mean_dt_after_correct_ms"],
                 ),
             }
         )
@@ -255,21 +426,9 @@ def choice_history_statistics(subject_table: pd.DataFrame) -> pd.DataFrame:
                     "label_a": f"after_{first}",
                     "label_b": f"after_{second}",
                     **paired_subject_statistics(
-                        group, f"mean_dt_after_{first}_ms", f"mean_dt_after_{second}_ms"
+                        group[f"mean_dt_after_{first}_ms"],
+                        group[f"mean_dt_after_{second}_ms"],
                     ),
                 }
             )
     return pd.DataFrame(rows)
-
-
-def _as_optional_bool(value: object) -> object:
-    if isinstance(value, str):
-        normalized = value.strip().lower()
-        if normalized in {"true", "1"}:
-            return True
-        if normalized in {"false", "0"}:
-            return False
-        return np.nan
-    if value is None or (isinstance(value, float) and np.isnan(value)):
-        return np.nan
-    return bool(value)

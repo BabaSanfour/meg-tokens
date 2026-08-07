@@ -465,7 +465,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     try:
         project = _project_from_args(args)
         if args.domain == "behavior" and args.behavior_command == "ingest":
-            from meg_tokens.workflows.behavior import ingest_behavior
+            from meg_tokens.workflows.behavior_ingest import ingest_behavior
 
             result = ingest_behavior(
                 project,
@@ -473,7 +473,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 dry_run=args.dry_run,
             )
         elif args.domain == "behavior" and args.behavior_command == "analyze":
-            from meg_tokens.workflows.behavior import analyze_behavior
+            from meg_tokens.workflows.behavior_analysis import analyze_behavior
 
             result = analyze_behavior(project, subjects=args.subjects)
         elif args.domain == "behavior" and args.behavior_command == "extended":

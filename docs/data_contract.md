@@ -12,6 +12,28 @@ MNE-Python, BIDS/MNE-BIDS-style derivatives, and explicit analysis tensors.
 - Modern MNE/scientific-Python APIs are preferred over step-by-step ports when
   they preserve the same scientific behavior.
 
+## Behavioral module boundaries
+
+Behavioral code follows one dependency direction:
+
+```text
+project I/O → behavior schema/tables → trial features → analyses → workflows
+                                      ↑              ↑
+                                      └── pure math ─┘
+```
+
+- `behavior/schema.py` defines and validates table contracts.
+- `behavior/tables.py` composes the generic project table loader with the
+  behavioral schema.
+- `behavior/tdms.py` interprets TDMS source records only.
+- `behavior/features.py` builds canonical trial-level quantities once.
+- `behavior/math/` contains array/sequence mathematics without DataFrame or
+  workflow knowledge.
+- `behavior/analyses/` contains scientific analyses over canonical trial
+  features.
+- behavioral workflows locate inputs, call these layers, and write outputs;
+  they do not implement scientific formulas.
+
 ## Storage
 
 - Raw, cleaned raw, epochs, forward models, inverse operators, source spaces,
@@ -133,7 +155,10 @@ analysis choice: inference can add easy and ambiguous trials but never
 misleading ones). `sp_design_correct` is unavailable when LabVIEW records no
 correct target. `token_log_rows` and `token_log_short` describe the runtime log without
 changing the class rule, while `nProb` and `tTime` remain the paired runtime
-series.
+series. The canonical Stage 1 table loader deserializes `sp_design_correct`,
+`nTokenNum`, `nTokenDir`, `tTime`, and `nProb` into numeric sequences before
+validation or analysis; downstream functions never parse sequence-valued TSV
+cells themselves. Empty runtime token logs are represented as empty sequences.
 `tEnterCenter` and `tExitCenter` are the center-hold timestamps. They are
 retained because `tEnterTarget - tExitCenter` is the only recorded movement
 duration; in this dataset LabVIEW writes both timestamps from the same event,
@@ -194,7 +219,7 @@ QC columns identify started trials, choices, no-responses, DT anticipations,
 SPD availability, valid design-time alignment, and primary-analysis
 eligibility. Never-started rows remain present with missing decision features.
 
-Task rows also carry the fields the roadmap analyses consume:
+Task rows also carry the fields consumed by extended behavioral analyses:
 
 - `choice_side` and `correct_side` — chosen and correct target, missing when
   no choice was made.

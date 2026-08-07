@@ -1,10 +1,9 @@
-"""Design, session, and lapse effects (roadmap Tier A3-A6).
+"""Design, session, and lapse analyses.
 
 These are the descriptive checks the class and Fast/Slow summaries do not
-cover: the full condition-by-class cell breakdown with its interaction (A3),
-left/right choice balance that MEG choice cells depend on (A4), drift across
-the session (A5), and the lapses and extreme decision times that a mean hides
-(A6).
+cover: the full condition-by-class cell breakdown with its interaction,
+left/right choice balance that MEG choice cells depend on, drift across the
+session, and the lapses and extreme decision times that a mean hides.
 """
 
 from __future__ import annotations
@@ -13,14 +12,15 @@ from typing import Final
 
 import numpy as np
 import pandas as pd
+import statsmodels.api as sm
 from scipy import stats
 
-from meg_tokens.behavior.metrics import paired_subject_statistics
-from meg_tokens.behavior.regression import (
-    fit_linear,
+from meg_tokens.behavior.math.inference import (
     one_sample_statistics,
+    paired_subject_statistics,
     repeated_measures_anova,
 )
+from meg_tokens.behavior.schema import validate_boolean_values
 from meg_tokens.behavior.trials import (
     CLASS_NAMES,
     LAPSE_OUTCOMES,
@@ -35,29 +35,43 @@ from meg_tokens.behavior.trials import (
 
 SIDE_NAMES: Final[dict[int, str]] = {1: "left", 2: "right"}
 
-# Robust cutoff for the Tier A6 extreme-DT review, in scaled median absolute
-# deviations. Flagged trials are reported, never removed: the DT summaries
-# retain every finite value by contract.
+# Robust cutoff for the extreme-DT review, in scaled median absolute
+# deviations. Flagged trials are reported, never removed.
 DEFAULT_MAD_THRESHOLD: Final[float] = 5.0
 
 
-def _as_bool_series(values: pd.Series) -> pd.Series:
-    mapping = {"true": True, "1": True, "false": False, "0": False}
-    if values.dtype == object:
-        return values.map(
-            lambda value: mapping.get(str(value).strip().lower(), pd.NA)
-            if not isinstance(value, (bool, np.bool_))
-            else bool(value)
-        )
-    return values.astype("boolean")
-
-
 def condition_class_cells(features: pd.DataFrame) -> pd.DataFrame:
-    """Return per-subject DT and accuracy for all six condition-by-class cells."""
+    """Summarize every condition-by-difficulty cell within each subject.
+
+    Parameters
+    ----------
+    features
+        Canonical trial-feature table. Only rows selected by ``task_trials``
+        contribute.
+
+    Returns
+    -------
+    pandas.DataFrame
+        One row per subject, Fast/Slow condition, and easy/ambiguous/misleading
+        class. Each row reports total trials, mean finite decision time in
+        milliseconds, and accuracy among trials with known correctness. Empty
+        cells are retained with zero trials and missing summaries.
+
+    Raises
+    ------
+    ValueError
+        If required fields are absent or ``isCorrect`` contains a noncanonical
+        value.
+    """
     trials = task_trials(features)
     require_columns(trials, ["condition", "trial_class", "dt_ms", "isCorrect"])
+    validate_boolean_values(
+        trials["isCorrect"],
+        field="isCorrect",
+        optional=True,
+    )
     condition = trials["condition"].astype(str).str.lower()
-    correct = _as_bool_series(trials["isCorrect"])
+    correct = trials["isCorrect"].astype("boolean")
     rows = []
     for subject, subject_trials in trials.groupby("subject", sort=True):
         subject_condition = condition.loc[subject_trials.index]
@@ -91,7 +105,28 @@ def condition_class_cells(features: pd.DataFrame) -> pd.DataFrame:
 
 
 def condition_class_statistics(cells: pd.DataFrame) -> pd.DataFrame:
-    """Run the 2x3 within-subject ANOVA on the condition-by-class cells."""
+    """Test condition, difficulty, and their interaction within subjects.
+
+    Parameters
+    ----------
+    cells
+        Output of :func:`condition_class_cells`.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Three repeated-measures ANOVA effects for decision time and three for
+        accuracy, when all six columns exist. Rows report complete-subject
+        count, degrees of freedom, F statistic, p-value, and partial eta
+        squared.
+
+    Notes
+    -----
+    Cell order is Fast then Slow, with class codes 1, 2, and 3 inside each
+    condition. Subjects missing any cell for a measure are removed by
+    ``repeated_measures_anova``. No sphericity or multiplicity correction is
+    applied here.
+    """
     factor_names = {
         "factor1": "condition",
         "factor2": "trial_class",
@@ -132,11 +167,37 @@ def condition_class_statistics(cells: pd.DataFrame) -> pd.DataFrame:
 
 
 def choice_side_summary(features: pd.DataFrame) -> pd.DataFrame:
-    """Return per-subject left/right choice proportions, DT, and accuracy."""
+    """Summarize response-side and correct-side balance within each subject.
+
+    Parameters
+    ----------
+    features
+        Canonical trial-feature table containing eligible choices, correct
+        targets, decision times, and nullable correctness.
+
+    Returns
+    -------
+    pandas.DataFrame
+        One row per subject for pooled, Fast, and Slow trials. For each side it
+        reports the proportion of choices, proportion of correct targets, mean
+        decision time among choices to that side, and accuracy conditional on
+        choosing that side.
+
+    Notes
+    -----
+    Side 1 is labeled left and side 2 right. Choice and correct-target
+    proportions use every selected row as their denominator; accuracy excludes
+    rows with missing correctness.
+    """
     trials = task_trials(features)
     require_columns(trials, ["choice_side", "correct_side", "dt_ms", "isCorrect"])
+    validate_boolean_values(
+        trials["isCorrect"],
+        field="isCorrect",
+        optional=True,
+    )
     condition = trials["condition"].astype(str).str.lower()
-    correct = _as_bool_series(trials["isCorrect"])
+    correct = trials["isCorrect"].astype("boolean")
     rows = []
     for subject, subject_trials in trials.groupby("subject", sort=True):
         subject_condition = condition.loc[subject_trials.index]
@@ -178,7 +239,21 @@ def choice_side_summary(features: pd.DataFrame) -> pd.DataFrame:
 
 
 def choice_side_statistics(summary: pd.DataFrame) -> pd.DataFrame:
-    """Test left/right balance, DT asymmetry, and accuracy asymmetry."""
+    """Run subject-paired left-versus-right comparisons.
+
+    Parameters
+    ----------
+    summary
+        Output of :func:`choice_side_summary`.
+
+    Returns
+    -------
+    pandas.DataFrame
+        For each pooled or condition-specific subset, paired tests of choice
+        proportion, mean decision time, and accuracy. Differences and Cohen's
+        dz use left minus right; subjects missing either member are excluded
+        pairwise.
+    """
     rows = []
     for condition, group in summary.groupby("condition", sort=True):
         rows.append(
@@ -190,7 +265,8 @@ def choice_side_statistics(summary: pd.DataFrame) -> pd.DataFrame:
                 "label_a": "left",
                 "label_b": "right",
                 **paired_subject_statistics(
-                    group, "proportion_left_choices", "proportion_right_choices"
+                    group["proportion_left_choices"],
+                    group["proportion_right_choices"],
                 ),
             }
         )
@@ -206,7 +282,10 @@ def choice_side_statistics(summary: pd.DataFrame) -> pd.DataFrame:
                     "test": "paired_t_test",
                     "label_a": "left",
                     "label_b": "right",
-                    **paired_subject_statistics(group, column_a, column_b),
+                    **paired_subject_statistics(
+                        group[column_a],
+                        group[column_b],
+                    ),
                 }
             )
     return pd.DataFrame(rows)
@@ -220,6 +299,18 @@ def _session_block_order(trials: pd.DataFrame) -> pd.Series:
     time, and ``nTrialIndex`` restarts at 1 in each run. Fast and Slow blocks
     are interleaved within a session, so this ordering is not the same as
     sorting by condition and run number.
+
+    Parameters
+    ----------
+    trials
+        Eligible task trials containing subject, condition, run, and
+        ``initial_time_ms``.
+
+    Returns
+    -------
+    pandas.Series
+        One-based chronological block rank aligned to ``trials.index``. Every
+        row from the same subject-condition-run block receives the same rank.
     """
     keys = trials[["subject", "condition", "run"]]
     first_index = (
@@ -247,6 +338,26 @@ def time_on_task(features: pd.DataFrame) -> pd.DataFrame:
     The pooled fit carries a Fast/Slow indicator. Without it the block slope
     would absorb the condition difference, because the two conditions are
     interleaved rather than blocked into halves of the session.
+
+    Parameters
+    ----------
+    features
+        Canonical trial-feature table.
+
+    Returns
+    -------
+    pandas.DataFrame
+        One OLS result per subject for pooled, Fast, and Slow trials. Rows
+        report usable-trial and block counts, milliseconds per chronological
+        block, milliseconds per within-block trial, and whether the model was
+        estimable.
+
+    Notes
+    -----
+    Condition-specific models are ``DT ~ block + within-block trial``. The
+    pooled model additionally includes a Slow-condition indicator. Non-finite
+    rows are removed jointly; insufficient or rank-deficient designs return
+    missing coefficients with ``converged=false``.
     """
     trials = task_trials(features)
     require_columns(
@@ -273,34 +384,55 @@ def time_on_task(features: pd.DataFrame) -> pd.DataFrame:
                 dtype=float
             )
             columns = [np.ones_like(dt), block, within]
-            names = ["intercept", "block_position", "within_block_position"]
             selected_condition = subject_condition.loc[selected.index]
             if selected_condition.nunique() > 1:
                 columns.append((selected_condition == "slow").to_numpy(dtype=float))
-                names.append("is_slow")
-            fit = fit_linear(np.column_stack(columns), dt, names)
+            design = np.column_stack(columns)
+            finite = np.isfinite(dt) & np.all(np.isfinite(design), axis=1)
+            design = design[finite]
+            dt = dt[finite]
+            fit = (
+                sm.OLS(dt, design).fit()
+                if len(dt) > design.shape[1]
+                and np.linalg.matrix_rank(design) == design.shape[1]
+                else None
+            )
             rows.append(
                 {
                     "subject": subject,
                     "condition": name,
-                    "n_trials": fit.n_observations,
+                    "n_trials": len(dt),
                     "n_blocks": int(selected["block_position"].nunique()),
                     "dt_per_block_ms": (
-                        fit.coefficient("block_position") if fit.converged else float("nan")
-                    ),
-                    "dt_per_within_block_trial_ms": (
-                        fit.coefficient("within_block_position")
-                        if fit.converged
+                        float(fit.params[1])
+                        if fit is not None
                         else float("nan")
                     ),
-                    "converged": fit.converged,
+                    "dt_per_within_block_trial_ms": (
+                        float(fit.params[2])
+                        if fit is not None
+                        else float("nan")
+                    ),
+                    "converged": fit is not None,
                 }
             )
     return pd.DataFrame(rows)
 
 
 def time_on_task_statistics(subject_fits: pd.DataFrame) -> pd.DataFrame:
-    """Test session-drift slopes against zero and between conditions."""
+    """Test subject-level session-drift coefficients at group level.
+
+    Parameters
+    ----------
+    subject_fits
+        Output of :func:`time_on_task`.
+
+    Returns
+    -------
+    pandas.DataFrame
+        One-sample tests against zero for block and within-block slopes in every
+        subset, plus subject-paired Fast-minus-Slow comparisons for each slope.
+    """
     terms = ("dt_per_block_ms", "dt_per_within_block_trial_ms")
     rows = []
     for condition, group in subject_fits.groupby("condition", sort=True):
@@ -324,7 +456,7 @@ def time_on_task_statistics(subject_fits: pd.DataFrame) -> pd.DataFrame:
                 "term": term,
                 "condition": "fast_vs_slow",
                 "test": "paired_t_test",
-                **paired_subject_statistics(wide, "fast", "slow"),
+                **paired_subject_statistics(wide["fast"], wide["slow"]),
             }
         )
     return pd.DataFrame(rows)
@@ -336,6 +468,23 @@ def condition_order_effects(features: pd.DataFrame) -> pd.DataFrame:
     Whether a subject started the session on Fast or Slow blocks is a
     between-subject factor, so this is an independent-samples test on the
     within-subject speed-accuracy adjustment.
+
+    Parameters
+    ----------
+    features
+        Canonical trial-feature table.
+
+    Returns
+    -------
+    pandas.DataFrame
+        One row per subject containing the chronologically first condition,
+        mean finite Fast and Slow decision times, and ``Slow - Fast`` decision
+        time in milliseconds.
+
+    Notes
+    -----
+    First condition is determined from ``initial_time_ms`` through
+    :func:`_session_block_order`, not from run numbers or filename order.
     """
     trials = task_trials(features)
     require_columns(trials, ["dt_ms", "condition", "initial_time_ms"])
@@ -368,7 +517,26 @@ def condition_order_effects(features: pd.DataFrame) -> pd.DataFrame:
 
 
 def condition_order_statistics(order_table: pd.DataFrame) -> pd.DataFrame:
-    """Test the speed-accuracy adjustment between condition-order groups."""
+    """Compare behavioral means between Fast-first and Slow-first subjects.
+
+    Parameters
+    ----------
+    order_table
+        Output of :func:`condition_order_effects`.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Welch independent-samples t-tests for ``Slow - Fast`` adjustment and
+        the two condition means. Each row includes group labels, sample sizes,
+        means, ``a - b`` difference, statistic, p-value, and Welch degrees of
+        freedom.
+
+    Notes
+    -----
+    A measure is omitted unless exactly two first-condition groups exist and
+    each supplies at least two finite subject values.
+    """
     rows = []
     for measure in ("slow_minus_fast_dt_ms", "mean_fast_dt_ms", "mean_slow_dt_ms"):
         groups = {
@@ -402,7 +570,28 @@ def condition_order_statistics(order_table: pd.DataFrame) -> pd.DataFrame:
 
 
 def lapse_summary(features: pd.DataFrame) -> pd.DataFrame:
-    """Count started task trials that produced no choice, per subject."""
+    """Summarize no-choice lapses among started task trials.
+
+    Parameters
+    ----------
+    features
+        Canonical trial-feature table containing started and choice flags,
+        condition, and outcome code.
+
+    Returns
+    -------
+    pandas.DataFrame
+        One row per subject for pooled, Fast, and Slow trials. Rows report the
+        number of started trials, no-choice trials, lapse proportion, counts
+        for the predefined lapse outcome codes, and a residual count for other
+        no-choice outcomes.
+
+    Notes
+    -----
+    The denominator is every started trial in the subset, including completed
+    choices. A lapse is defined structurally as started with no usable choice;
+    outcome codes describe those lapses but do not determine inclusion.
+    """
     require_columns(features, ["nOutcome", "condition", "is_started", "has_choice"])
     lapses = lapse_trials(features)
     started = features.loc[
@@ -458,6 +647,30 @@ def extreme_decision_times(
     Returns a per-subject count table and the flagged trials themselves, so
     that an extreme value can be traced back to its run and trial rather than
     only counted.
+
+    Parameters
+    ----------
+    features
+        Canonical trial-feature table. Only eligible task trials with finite
+        decision time contribute.
+    mad_threshold
+        Absolute robust-z cutoff. The default is five scaled median absolute
+        deviations from the subject median.
+
+    Returns
+    -------
+    counts
+        Per-subject decision-time count, median, scaled MAD, extreme counts by
+        direction, negative-DT count, and observed range.
+    flagged
+        One provenance-rich row per extreme trial, including trial identifier,
+        condition, run, class, decision time, robust z score, and outcome.
+
+    Notes
+    -----
+    Scaled MAD is ``1.4826 * median(abs(DT - median(DT)))``. When it is zero,
+    robust z scores are defined as zero and no trial is flagged. Flagged rows
+    are reported only; no observation is removed from another analysis.
     """
     trials = task_trials(features)
     require_columns(trials, ["dt_ms", "trial_id"])
@@ -508,7 +721,26 @@ def extreme_decision_times(
 
 
 def lapse_statistics(summary: pd.DataFrame) -> pd.DataFrame:
-    """Summarize lapse rates and test the Fast/Slow difference."""
+    """Summarize lapse rates across subjects and compare conditions.
+
+    Parameters
+    ----------
+    summary
+        Output of :func:`lapse_summary`.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Across-subject lapse-rate summaries for each subset and a paired
+        Fast-minus-Slow test when both conditions exist. Rows also carry the
+        total number of contributing lapse trials.
+
+    Notes
+    -----
+    Condition summaries use the generic one-sample helper, which reports the
+    mean, SEM, and a two-sided test against zero. No multiplicity correction is
+    applied.
+    """
     rows = []
     for condition, group in summary.groupby("condition", sort=True):
         rows.append(
@@ -530,7 +762,7 @@ def lapse_statistics(summary: pd.DataFrame) -> pd.DataFrame:
                 "condition": "fast_vs_slow",
                 "test": "paired_t_test",
                 "n_lapse_trials": int(summary["n_lapse_trials"].sum()),
-                **paired_subject_statistics(wide, "fast", "slow"),
+                **paired_subject_statistics(wide["fast"], wide["slow"]),
             }
         )
     return pd.DataFrame(rows)

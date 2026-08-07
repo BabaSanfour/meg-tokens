@@ -8,13 +8,13 @@ from typing import Iterable
 import numpy as np
 import pandas as pd
 
-from meg_tokens.behavior.success_probability import (
+from meg_tokens.behavior.math.probability import (
     classify_design_profile,
-    design_spd_at_decision,
-    implied_target_counts,
     probability_at_decision,
     success_probability_profile,
+    validate_probability_path,
 )
+from meg_tokens.behavior.schema import parse_token_directions
 from meg_tokens.behavior.tdms import parse_tdms_file, parse_tdms_filename
 
 
@@ -51,7 +51,7 @@ def validate_spd_trial(
     logged = [float(value) for value in trial["nProb"]]
     token_times = [float(value) for value in trial["tTime"]]
     runtime_directions = [int(value) for value in trial["nTokenDir"]]
-    design_directions = [int(value) for value in str(trial["sTokenDirs"])]
+    design_directions = parse_token_directions(trial["sTokenDirs"])
     chosen_target = int(trial["nChoiceMade"])
 
     if len(logged) not in (14, 15):
@@ -66,7 +66,11 @@ def validate_spd_trial(
     design_unshifted = design_profile[: len(logged)]
     design_shifted = design_profile[1:] if len(logged) == 14 else None
     try:
-        implied_target_counts(logged, first_jump=2 if len(logged) == 14 else 1, atol=atol)
+        validate_probability_path(
+            logged,
+            first_jump=2 if len(logged) == 14 else 1,
+            atol=atol,
+        )
         logged_profile_is_legal_path = True
     except ValueError:
         logged_profile_is_legal_path = False
@@ -79,12 +83,10 @@ def validate_spd_trial(
     )
     design_time_resolved_valid_for_analysis = len(logged) == 15
     if design_time_resolved_valid_for_analysis:
-        design_spd_for_analysis, _ = design_spd_at_decision(
+        design_spd_for_analysis, _ = probability_at_decision(
             design_profile,
             token_times,
             decision_time=decision_timestamp,
-            token_log_rows=len(logged),
-            token_log_short=False,
         )
     else:
         design_spd_for_analysis = np.nan
@@ -265,10 +267,13 @@ def run_spd_validation(
                 revised_class_source = "design"
             elif raw_class == "x":
                 correct_profile = success_probability_profile(
-                    str(trial["sTokenDirs"]),
+                    parse_token_directions(trial["sTokenDirs"]),
                     target=int(trial["nCorrectChoice"]),
                 )
-                revised_class = classify_design_profile(correct_profile, atol=atol)
+                revised_class, _ = classify_design_profile(
+                    correct_profile,
+                    atol=atol,
+                )
                 revised_class_source = "inferred" if revised_class else "unclassified"
             else:
                 revised_class = 0

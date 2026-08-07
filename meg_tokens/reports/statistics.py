@@ -31,7 +31,8 @@ from meg_tokens.io import (
     save_table,
 )
 from meg_tokens.reports.meg import plot_correlation
-from meg_tokens.behavior.tdms import started_trials
+from meg_tokens.behavior.tables import read_behavior_table
+from meg_tokens.behavior.trials import started_trials
 
 
 def stats_derivative_path(
@@ -367,15 +368,8 @@ def mean_raw_rt_by_subject(behavior_dir: str, subjects: Sequence[str], condition
         subject = normalize_subject_id(subject)
         rt_values = []
         for path in _behavior_tables_for_subject(behavior_dir, subject, conditions):
-            table = started_trials(pd.read_csv(path, sep="\t"))
-            if "rawRT" in table.columns:
-                series = table["rawRT"]
-            else:
-                required = {"tEnterTarget", "tGO", "nChoiceMade"}
-                missing = required - set(table.columns)
-                if missing:
-                    raise ValueError(f"Behavior table {path} is missing RT columns: {sorted(missing)}")
-                series = (table["tEnterTarget"] - table["tGO"]).where(table["nChoiceMade"] > 0)
+            table = started_trials(read_behavior_table(path))
+            series = table["rawRT"]
             rt_values.extend(pd.to_numeric(series, errors="coerce").dropna().tolist())
         if rt_values:
             values[subject] = float(np.mean(rt_values))

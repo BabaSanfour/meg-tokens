@@ -50,9 +50,39 @@ def test_behavior_report_reads_staged_tsv_and_writes_derivative(tmp_path):
     layout = DerivativeLayout(tmp_path)
     for condition, values in (("Fast", [500.0, 600.0]), ("Slow", [900.0, 1000.0])):
         path = layout.behavior(subject="H01", run=f"{condition}1", condition=condition)
+        n_trials = len(values)
         save_table(
             path,
-            pd.DataFrame({"rawRT": values, "nOutcome": [0] * len(values)}),
+            pd.DataFrame({
+                "subject": ["H01"] * n_trials,
+                "condition": [condition] * n_trials,
+                "run": [1] * n_trials,
+                "source_file": [f"H01{condition}1_180131.tdms"] * n_trials,
+                "nTrialIndex": list(range(1, n_trials + 1)),
+                "sTrialClass": [1] * n_trials,
+                "sTrialClassRaw": ["e"] * n_trials,
+                "trial_class_source": ["design"] * n_trials,
+                "trial_class_rule": ["recorded_label"] * n_trials,
+                "sp_design_correct": [[0.6]] * n_trials,
+                "nInitialTime": list(range(n_trials)),
+                "nChoiceMade": [1] * n_trials,
+                "nCorrectChoice": [1] * n_trials,
+                "tGO": [1000.0] * n_trials,
+                "tEnterCenter": [0.0] * n_trials,
+                "tExitCenter": [1000.0 + value for value in values],
+                "tEnterTarget": [1000.0 + value for value in values],
+                "tTrialEnd": [1200.0 + value for value in values],
+                "sTokenDirs": ["1"] * n_trials,
+                "nTokenNum": [[1]] * n_trials,
+                "nTokenDir": [[1]] * n_trials,
+                "tTime": [[1100.0]] * n_trials,
+                "nProb": [[0.6]] * n_trials,
+                "token_log_rows": [1] * n_trials,
+                "token_log_short": [False] * n_trials,
+                "nOutcome": [0] * n_trials,
+                "rawRT": values,
+                "isCorrect": [True] * n_trials,
+            }),
             metadata={"subject": "H01", "condition": condition},
         )
 

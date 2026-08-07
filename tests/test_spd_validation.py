@@ -1,12 +1,15 @@
 import pandas as pd
 
-from meg_tokens.behavior.success_probability import success_probability_profile
+from meg_tokens.behavior.math.probability import success_probability_profile
 from meg_tokens.validation.spd import validate_spd_trial
 
 
 def test_validate_spd_trial_matches_a_complete_runtime_profile():
     directions = "112112211121122"
-    profile = success_probability_profile(directions, target=1)
+    profile = success_probability_profile(
+        [int(value) for value in directions],
+        target=1,
+    )
     trial = pd.Series(
         {
             "nProb": profile,
@@ -30,7 +33,10 @@ def test_validate_spd_trial_matches_a_complete_runtime_profile():
 
 def test_validate_spd_trial_withholds_design_spd_for_14_rows():
     directions = "112112211121122"
-    profile = success_probability_profile(directions, target=1)
+    profile = success_probability_profile(
+        [int(value) for value in directions],
+        target=1,
+    )
     trial = pd.Series(
         {
             "nProb": profile[1:],

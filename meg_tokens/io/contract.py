@@ -216,6 +216,19 @@ def save_table(
     return out_path
 
 
+def load_table(
+    path: PathLike,
+    *,
+    sep: Optional[str] = None,
+    converters: Optional[Mapping[str, Any]] = None,
+) -> pd.DataFrame:
+    """Load a tabular derivative without applying domain-specific semantics."""
+    table_path = require_file(path, purpose="tabular derivative")
+    if sep is None:
+        sep = "\t" if table_path.suffix == ".tsv" else ","
+    return pd.read_csv(table_path, sep=sep, converters=converters)
+
+
 def save_sidecar(path: PathLike, metadata: Mapping[str, Any]) -> Path:
     """Write a JSON sidecar next to any derivative file or file base."""
     out_path = sidecar_path(path)

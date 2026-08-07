@@ -5,13 +5,13 @@ import pandas as pd
 import pytest
 import mne
 from mne.io import RawArray
-from meg_tokens.behavior.tdms import OUTCOME_NEVER_STARTED
+from meg_tokens.behavior.schema import OUTCOME_NEVER_STARTED
+from meg_tokens.behavior.tables import read_behavior_table
 from meg_tokens.meg.epoching import (
     build_epochs_with_metadata,
     exclude_unrecoverable_trials,
     find_behavior_table,
     get_event_id,
-    load_behavior_table,
     mismatch_policy,
     needs_go_reconstruction,
     parse_run_label,
@@ -320,7 +320,7 @@ def test_exclude_unrecoverable_trials_is_noop_for_other_runs():
     assert out['nTrialIndex'].tolist() == [1, 2, 3]
 
 
-def test_find_and_load_behavior_table(tmp_path, sample_meg_data):
+def test_find_and_read_behavior_table(tmp_path, sample_meg_data):
     _, _, behavior_df = sample_meg_data
     beh_path = (
         tmp_path
@@ -333,7 +333,7 @@ def test_find_and_load_behavior_table(tmp_path, sample_meg_data):
     save_table(beh_path, behavior_df, metadata={"stage": "behavior_parsing"})
 
     found = find_behavior_table(tmp_path, "H1", "Slow1")
-    loaded = load_behavior_table(str(found))
+    loaded = read_behavior_table(found)
 
     assert found == beh_path
     assert list(loaded["nTrialIndex"]) == [1, 2, 3, 4]

@@ -1,4 +1,4 @@
-"""Distributional descriptions of DT and SPD (roadmap Tier A1-A2).
+"""Distributional analyses of decision time and success probability.
 
 Means alone hide the right tail that distinguishes a threshold change from a
 drift change, so these helpers report subject-level quantiles, skewness, and
@@ -14,7 +14,7 @@ import numpy as np
 import pandas as pd
 from scipy import stats
 
-from meg_tokens.behavior.metrics import paired_subject_statistics
+from meg_tokens.behavior.math.inference import paired_subject_statistics
 from meg_tokens.behavior.trials import (
     CLASS_NAMES,
     TASK_CONDITIONS,
@@ -43,7 +43,38 @@ def distribution_summary(
     *,
     quantiles: Sequence[float] = DEFAULT_QUANTILES,
 ) -> dict[str, float]:
-    """Summarize one sample with moments and quantiles."""
+    """Summarize a finite sample with descriptive moments and quantiles.
+
+    Non-finite observations are discarded before any statistic is computed.
+    The standard deviation uses the sample convention (``ddof=1``), and
+    SciPy computes bias-corrected skewness and excess kurtosis.  Shape
+    statistics are withheld for samples smaller than
+    :data:`MIN_TRIALS_FOR_SHAPE`; this cutoff is an analysis stability policy,
+    not a value inferred from the observations.
+
+    Parameters
+    ----------
+    values
+        Numeric observations in the unit to be summarized.  Decision-time
+        callers pass milliseconds.
+    quantiles
+        Quantile probabilities in the closed interval ``[0, 1]``.  Each
+        output key is formed by rounding the probability to an integer
+        percentage, for example ``0.25`` becomes ``"q25"``.  NumPy raises
+        ``ValueError`` for probabilities outside the valid interval.
+
+    Returns
+    -------
+    dict[str, float]
+        ``n_trials``, ``mean``, sample ``sd``, ``min``, ``max``, the requested
+        quantiles, bias-corrected ``skewness``, and excess ``kurtosis``.
+        Statistics without enough finite observations are ``NaN``.
+
+    Notes
+    -----
+    This function does not impute values, remove outliers, fit a model, or
+    infer a distribution family.
+    """
     array = np.asarray(list(values), dtype=float)
     array = array[np.isfinite(array)]
     summary: dict[str, float] = {
@@ -72,6 +103,29 @@ def ex_gaussian_parameters(values: Sequence[float]) -> dict[str, float]:
     an exponential (``tau``); ``tau`` isolates the right tail that a mean
     cannot separate from a shift in the body of the distribution. Fitting uses
     ``scipy.stats.exponnorm``, whose shape ``K`` equals ``tau / sigma``.
+
+    Parameters
+    ----------
+    values
+        Numeric observations in the unit of the desired parameters.  For
+        decision times, ``mu``, ``sigma``, and ``tau`` are therefore all in
+        milliseconds.  Non-finite observations are discarded.
+
+    Returns
+    -------
+    dict[str, float]
+        Maximum-likelihood estimates named ``exgaussian_mu``,
+        ``exgaussian_sigma``, and ``exgaussian_tau``, plus the Boolean
+        ``exgaussian_fitted`` flag.  Failed or intentionally skipped fits
+        contain ``NaN`` parameters and ``False``.
+
+    Notes
+    -----
+    The fit is skipped when fewer than :data:`MIN_TRIALS_FOR_SHAPE` finite
+    observations remain or when their standard deviation is zero.  The trial
+    cutoff is an explicit stability policy, not a fitted or preprint-derived
+    threshold.  SciPy performs the optimization directly; this function does
+    not implement a custom estimator or silently substitute another model.
     """
     array = np.asarray(list(values), dtype=float)
     array = array[np.isfinite(array)]
@@ -100,6 +154,27 @@ def ex_gaussian_parameters(values: Sequence[float]) -> dict[str, float]:
 
 
 def _strata(trials: pd.DataFrame) -> list[tuple[str, str, pd.Series]]:
+    """Build the fixed masks used for decision-time summaries.
+
+    Parameters
+    ----------
+    trials
+        Task-trial rows for one subject.  The frame must contain ``condition``
+        and integer ``trial_class`` columns.
+
+    Returns
+    -------
+    list[tuple[str, str, pandas.Series]]
+        ``(stratum_type, stratum_name, mask)`` tuples for the overall sample,
+        every task condition, every trial class, and every
+        condition-by-class cell.  Masks retain the input frame's index.
+
+    Notes
+    -----
+    The function only constructs declared categories from
+    :data:`TASK_CONDITIONS` and :data:`CLASS_NAMES`; it does not infer or
+    relabel conditions from the data.
+    """
     condition = trials["condition"].astype(str).str.lower()
     strata: list[tuple[str, str, pd.Series]] = [
         ("overall", "all_task_trials", pd.Series(True, index=trials.index))
@@ -126,11 +201,40 @@ def decision_time_distributions(
     quantiles: Sequence[float] = DEFAULT_QUANTILES,
     fit_ex_gaussian: bool = True,
 ) -> pd.DataFrame:
-    """Return per-subject DT distribution statistics for every stratum.
+    """Compute subject-level decision-time distributions by task stratum.
 
     Strata are the overall task sample, each condition, each trial class, and
-    each condition-by-class cell, so that the same table serves the Tier A2
-    distributional description and the Tier A3 cell breakdown.
+    each condition-by-class cell, so one table serves both distributional and
+    factorial descriptions.
+
+    Parameters
+    ----------
+    features
+        Canonical trial-feature table.  It must contain the columns required
+        by :func:`~meg_tokens.behavior.trials.task_trials`, plus ``subject``,
+        ``condition``, ``trial_class``, and ``dt_ms``.
+    quantiles
+        Quantile probabilities forwarded unchanged to
+        :func:`distribution_summary`.
+    fit_ex_gaussian
+        Whether to append ex-Gaussian parameters for each subject and
+        stratum.  When ``False``, the ex-Gaussian columns are absent rather
+        than filled with ``NaN``.
+
+    Returns
+    -------
+    pandas.DataFrame
+        One row per subject and fixed stratum.  Identifier columns are
+        ``subject``, ``stratum_type``, and ``stratum``; remaining columns are
+        the outputs of :func:`distribution_summary` and, when requested,
+        :func:`ex_gaussian_parameters`.  Decision-time values and fitted
+        parameters are in milliseconds.
+
+    Notes
+    -----
+    Non-task rows are removed by :func:`task_trials`.  Empty declared cells
+    are retained with ``n_trials == 0`` and ``NaN`` statistics.  No trial is
+    reassigned, imputed, winsorized, or pooled across subjects.
     """
     trials = task_trials(features)
     rows = []
@@ -154,7 +258,34 @@ def decision_time_distribution_statistics(
     *,
     metrics: Sequence[str] = ("q10", "q50", "q90", "skewness", "exgaussian_tau"),
 ) -> pd.DataFrame:
-    """Contrast distributional statistics across classes and conditions."""
+    """Run fixed paired contrasts on subject-level distribution metrics.
+
+    Parameters
+    ----------
+    subject_distributions
+        Output of :func:`decision_time_distributions`, with one unique row per
+        ``subject`` and ``stratum`` and columns for every requested metric.
+    metrics
+        Distribution-summary columns to test.  The defaults compare the 10th,
+        50th, and 90th percentiles, skewness, and ex-Gaussian ``tau``.
+
+    Returns
+    -------
+    pandas.DataFrame
+        One row per available metric and fixed contrast, containing labels
+        for the comparison and the fields returned by
+        :func:`~meg_tokens.behavior.math.inference.paired_subject_statistics`.
+
+    Notes
+    -----
+    The declared contrasts are easy versus ambiguous, easy versus misleading,
+    ambiguous versus misleading, and fast versus slow.  Pairing is by subject;
+    the shared inference helper removes incomplete pairs.  A contrast is
+    omitted when either input column is absent.  The function performs no
+    multiplicity correction and does not choose contrasts from the observed
+    results.  Duplicate subject/stratum rows cause pandas ``pivot`` to raise
+    rather than being silently aggregated.
+    """
     wide = subject_distributions.pivot(
         index="subject", columns="stratum", values=list(metrics)
     )
@@ -179,7 +310,7 @@ def decision_time_distribution_statistics(
                     "contrast": f"{first}_vs_{second}",
                     "label_a": first,
                     "label_b": second,
-                    **paired_subject_statistics(pair, "a", "b"),
+                    **paired_subject_statistics(pair["a"], pair["b"]),
                 }
             )
     return pd.DataFrame(rows)
@@ -190,11 +321,42 @@ def spd_cumulative_distributions(
     *,
     thresholds: Sequence[float] = DEFAULT_SPD_THRESHOLDS,
 ) -> pd.DataFrame:
-    """Return cumulative SPD distributions by class for both logged views.
+    """Compute empirical cumulative logged-SPD curves by trial class.
 
     For each threshold the table reports the pooled trial proportion at or
     below it and the mean of the per-subject proportions with its SEM, so the
     curve can be read either way without recomputing it.
+
+    Parameters
+    ----------
+    features
+        Canonical trial-feature table containing task-trial markers,
+        ``subject``, ``trial_class``, ``logged_spd``, and
+        ``logged_spd_validated_15row``.
+    thresholds
+        SPD cut points at which to evaluate ``P(logged_spd <= threshold)``.
+        Values are used as supplied and are not sorted, clipped, or inferred
+        from the data.
+
+    Returns
+    -------
+    pandas.DataFrame
+        One row per logged-SPD view, declared trial class, and threshold.
+        ``pooled_proportion`` weights every finite trial equally.
+        ``mean_subject_proportion`` gives each subject with at least one finite
+        value equal weight, and ``sem_subject_proportion`` is the sample
+        standard deviation of those proportions divided by the square root of
+        their count.  ``n_trials`` and ``n_subjects`` report the corresponding
+        denominators.
+
+    Notes
+    -----
+    Non-task rows and non-finite SPD values are excluded.  The two views are
+    analyzed separately: ``all_logged`` uses every finite logged value, while
+    ``validated_15row`` uses only values already validated by the feature
+    pipeline.  This function does not reconstruct, validate, or guess SPD.
+    It also does not perform hypothesis tests; it returns descriptive
+    empirical cumulative distributions only.
     """
     trials = task_trials(features)
     rows = []

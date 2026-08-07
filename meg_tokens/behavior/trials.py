@@ -1,10 +1,9 @@
-"""Shared trial selection for the roadmap behavioral analyses.
+"""Shared trial selection for the behavioral analysis pipeline.
 
-Every Tier A/B analysis in ``docs/behavior_analysis_roadmap.md`` consumes the
-same substrate: the trial-feature table written by
-``meg_tokens.workflows.behavior.analyze_behavior``. These helpers centralize
-which rows each analysis is allowed to see so that the eligibility rule is
-stated once instead of being re-derived per analysis.
+Every analysis consumes the trial-feature table written by
+``meg_tokens.workflows.behavior_analysis.analyze_behavior``. These helpers
+centralize which rows each analysis may use so eligibility is stated once
+instead of being reconstructed independently.
 """
 
 from __future__ import annotations
@@ -13,6 +12,8 @@ from typing import Final, Sequence
 
 import numpy as np
 import pandas as pd
+
+from meg_tokens.behavior.schema import OUTCOME_NEVER_STARTED
 
 
 CLASS_NAMES: Final[dict[int, str]] = {1: "easy", 2: "ambiguous", 3: "misleading"}
@@ -36,13 +37,26 @@ OUTCOME_LABELS: Final[dict[int, str]] = {
     7021: "incorrect_choice",
 }
 
-# Started trials on which the subject produced no usable choice. These are the
-# lapses summarized by Tier A6.
+# Started trials on which the subject produced no usable choice.
 LAPSE_OUTCOMES: Final[tuple[int, ...]] = (7006, 7011)
 
 
 def require_columns(table: pd.DataFrame, columns: Sequence[str]) -> None:
-    """Raise if a trial-feature table is missing columns an analysis needs."""
+    """Require the columns needed by one behavioral operation.
+
+    Parameters
+    ----------
+    table
+        Trial or feature table to inspect.
+    columns
+        Required column names.
+
+    Raises
+    ------
+    ValueError
+        If any requested column is absent. The message instructs users to
+        regenerate the analysis derivative rather than attempting a fallback.
+    """
     missing = [column for column in columns if column not in table.columns]
     if missing:
         raise ValueError(
@@ -51,27 +65,85 @@ def require_columns(table: pd.DataFrame, columns: Sequence[str]) -> None:
         )
 
 
+def started_trials(table: pd.DataFrame) -> pd.DataFrame:
+    """Select rows not marked with the never-started outcome sentinel.
+
+    Parameters
+    ----------
+    table
+        Stage 1 or trial-feature table containing ``nOutcome``.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Independent copy of rows whose outcome is not
+        ``OUTCOME_NEVER_STARTED``. No response, condition, or class filter is
+        applied.
+    """
+    return table.loc[table["nOutcome"] != OUTCOME_NEVER_STARTED].copy()
+
+
 def task_trials(features: pd.DataFrame) -> pd.DataFrame:
     """Return started Fast/Slow trials on which a choice was made.
 
     This is the ``primary_analysis_eligible`` view already defined by the
     trial-feature table: never-started rows, RT baseline runs, and lapses are
-    all excluded. Analyses that deliberately need lapses (Tier A6) select them
-    with :func:`lapse_trials` instead.
+    all excluded. Analyses that deliberately need lapses select them with
+    :func:`lapse_trials` instead.
+
+    Parameters
+    ----------
+    features
+        Canonical trial-feature table.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Independent copy of rows whose canonical eligibility flag is true.
     """
     require_columns(features, ["primary_analysis_eligible"])
     return features.loc[features["primary_analysis_eligible"].astype(bool)].copy()
 
 
 def classified_trials(features: pd.DataFrame) -> pd.DataFrame:
-    """Return task trials carrying one of the three difficulty classes."""
+    """Select eligible task trials with a defined difficulty class.
+
+    Parameters
+    ----------
+    features
+        Canonical trial-feature table.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Independent copy of eligible rows with class code 1, 2, or 3.
+
+    Notes
+    -----
+    Class codes 1, 2, and 3 correspond to easy, ambiguous, and misleading.
+    Class 0 remains available to continuous-evidence analyses but is excluded
+    here. The returned table is an independent copy.
+    """
     trials = task_trials(features)
     require_columns(trials, ["trial_class"])
     return trials.loc[trials["trial_class"].isin(CLASS_NAMES)].copy()
 
 
 def lapse_trials(features: pd.DataFrame) -> pd.DataFrame:
-    """Return started task trials that received a go cue but no choice."""
+    """Select started Fast/Slow trials without a usable choice.
+
+    Parameters
+    ----------
+    features
+        Canonical trial-feature table.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Independent copy of rows in a task condition with ``is_started=true``
+        and ``has_choice=false``. Outcome-code interpretation is left to the
+        consuming analysis.
+    """
     require_columns(features, ["condition", "is_started", "has_choice"])
     condition = features["condition"].astype(str).str.lower()
     return features.loc[
@@ -82,6 +154,23 @@ def lapse_trials(features: pd.DataFrame) -> pd.DataFrame:
 
 
 def finite_values(series: pd.Series) -> np.ndarray:
-    """Return the finite numeric values of a column as a float array."""
+    """Extract finite numeric observations from a series.
+
+    Parameters
+    ----------
+    series
+        Values to convert and filter.
+
+    Returns
+    -------
+    numpy.ndarray
+        One-dimensional float array containing only finite observations.
+
+    Notes
+    -----
+    Values are converted with ``pandas.to_numeric(errors='coerce')``; null,
+    non-numeric, positive-infinite, and negative-infinite entries are removed.
+    Original indices are not returned.
+    """
     values = pd.to_numeric(series, errors="coerce").to_numpy(dtype=float)
     return values[np.isfinite(values)]

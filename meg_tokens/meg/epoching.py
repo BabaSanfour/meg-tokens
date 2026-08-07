@@ -8,11 +8,8 @@ import mne
 from pathlib import Path
 from typing import Optional, Tuple
 
-from meg_tokens.behavior.tdms import (
-    OUTCOME_NEVER_STARTED,
-    started_trials,
-    validate_behavior_dataframe,
-)
+from meg_tokens.behavior.schema import OUTCOME_NEVER_STARTED
+from meg_tokens.behavior.trials import started_trials
 from meg_tokens.core import normalize_subject_id, parse_run_label
 from meg_tokens.io import DerivativeLayout, ensure_dir, save_table, sidecar_path
 
@@ -256,13 +253,6 @@ def find_behavior_table(
         run=run_id,
         condition=condition,
     )
-
-
-def load_behavior_table(path: str) -> pd.DataFrame:
-    """Load and validate a Stage 1 behavior TSV derivative."""
-    df = pd.read_csv(path, sep="\t")
-    validate_behavior_dataframe(df)
-    return df
 
 
 def synchronize_events_and_behavior(
