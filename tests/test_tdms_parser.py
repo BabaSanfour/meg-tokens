@@ -262,7 +262,8 @@ def test_parse_real_tdms_integration():
             'nTrialIndex', 'sTrialClass', 'sTrialClassRaw',
             'trial_class_source', 'trial_class_rule', 'sp_design_correct',
             'nInitialTime', 'nChoiceMade',
-            'nCorrectChoice', 'tGO', 'tEnterTarget', 'tTrialEnd',
+            'nCorrectChoice', 'tGO', 'tEnterCenter', 'tExitCenter',
+            'tEnterTarget', 'tTrialEnd',
             'sTokenDirs', 'nTokenNum', 'nTokenDir', 'tTime', 'nProb',
             'token_log_rows', 'token_log_short', 'nOutcome'
         ]
@@ -286,6 +287,8 @@ def test_validate_behavior_dataframe_rejects_invalid_event_order():
         'nChoiceMade': [1],
         'nCorrectChoice': [1],
         'tGO': [2000],
+        'tEnterCenter': [0],
+        'tExitCenter': [1000],
         'tEnterTarget': [1000],
         'tTrialEnd': [2500],
         'sTokenDirs': ['121'],
@@ -315,6 +318,8 @@ def _make_behavior_df(indices):
         'nChoiceMade': [1] * n,
         'nCorrectChoice': [1] * n,
         'tGO': [500] * n,
+        'tEnterCenter': [0] * n,
+        'tExitCenter': [1000] * n,
         'tEnterTarget': [1000] * n,
         'tTrialEnd': [1500] * n,
         'sTokenDirs': ['121'] * n,

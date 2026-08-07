@@ -172,8 +172,73 @@ For the 32 available subjects, pooled mean chosen-target SPD is:
 The all-log row retains the full sample but includes the short-log mismatch;
 the 15-row row is a sensitivity analysis, not a corrected estimate for omitted
 trials. Exact reproduction of preprint Figure 1E is not established because
-the paper’s numerical SPD values, analysis code, and four-subject exclusion
-list are unavailable.
+the paper’s numerical SPD values are unavailable. (Thomas's analysis code
+*is* available under `archive/replicated/`, and the four-subject exclusion
+list is now known — see `docs/meg_t0_6_subject_exclusion_qc.md`.)
+
+## 3b. Reference frame: ours vs Thomas's
+
+Every number in this section is reproduced by
+`scripts/qc/trial_class_frames.py`.
+
+The preprint states the thresholds (Methods: easy = SP>0.6 after 2 jumps,
+>0.75 after 5 and 8; ambiguous = SP 0.5 after 2, 0.4-0.65 after 3, 0.35-0.65
+after 5; misleading = SP<0.4 after 3; remaining 60% "fully randomized") but
+never says **which profile** they apply to. That choice decides the result.
+
+`archive/replicated/DDM_scripts/scripts_new/Modify_df_preproc.ipynb` — the
+step between Thomas's parser and his analysis — applies the rule to the
+runtime `nProb` (**chosen-target**) profile and overwrites *every* trial's
+class. We apply it to a design-derived **correct-target** profile, and only
+for random (`'x'`) trials.
+
+Measured on the 28-subject list:
+
+| Classification | Easy | Ambiguous | Misleading | Amb v Mis |
+|---|---:|---:|---:|---:|
+| Ours: design frame, `'x'` only | 1023.8 | 1415.2 | 1336.2 | +5.09 |
+| Recorded labels only | 971.8 | 1400.4 | 1336.2 | +3.31 |
+| Thomas verbatim: chosen frame, all trials | 1037.1 | 1399.4 | 1563.6 | **-5.18** |
+| **Preprint** | **1028 ± 59** | **1405 ± 74** | **1433 ± 79** | **-1.84** |
+
+The chosen frame flips the contrast to the published sign — but it is
+confounded. `SP_chosen = 1 - SP_correct` when the subject errs, so its
+"misleading" class mixes two populations: only **46.3%** are genuinely
+misleading stimuli; **53.7%** are trials where evidence clearly favoured the
+correct target and the subject simply erred. Those error trials are slow,
+inflating the misleading mean. Classifying by a response-dependent variable
+and then comparing response times across those classes is circular.
+
+**The design/correct-target frame is the more correct method**, and the
+preprint's ambiguous-vs-misleading result appears to be an artifact of that
+confound.
+
+### Why we infer zero misleading random trials
+
+Not a bug — a property of the stimulus set. Counting tokens straight from
+`sTokenDirs` (first 3 jumps, toward the correct target):
+
+| Label | Split after 3 jumps |
+|---|---|
+| `e` | 3-0 always |
+| `a` | 2-1 or 1-2 |
+| `m` | 1-2 (n=1,706), 0-3 (n=12) |
+| `x` | **2-1 or 3-0 only — never behind** |
+
+Across 11,100 random trials the correct target never trails after three
+jumps, so by the preprint's own definition none is misleading. (This also
+confirms the SP computation: SP(3) maps 1:1 onto these counts.)
+
+The real consequence is asymmetry: random trials can satisfy easy and
+ambiguous but never misleading, so inference enriches two classes of three
+(+2,244 easy, +1,831 ambiguous, +0 misleading) and biases the three-way
+comparison. Inference stays the default; `infer_random_classes = false`
+disables it, giving recorded labels only — symmetric, matching the paper's
+treatment of the random 60% as a non-category, and the closest
+Easy-vs-Ambiguous match (t=-15.12 vs -15.04). Under it misleading is
+slightly *faster* than ambiguous, which is coherent: misleading evidence
+invites early commitment while ambiguous evidence hovers near 0.5 and
+delays decisions.
 
 ## 4. Parser hardening
 

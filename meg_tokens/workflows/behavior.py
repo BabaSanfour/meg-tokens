@@ -17,6 +17,13 @@ from meg_tokens.behavior.metrics import (
     compare_fast_slow,
     logged_spd_at_decision,
 )
+from meg_tokens.behavior.evidence import (
+    evidence_after_tokens,
+    log_posterior_odds,
+    parse_token_directions,
+    token_lead_profile,
+)
+from meg_tokens.behavior.success_probability import success_probability_profile
 from meg_tokens.behavior.tdms import (
     OUTCOME_NEVER_STARTED,
     TdmsRunInfo,
@@ -26,6 +33,7 @@ from meg_tokens.behavior.tdms import (
     started_trials,
     validate_behavior_dataframe,
 )
+from meg_tokens.behavior.trials import OUTCOME_LABELS
 from meg_tokens.core import ProjectConfig, WorkflowResult, normalize_subject_id
 from meg_tokens.io import DerivativeLayout, save_table
 
@@ -52,6 +60,7 @@ def ingest_subject_behavior(
     output_root: str | Path,
     dry_run: bool = False,
     ignore_files: Sequence[str] = (),
+    infer_random_classes: bool = True,
 ) -> tuple[dict[str, object], ...]:
     """Parse every standard TDMS run for one subject.
 
@@ -113,7 +122,10 @@ def ingest_subject_behavior(
         trial_count = 0
         if not dry_run:
             table = add_run_metadata(
-                parse_tdms_file(str(input_path)),
+                parse_tdms_file(
+                    str(input_path),
+                    infer_random_classes=infer_random_classes,
+                ),
                 run_info,
                 input_path.name,
             )
@@ -177,6 +189,7 @@ def ingest_behavior(
                 output_root=project.bids_root,
                 dry_run=dry_run,
                 ignore_files=project.behavior_ignore_files,
+                infer_random_classes=project.infer_random_classes,
             )
         )
     return WorkflowResult(
@@ -187,6 +200,7 @@ def ingest_behavior(
             "subjects": [normalize_subject_id(subject) for subject in selected],
             "dry_run": dry_run,
             "n_runs": len(records),
+            "infer_random_classes": project.infer_random_classes,
         },
     )
 
@@ -209,6 +223,47 @@ def _started_condition_runs(
         started_trials(table)
         for table in _condition_runs(tables, condition)
     ]
+
+
+def _design_evidence(
+    token_directions: object,
+    *,
+    target: int,
+    n_tokens_at_decision: int,
+) -> dict[str, object]:
+    """Return designed evidence for one trial, referenced to ``target``.
+
+    Evidence is derived from the designed token sequence rather than the
+    runtime log so that it exists for every trial, including the short 14-row
+    logs that forbid design-to-runtime time alignment. ``early`` is the state
+    after three jumps, the horizon the preprint's misleading rule uses.
+    """
+    blank = {
+        "sp_design_early": float("nan"),
+        "sum_log_lr_design_early": float("nan"),
+        "token_lead_at_decision": pd.NA,
+        "sum_log_lr_at_decision": float("nan"),
+        "sum_log_lr_saturated": pd.NA,
+    }
+    if target not in (1, 2):
+        return blank
+    directions = parse_token_directions(token_directions)
+    if len(directions) < 3:
+        return blank
+    profile = success_probability_profile(directions, target=target)
+    lead = token_lead_profile(directions, target=target)
+    early_odds, _ = log_posterior_odds(profile[2])
+    probability = evidence_after_tokens(profile, n_tokens_at_decision, prior=0.5)
+    odds, saturated = log_posterior_odds(probability)
+    return {
+        "sp_design_early": float(profile[2]),
+        "sum_log_lr_design_early": early_odds,
+        "token_lead_at_decision": int(
+            evidence_after_tokens(lead, n_tokens_at_decision, prior=0.0)
+        ),
+        "sum_log_lr_at_decision": odds,
+        "sum_log_lr_saturated": bool(saturated),
+    }
 
 
 def _trial_feature_table(
@@ -245,6 +300,12 @@ def _trial_feature_table(
                     )
                 log_rows = int(trial["token_log_rows"])
                 trial_class = int(trial["sTrialClass"])
+                choice_side = int(trial["nChoiceMade"])
+                correct_side = int(trial["nCorrectChoice"])
+                tokens_seen = (
+                    int(decision_token_index) if pd.notna(decision_token_index) else 0
+                )
+                outcome = int(trial["nOutcome"])
                 rows.append({
                     "trial_id": (
                         f"sub-{subject}_task-tokens_run-{run}_desc-"
@@ -257,23 +318,44 @@ def _trial_feature_table(
                     "run_trial_index": run_trial_index,
                     "started_trial_index": started_index if is_started else pd.NA,
                     "nTrialIndex": int(trial["nTrialIndex"]),
+                    # LabVIEW session clock at trial onset. It is the only
+                    # field that orders blocks within a session: the filenames
+                    # carry a date but no time, and nTrialIndex restarts at 1
+                    # in every run. Fast and Slow blocks are interleaved, so
+                    # session-drift analyses need this ordering to exist.
+                    "initial_time_ms": int(trial["nInitialTime"]),
                     "source_file": trial["source_file"],
                     "trial_class": trial_class,
                     "trial_class_name": class_names.get(trial_class, "unclassified"),
                     "sTrialClassRaw": trial["sTrialClassRaw"],
                     "trial_class_source": trial["trial_class_source"],
                     "trial_class_rule": trial["trial_class_rule"],
-                    "nChoiceMade": int(trial["nChoiceMade"]),
-                    "nCorrectChoice": int(trial["nCorrectChoice"]),
+                    "nChoiceMade": choice_side,
+                    "nCorrectChoice": correct_side,
+                    "choice_side": choice_side if has_choice else pd.NA,
+                    "correct_side": correct_side if correct_side in (1, 2) else pd.NA,
                     "isCorrect": trial["isCorrect"],
-                    "nOutcome": int(trial["nOutcome"]),
+                    "nOutcome": outcome,
+                    "outcome_label": OUTCOME_LABELS.get(outcome, "completed"),
                     "motor_baseline_ms": motor_baseline,
                     "rawRT": raw_rt,
                     "dt_ms": dt,
                     "logged_spd": spd,
+                    # Chosen-target evidence on the log-odds scale, which is
+                    # the scale the urgency-gating literature reports the
+                    # accuracy criterion on.
+                    "logged_spd_log_odds": (
+                        log_posterior_odds(spd)[0] if pd.notna(spd) else float("nan")
+                    ),
                     "logged_spd_validated_15row": spd if log_rows == 15 else float("nan"),
                     "evidence_at_decision": spd - 0.5 if pd.notna(spd) else float("nan"),
                     "decision_token_index": decision_token_index,
+                    "token_directions": trial["sTokenDirs"],
+                    **_design_evidence(
+                        trial["sTokenDirs"],
+                        target=correct_side,
+                        n_tokens_at_decision=tokens_seen if has_choice else 0,
+                    ),
                     "token_log_rows": log_rows,
                     "token_log_short": trial["token_log_short"],
                     "is_started": is_started,
@@ -451,6 +533,10 @@ def analyze_behavior(
             "dt": "rawRT - subject motor_baseline_ms; task trials only",
             "spd": "logged chosen-target nProb at the motor-corrected decision time",
             "evidence_at_decision": "logged_spd - 0.5",
+            "design_evidence": (
+                "correct-target success probability and log posterior odds from "
+                "the designed sTokenDirs sequence; 'early' is after three jumps"
+            ),
             "input_files": [str(path) for path in paths],
         },
     )

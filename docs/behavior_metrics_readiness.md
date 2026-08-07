@@ -24,6 +24,11 @@ T0-6 remains: populate the four subject exclusions after MEG quality review and
 before claiming replication of the preprint's **N=28** results. The config hook
 exists but is intentionally empty.
 
+**The excluded four**: `H06, H07, H10, H20`. Legacy code (10 scripts, MEG and behavior)
+consistently excludes this set. MEG-signal corroboration for
+*why* each was excluded is still weak/mixed (only H10 shows a clear outlier
+signal), but no longer affects identity.
+
 ## Preprint comparison
 
 Current values use all 32 subjects:
@@ -43,17 +48,31 @@ current positive effect; unknown exclusion IDs alone cannot explain it. The
 opt-in published-value regression test uses `MEG_TOKENS_REAL_CONFIG` and should
 run once T0-6 is populated.
 
-## Next
+**The cause of the reversed contrast is identified**: a *reference-frame*
+difference in trial classification, not the exclusion list. Thomas's
+`Modify_df_preproc.ipynb` applies the preprint's SP thresholds to the runtime
+`nProb` (**chosen-target**) profile, overwriting every trial's class; we apply
+them to a design-derived **correct-target** profile, for random (`'x'`) trials
+only. The chosen frame does flip the contrast to the published sign, but it is
+confounded — most of its "misleading" class are trials where evidence clearly
+favoured the correct target and the subject simply erred. **We keep the
+design frame.** Comparison table, confound breakdown, and the
+zero-inferred-misleading explanation: `docs/behavior_t0_1_nprob_trial_class.md`
+§3b.
 
-1. Begin MEG analysis and populate T0-6 from confirmed movement/artifact/session
-   exclusions.
-2. Use `docs/behavior_analysis_roadmap.md` for additional behavioral analyses.
+Also ruled out: trial filtering, and the `H02` `RT1`/`RT2` baseline (~1.4 ms
+on group means, cancels in every paired contrast; detail in
+`docs/behavior_qc_report.md` §3).
 
 Related details are maintained in:
 
+- `docs/behavior_analysis_roadmap.md` — extended analyses and their status
+- `docs/behavior_roadmap_results.md` — measured results for those analyses
 - `docs/behavior_qc_report.md` — ingestion and MEG/behavior alignment QC
 - `docs/behavior_t0_1_nprob_trial_class.md` — class and SPD specification
 - `docs/data_contract.md` — derivative schemas and join keys
+- `docs/meg_t0_6_subject_exclusion_qc.md` — MEG-quality subject exclusion
+  investigation.
 
 Preprint: Thiery et al. (2022),
 [bioRxiv 10.1101/2022.06.14.494674](https://doi.org/10.1101/2022.06.14.494674).

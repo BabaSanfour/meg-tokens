@@ -17,7 +17,9 @@ writing one BIDS-derivative behavior table per run:
 - Missing `Events` properties, empty trial groups, and missing structural
   fields raise a file/trial-specific error. Valid no-choice trials remain
   valid: `nChoiceMade == 0` and a missing `tEnterTarget` are expected outcomes.
-- `sTrialClass == 'r'` is recognized as the RT-task label.
+- `sTrialClass == 'r'` is recognized as the RT-task label and encoded as
+  class `0` (Thomas's parser used `4`; inconsequential, since nothing
+  downstream filters on that value for RT trials).
 - `nOutcome` is retained and validated. `nTrialIndex` must be gap-free,
   duplicate-free, ordered, and consecutive, but may start above 1 because the
   LabVIEW counter is session-scoped rather than reset per file.
@@ -65,6 +67,38 @@ means are unchanged because those analyses already required a choice. Removing
 never-started rows does correct post-error adjacency: post-correct means
 changed for 16 subjects and post-error means for 5. The largest shifts were
 H11 post-correct, -9.30 ms, and H08 post-error, +9.85 ms.
+
+### Movement time is not recorded
+
+The LabVIEW error codes distinguish reaction-time errors (`7005`/`7006`) from
+movement-time errors (`7007`/`7008`), so the task does monitor a movement
+interval, recorded as `tEnterTarget - tExitCenter`. This build writes both
+timestamps from the same event: the value is **0 ms on 18,833 of 18,846
+chosen trials**, and 1 ms on the remaining 13. Both fields are parsed and
+retained in Stage 1, but no analysis in the package computes a movement
+measure — roadmap Tier B8 (response vigor) is dropped rather than
+implemented against a field that carries nothing.
+
+`tTrialEnd - tEnterTarget` is not a substitute: after a choice the remaining
+tokens replay at roughly 20 ms intervals, so that interval is essentially
+`(15 - tokens seen) x 20 ms` plus feedback (133 ms mean in Fast, 1,013 ms in
+Slow, 3.6 ms in RT runs where no tokens fall), and it correlates with decision
+time at r = -0.98 (Fast) / -0.96 (Slow). It is not carried into the
+trial-feature table under any name.
+
+### Block order comes from the session clock, not `nTrialIndex`
+
+`nTrialIndex` is not reset per `.tdms` file — a run may legitimately start
+above 1 when its first trials went to a preceding scratch file — but in
+practice it restarts at 1 in almost every run, so it does not order blocks
+within a session; filenames carry a date (`YYMMDD`) and no time.
+
+`nInitialTime` is a monotonically increasing session clock in milliseconds and
+does order them. It also shows that **Fast and Slow blocks interleave**: a
+typical session runs RT1, Fast1, Slow1, Fast2, Slow2, ..., RT2 (15 subjects
+began on a Fast block, 17 on Slow). Analyses of session drift, block order,
+and condition order all use `initial_time_ms` from the trial-feature table
+rather than condition/run number.
 
 ## 2. Dataset-wide MEG matching
 
@@ -117,6 +151,16 @@ calibrated from that run’s real go cues, with the documented 4 ms fallback onl
 for `H02RT1`. Never-started `7003` trials are never reconstructed, including
 mixed-pattern runs such as `H07Slow2` and `H07Slow4`.
 
+### H02 motor baseline: keeping both RT runs
+
+Thomas's notebooks use only `RT2` for `H02` (`if s == 'H02': files_RT =
+[s+'_RT2']`), consistent with `H02RT1`'s go-cue defect above. We keep both
+runs for every subject: `H02RT1` mean 508.6 ms vs `RT2` 588.4 ms — an 80 ms
+gap, unexceptional across the cohort (mean |gap| 30.4 ms, max 95.5 ms at H08,
+where Thomas also kept both runs). Using both runs puts our baseline 39.4 ms
+below Thomas's RT2-only baseline; this cancels exactly in every paired
+within-subject contrast and shifts absolute group means by ~1.4 ms.
+
 ### `H12Slow2`
 
 This run matches `H12_..._05.ds` with a 193× separation from the next candidate.
@@ -163,3 +207,15 @@ meg-tokens --config tokens.toml behavior ingest
 The full raw-recording-to-epoch replay remains deferred to the epoching phase;
 that replay must verify go-cue reconstruction, unrecoverable-trial exclusion,
 `7003` filtering, trailing truncation, and final event/metadata/epoch counts.
+
+Checked against Thomas's original TDMS parser
+(`archive/replicated/DDM_analysis_scripts/Create_df.ipynb`) and behavior
+notebooks (`archive/replicated/DDM_scripts/scripts_new/`), two mismatches
+matter beyond the `sTrialClass` encoding and `H02` baseline noted above: the
+`sTrialClass` reference-frame difference in `Modify_df_preproc.ipynb` (root
+cause of the reversed ambiguous/misleading contrast — see
+`docs/behavior_t0_1_nprob_trial_class.md` §3b), and our `key: value` line
+parser replacing Thomas's fixed-offset string slicing, a deliberate
+modernization (`docs/data_contract.md`) that is functionally equivalent on
+every field both extract. `rawRT` and the post-error-slowing adjacency rule
+match exactly.

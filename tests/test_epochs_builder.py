@@ -55,6 +55,8 @@ def sample_meg_data():
         'nChoiceMade': [1, 2, 1, 2],
         'nCorrectChoice': [1, 2, 1, 1],
         'tGO': [100, 105, 110, 115],
+        'tEnterCenter': [0, 0, 0, 0],
+        'tExitCenter': [400, 455, 510, 565],
         'tEnterTarget': [400, 455, 510, 565],
         'tTrialEnd': [900, 955, 1010, 1065],
         'sTokenDirs': ['121', '212', '121', '212'],

@@ -28,6 +28,8 @@ def _behavior_table(subject, condition, run, enter_times, choices, correct):
             "nChoiceMade": choices,
             "nCorrectChoice": correct,
             "tGO": [1000] * n_trials,
+            "tEnterCenter": [0] * n_trials,
+            "tExitCenter": enter_times,
             "tEnterTarget": enter_times,
             "tTrialEnd": [value + 200 for value in enter_times],
             "sTokenDirs": ["121"] * n_trials,

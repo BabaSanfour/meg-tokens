@@ -80,6 +80,17 @@ MEG-joinable feature table from those staged TSV files:
 meg-tokens --config tokens.toml behavior analyze
 ```
 
+Run the extended behavioral analyses from `docs/behavior_analysis_roadmap.md`
+over that feature table — distributions, condition × class effects, session
+drift, lapses, continuous evidence, criterion decline and urgency, reverse
+correlation, conditional accuracy, trial history, and individual differences.
+Each writes its own group derivative; results on the current dataset are in
+`docs/behavior_roadmap_results.md`:
+
+```bash
+meg-tokens --config tokens.toml behavior extended
+```
+
 Re-run the source-log success-probability/SPD validation and print its summary:
 
 ```bash

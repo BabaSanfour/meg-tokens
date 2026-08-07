@@ -102,6 +102,8 @@ Required trial columns include:
 - `nChoiceMade`
 - `nCorrectChoice`
 - `tGO`
+- `tEnterCenter`
+- `tExitCenter`
 - `tEnterTarget`
 - `tTrialEnd`
 - `sTokenDirs`
@@ -123,13 +125,25 @@ independently retains the directions recorded in the runtime token rows.
 `sTrialClassRaw` preserves the LabVIEW label. `sTrialClass` retains recorded
 designed labels and is inferred only for raw `'x'` trials from
 `sp_design_correct`; `trial_class_source` and `trial_class_rule` record that
-provenance. `sp_design_correct` is unavailable when LabVIEW records no correct
-target. `token_log_rows` and `token_log_short` describe the runtime log without
+provenance. Inference is on by default and is disabled by
+`infer_random_classes = false` in the project TOML, which leaves `'x'` trials
+unclassified with `trial_class_rule = "inference_disabled"` (see
+`docs/behavior_t0_1_nprob_trial_class.md` § 3b for why this is a real
+analysis choice: inference can add easy and ambiguous trials but never
+misleading ones). `sp_design_correct` is unavailable when LabVIEW records no
+correct target. `token_log_rows` and `token_log_short` describe the runtime log without
 changing the class rule, while `nProb` and `tTime` remain the paired runtime
 series.
-Stage-1 derivatives created before these token and classification-provenance
-fields were added must be re-ingested from TDMS before they can be used by the
-current pipeline.
+`tEnterCenter` and `tExitCenter` are the center-hold timestamps. They are
+retained because `tEnterTarget - tExitCenter` is the only recorded movement
+duration; in this dataset LabVIEW writes both timestamps from the same event,
+so that duration is zero on essentially every trial (see
+`docs/behavior_qc_report.md` §1, "Movement time is not recorded"). Event
+ordering is validated as
+`tGO <= tExitCenter <= tEnterTarget <= tTrialEnd` on chosen trials.
+Stage-1 derivatives created before these token, classification-provenance, and
+center-hold fields were added must be re-ingested from TDMS before they can be
+used by the current pipeline.
 Rows with `nOutcome == 7003` are retained for provenance but must have
 `tGO == 0` and `nChoiceMade == 0`, consistent with a trial that never started.
 
@@ -179,6 +193,32 @@ SPD fields missing. The 15-row SPD sensitivity field is missing for short logs.
 QC columns identify started trials, choices, no-responses, DT anticipations,
 SPD availability, valid design-time alignment, and primary-analysis
 eligibility. Never-started rows remain present with missing decision features.
+
+Task rows also carry the fields the roadmap analyses consume:
+
+- `choice_side` and `correct_side` — chosen and correct target, missing when
+  no choice was made.
+- `initial_time_ms` — the LabVIEW session clock at trial onset. This is the
+  only field that recovers the order in which blocks were run: the filenames
+  carry a date but no time, `nTrialIndex` restarts at 1 in each run, and Fast
+  and Slow blocks interleave within a session.
+- `logged_spd_log_odds` — chosen-target evidence on the log-odds scale.
+- `token_directions`, `sp_design_early`, `sum_log_lr_design_early`,
+  `token_lead_at_decision`, `sum_log_lr_at_decision`, and
+  `sum_log_lr_saturated` — designed evidence referenced to the correct target.
+  `sum_log_lr_*` is the log posterior odds implied by Equation 1, which is the
+  cumulative log-likelihood ratio under equal priors. Certainty (success
+  probability exactly 0 or 1) has infinite log odds and is reported at
+  ±log 255, the most extreme non-degenerate state a 15-token game can reach,
+  with `sum_log_lr_saturated` set.
+- `outcome_label` — the LabVIEW `nOutcome` code as a name.
+
+The extended (roadmap) analyses read this table and write one derivative per
+analysis under the same `sub-group/beh` directory, named
+`sub-group_task-tokens_desc-<analysis>_beh.tsv` with a matching `<analysis>stats`
+table where the analysis has a group test. `docs/behavior_analysis_roadmap.md`
+lists the analysis names, and each sidecar records the roadmap item it
+implements.
 
 ## Preprocessed Raw Files
 

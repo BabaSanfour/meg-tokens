@@ -17,8 +17,8 @@ from meg_tokens.core import normalize_subject_id
 TRIAL_COLUMNS = [
     'nTrialIndex', 'sTrialClass', 'sTrialClassRaw', 'trial_class_source',
     'trial_class_rule', 'sp_design_correct', 'nInitialTime', 'nChoiceMade',
-    'nCorrectChoice', 'tGO', 'tEnterTarget', 'tTrialEnd',
-    'sTokenDirs', 'nTokenNum', 'nTokenDir', 'tTime', 'nProb',
+    'nCorrectChoice', 'tGO', 'tEnterCenter', 'tExitCenter', 'tEnterTarget',
+    'tTrialEnd', 'sTokenDirs', 'nTokenNum', 'nTokenDir', 'tTime', 'nProb',
     'token_log_rows', 'token_log_short', 'nOutcome'
 ]
 
@@ -129,20 +129,29 @@ def validate_behavior_dataframe(df: pd.DataFrame) -> None:
     # NaN handling for no-choice trials in add_run_metadata.
     chosen = df['nChoiceMade'] > 0
     invalid_order = chosen & (
-        (df['tGO'] > df['tEnterTarget']) |
+        (df['tGO'] > df['tExitCenter']) |
+        (df['tExitCenter'] > df['tEnterTarget']) |
         (df['tEnterTarget'] > df['tTrialEnd'])
     )
     if invalid_order.any():
         rows = df.loc[invalid_order, 'nTrialIndex'].tolist()
         raise ValueError(f"Invalid event ordering for trials: {rows}")
 
-def parse_single_trial(events_str: str) -> dict:
+def parse_single_trial(events_str: str, *, infer_random_classes: bool = True) -> dict:
     """
     Parses the Events property string from a single trial group.
-    
+
     Args:
         events_str: The raw semicolon or CRLF-separated events string.
-        
+        infer_random_classes: When True (default), random ('x') trials are
+            classified from the correct-target design profile. When False,
+            they stay unclassified and only recorded 'e'/'a'/'m' labels are
+            used. Inference can add easy and ambiguous trials but never
+            misleading ones -- no random trial in this dataset has the
+            correct target trailing after three jumps -- so it enriches two
+            classes of three. Opt out for a symmetric three-way comparison.
+            See docs/behavior_t0_1_nprob_trial_class.md section 3b.
+
     Returns:
         A dictionary of parsed trial metrics.
 
@@ -236,7 +245,13 @@ def parse_single_trial(events_str: str) -> dict:
     n_outcome = int(meta['nOutcome'])
     t_go = int(meta['tGO'])
     # tEnterTarget only exists once a target has actually been entered, so
-    # it is legitimately absent (not corrupted) on a skipped trial.
+    # it is legitimately absent (not corrupted) on a skipped trial. The same
+    # holds for the center-hold timestamps. tExitCenter is retained because it
+    # is the only field that could carry a movement duration
+    # (tEnterTarget - tExitCenter); see docs/behavior_qc_report.md for what it
+    # actually contains in this dataset.
+    t_enter_center = int(meta.get('tEnterCenter', 0))
+    t_exit_center = int(meta.get('tExitCenter', 0))
     t_enter_target = int(meta.get('tEnterTarget', 0))
     t_trial_end = int(meta['tTrialEnd'])
 
@@ -266,7 +281,11 @@ def parse_single_trial(events_str: str) -> dict:
         trial_class_source = 'design'
         trial_class_rule = 'recorded_label'
     elif normalized_trial_class == 'x':
-        if sp_design_correct is None:
+        if not infer_random_classes:
+            s_trial_class = 0
+            trial_class_source = 'unclassified'
+            trial_class_rule = 'inference_disabled'
+        elif sp_design_correct is None:
             s_trial_class = 0
             trial_class_source = 'unclassified'
             trial_class_rule = 'no_correct_target'
@@ -336,6 +355,8 @@ def parse_single_trial(events_str: str) -> dict:
         'nChoiceMade': n_choice_made,
         'nCorrectChoice': n_correct_choice,
         'tGO': t_go,
+        'tEnterCenter': t_enter_center,
+        'tExitCenter': t_exit_center,
         'tEnterTarget': t_enter_target,
         'tTrialEnd': t_trial_end,
         'sTokenDirs': s_token_dirs,
@@ -348,13 +369,18 @@ def parse_single_trial(events_str: str) -> dict:
         'nOutcome': n_outcome,
     }
 
-def parse_tdms_file(file_path: str) -> pd.DataFrame:
+def parse_tdms_file(
+    file_path: str,
+    *,
+    infer_random_classes: bool = True,
+) -> pd.DataFrame:
     """
     Parses a complete TDMS file and extracts behavioral trial variables.
-    
+
     Args:
         file_path: Absolute path to the TDMS file.
-        
+        infer_random_classes: See :func:`parse_single_trial`.
+
     Returns:
         A pandas DataFrame containing parsed trial data.
     """
@@ -370,7 +396,10 @@ def parse_tdms_file(file_path: str) -> pd.DataFrame:
             missing_events.append(group.name)
             continue
         try:
-            trial_dict = parse_single_trial(events_str)
+            trial_dict = parse_single_trial(
+                events_str,
+                infer_random_classes=infer_random_classes,
+            )
         except ValueError as error:
             raise ValueError(f"{file_path}: {error}") from error
         trial_data.append(trial_dict)

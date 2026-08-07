@@ -84,6 +84,8 @@ def test_batch_process_writes_behavior_derivative(tmp_path, monkeypatch):
         "nChoiceMade": [1, 0],
         "nCorrectChoice": [1, 2],
         "tGO": [1000, 2000],
+        "tEnterCenter": [0, 0],
+        "tExitCenter": [1400, 0],
         "tEnterTarget": [1400, 0],
         "tTrialEnd": [1700, 2100],
         "sTokenDirs": ["121", "212"],
@@ -96,7 +98,10 @@ def test_batch_process_writes_behavior_derivative(tmp_path, monkeypatch):
         "nOutcome": [0, 0],
     })
 
-    monkeypatch.setattr("meg_tokens.workflows.behavior.parse_tdms_file", lambda _: parsed_df)
+    monkeypatch.setattr(
+        "meg_tokens.workflows.behavior.parse_tdms_file",
+        lambda _, **kwargs: parsed_df,
+    )
 
     results = ingest_subject_behavior(
         "H1",

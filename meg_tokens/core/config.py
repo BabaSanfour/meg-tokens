@@ -33,6 +33,10 @@ class ProjectConfig:
     pipeline: str = "meg-tokens"
     behavior_ignore_files: tuple[str, ...] = ()
     subject_exclusions: tuple[str, ...] = ()
+    # Classify random ('x') trials from the correct-target design profile.
+    # Set False to use recorded 'e'/'a'/'m' labels only; see
+    # docs/behavior_t0_1_nprob_trial_class.md section 3b.
+    infer_random_classes: bool = True
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "data_root", Path(self.data_root).expanduser())

@@ -7,6 +7,10 @@ from importlib import import_module
 
 _EXPORTS = {
     "analyze_behavior": ("meg_tokens.workflows.behavior", "analyze_behavior"),
+    "analyze_behavior_extended": (
+        "meg_tokens.workflows.behavior_extended",
+        "analyze_behavior_extended",
+    ),
     "ingest_behavior": ("meg_tokens.workflows.behavior", "ingest_behavior"),
     "ingest_subject_behavior": ("meg_tokens.workflows.behavior", "ingest_subject_behavior"),
     "epoch_subjects": ("meg_tokens.workflows.preprocessing", "epoch_subjects"),

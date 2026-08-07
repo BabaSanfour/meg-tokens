@@ -84,6 +84,8 @@ def _write_stage_inputs(root, n_trials=2):
         "nChoiceMade": [1] * n_trials,
         "nCorrectChoice": [1] * n_trials,
         "tGO": [1000.0] * n_trials,
+        "tEnterCenter": [0.0] * n_trials,
+        "tExitCenter": [2500.0, 1500.0][:n_trials],
         "tEnterTarget": [2500.0, 1500.0][:n_trials],
         "tTrialEnd": [3000.0] * n_trials,
         "sTokenDirs": ["0"] * n_trials,

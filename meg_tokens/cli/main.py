@@ -64,6 +64,24 @@ def build_parser() -> argparse.ArgumentParser:
     _add_root_option(analyze)
     analyze.add_argument("--subjects", nargs="+")
 
+    extended = behavior_commands.add_parser(
+        "extended",
+        help=(
+            "Run the docs/behavior_analysis_roadmap.md analyses over the "
+            "staged trial-feature table."
+        ),
+    )
+    _add_root_option(extended)
+    extended.add_argument("--subjects", nargs="+")
+    extended.add_argument(
+        "--neural-metrics",
+        dest="neural_metrics",
+        help=(
+            "Optional subject-level MEG metrics table (TSV or CSV with a "
+            "'subject' column) to join into the individual-difference profile."
+        ),
+    )
+
     qc = behavior_commands.add_parser(
         "qc",
         help="Validate source TDMS success-probability and SPD profiles.",
@@ -458,6 +476,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             from meg_tokens.workflows.behavior import analyze_behavior
 
             result = analyze_behavior(project, subjects=args.subjects)
+        elif args.domain == "behavior" and args.behavior_command == "extended":
+            from meg_tokens.workflows.behavior_extended import analyze_behavior_extended
+
+            result = analyze_behavior_extended(
+                project,
+                subjects=args.subjects,
+                neural_metrics_path=args.neural_metrics,
+            )
         elif args.domain == "behavior" and args.behavior_command == "qc":
             from meg_tokens.validation import run_spd_validation
 

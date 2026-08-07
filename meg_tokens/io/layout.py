@@ -182,6 +182,26 @@ class DerivativeLayout:
             extension=".tsv",
         )
 
+    def behavior_analysis(self, name: str) -> Path:
+        """Return a group behavior derivative path for one named analysis.
+
+        Used by the extended (roadmap) behavioral analyses, each of which
+        writes its own subject-level table and, where it has one, a matching
+        group-statistics table.
+        """
+        if not name or not name.isalnum():
+            raise ValueError(
+                "Behavior analysis names must be non-empty and alphanumeric "
+                f"so that they stay valid BIDS description entities: {name!r}"
+            )
+        return self.path(
+            subject="group",
+            datatype="beh",
+            description=name,
+            suffix="beh",
+            extension=".tsv",
+        )
+
     def preprocessed_raw(
         self,
         *,

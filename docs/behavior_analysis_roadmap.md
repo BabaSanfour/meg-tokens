@@ -8,69 +8,130 @@ T0-1 through T0-5 are complete. Subject exclusions remain deferred until MEG
 quality review. The analyses below are not current blockers unless promoted
 into the active plan.
 
+## Status
+
+Tiers A and B are implemented, together with the parts of Tier C that do not
+require a hierarchical model fit or MEG source features. Run them with:
+
+```bash
+meg-tokens --config tokens.toml behavior analyze     # trial features
+meg-tokens --config tokens.toml behavior extended    # this roadmap
+```
+
+Each item below carries its implementing module and the derivative it writes
+(`sub-group_task-tokens_desc-<name>_beh.tsv`, plus `<name>stats` for the group
+test). Measured results on the 32-subject dataset are in
+`docs/behavior_roadmap_results.md`.
+
+Group inference throughout is two-stage: one fit inside each subject, then a
+test across subjects on the fitted values. For the balanced within-subject
+designs used here that is the random-effects equivalent of a mixed model with
+by-subject random slopes, and it keeps the package free of a modelling
+dependency. Tier C1-C2 are the exception and are deferred to HSSM.
+
 ## Tier A — direct, low-cost extensions
 
-1. **SPD distributions by class.** Add cumulative distributions for the existing
-   logged all-trial and 15-row sensitivity summaries.
-2. **DT distributions.** Add subject-level quantiles, skewness, and optionally
-   ex-Gaussian fits; means alone hide right-tail changes.
-3. **Condition × class breakdown.** Report DT and accuracy for all six cells and
-   test the interaction.
-4. **Choice-side bias.** Report left/right choice proportions and DT asymmetry;
-   use this to check balance in MEG’s choice cells.
-5. **Time-on-task effects.** Test block index and within-block position for
-   fatigue, learning, or condition-order effects.
-6. **Lapses and extreme DT review.** Summarize no-response outcomes (`7006`/`7011`)
-   and inspect extreme positive DTs; negative DT counts are already emitted.
+1. **SPD distributions by class.** ✅ `behavior/distributions.py` →
+   `spdcumulative`. Cumulative distributions for both the all-trial and 15-row
+   sensitivity views, reported pooled and as the mean of per-subject curves.
+2. **DT distributions.** ✅ `behavior/distributions.py` → `dtdistribution`.
+   Subject-level quantiles, skewness, kurtosis, and ex-Gaussian
+   (`mu`, `sigma`, `tau`) fits per condition, class, and condition × class
+   cell; class and Fast/Slow contrasts on each statistic.
+3. **Condition × class breakdown.** ✅ `behavior/design_effects.py` →
+   `conditionclass`. DT and accuracy for all six cells with a fully
+   within-subject 2 × 3 ANOVA (main effects and interaction, each against its
+   own `effect × subject` error term).
+4. **Choice-side bias.** ✅ `behavior/design_effects.py` → `choiceside`.
+   Left/right choice proportions, DT asymmetry, and accuracy asymmetry,
+   overall and per condition.
+5. **Time-on-task effects.** ✅ `behavior/design_effects.py` → `timeontask`,
+   `conditionorder`. Block order comes from the LabVIEW session clock
+   (`nInitialTime`), the only field that recovers it — Fast and Slow blocks
+   interleave, and `nTrialIndex` restarts at 1 in each run.
+6. **Lapses and extreme DT review.** ✅ `behavior/design_effects.py` →
+   `lapses`, `extremedt`, `extremedttrials`. No-response outcomes are
+   summarized by LabVIEW code; extreme DTs are flagged at a robust
+   median-absolute-deviation cutoff and listed by trial, never removed.
 
 ## Tier B — exploratory behavioral analyses
 
-1. **SumLogLR.** Compute cumulative log-likelihood evidence from token directions
-   as a continuous complement to class and SPD.
-2. **Accuracy-criterion decline.** Relate evidence at decision to the number of
-    tokens observed; a declining criterion is the behavioral signature of
-    urgency gating.
-3. **Psychophysical reverse correlation.** Regress choice on token direction at
-    each jump to estimate temporal weighting, and compare Fast/Slow kernels.
-4. **Conditional accuracy functions.** Plot accuracy across DT quantiles by
-    condition to distinguish threshold and drift changes.
-5. **Continuous evidence effects.** Regress DT and accuracy on early SP,
-    SumLogLR, or another continuous evidence measure instead of discarding
-    unclassified trials.
-6. **Robust post-error slowing.** Compare each post-error trial with the trial
-    immediately preceding its error, and split by condition to avoid slow-session
-    confounds.
-7. **Choice-history effects.** Test win-stay/lose-shift behavior, side
-    autocorrelation, and effects of previous class/outcome on current DT.
-8. **Response vigor.** Separate movement time (`tTrialEnd - tEnterTarget`) from
-    deliberation and test decision-speed/movement-speed covariation.
-9. **Individual differences.** Relate subject-level Fast/Slow SAT adjustment,
-    urgency slope, evidence sensitivity, accuracy, and MEG measures.
+1. **SumLogLR.** ✅ `behavior/evidence.py`, written into the trial-feature
+   table. Success probability is the exact posterior from Equation 1, so with
+   equal priors the cumulative log-likelihood ratio is its log posterior odds.
+   Certainty (SP exactly 0 or 1) is reported at ±log 255 — the most extreme
+   non-degenerate state the 15-token design can reach — and flagged, rather
+   than propagated as an infinity that would drop the most decisive trials
+   from every regression. `token_lead_at_decision` is the always-finite
+   sufficient statistic.
+2. **Accuracy-criterion decline.** ✅ `behavior/evidence.py` →
+   `criteriondecline`. Evidence at decision against the number of tokens
+   observed, fitted on both the probability and the log-odds scale.
+3. **Psychophysical reverse correlation.** ✅ `behavior/evidence.py` →
+   `reversecorrelation`. Per-subject logistic weights for each of the first
+   eight jumps, with tokens that fell after commitment coded as unseen, plus a
+   model-free kernel and a Fast/Slow comparison per jump.
+4. **Conditional accuracy functions.** ✅ `behavior/evidence.py` →
+   `conditionalaccuracy`. Accuracy across within-subject DT quantiles per
+   condition, with a test of the slope across bins.
+5. **Continuous evidence effects.** ✅ `behavior/evidence.py` →
+   `continuousevidence`. DT on evidence strength and accuracy on signed
+   evidence, over every task trial including the unclassified random ones.
+6. **Robust post-error slowing.** ✅ `behavior/sequential.py` → `posterror`.
+   `DT(error + 1) − DT(error − 1)`, with the classical contrast reported
+   beside it. Adjacency is broken by any gap in `run_trial_index`.
+7. **Choice-history effects.** ✅ `behavior/sequential.py` → `choicehistory`.
+   Win-stay/lose-shift, lag-1 side autocorrelation, and DT as a function of
+   the previous trial's outcome and class.
+8. **Response vigor.** ❌ **Dropped — not measurable, and not implemented.**
+   The recorded movement duration is `tEnterTarget − tExitCenter`, and LabVIEW
+   writes both timestamps from the same event, so it is 0 ms on 18,833 of
+   18,846 chosen trials. `tTrialEnd − tEnterTarget`, the interval this roadmap
+   originally proposed as movement time, is not a substitute: it is the
+   accelerated replay of the tokens that had not yet fallen and correlates
+   with DT at r = −0.98 within condition. The evidence is recorded once in
+   `docs/behavior_qc_report.md` §1, "Movement time is not recorded"; no code
+   computes it. Reinstate this item only against logs that resolve the two
+   timestamps separately.
+9. **Individual differences.** ✅ `behavior/individual.py` →
+   `individualprofile`, `individualcorrelations`. Subject-level SAT
+   adjustment, urgency slope, criterion slope, evidence sensitivity, accuracy,
+   and lapse rate, correlated pairwise. `--neural-metrics` joins any
+   subject-level MEG table into the same matrix.
 
 ## Tier C — model-based and MEG-linked analyses
 
-1. **Urgency-gating versus drift-diffusion models.** Fit both accounts of
-    non-stationary evidence and compare them with WAIC/LOO.
-2. **Hierarchical sequential-sampling models.** Prefer hierarchical estimation
-    for the approximately 350 trials per subject; HSSM is the primary candidate,
-    with `pyddm` as a lighter custom-bound alternative.
-3. **Explicit urgency extraction.** Estimate per-subject urgency slope and
-    intercept by condition from evidence-at-decision versus decision time.
-4. **Mixed-effects inference.** Use models such as
-    `DT ~ class * condition + (class * condition | subject)` alongside paired
-    t-tests retained for direct preprint comparison.
-5. **Model-based MEG regressors.** Join trial-level SP(t), SumLogLR(t), and
-    urgency(t) to source-space features for single-trial neural tests.
-6. **Monkey–human comparison.** Report DT by class, SPD by class, criterion
-    decline, and decision/movement-speed covariation using comparable statistics
-    from the Cisek-lab literature.
+1. **Urgency-gating versus drift-diffusion models.** ⏳ Deferred. Needs a
+   fitted sequential-sampling model and WAIC/LOO comparison; see item 2.
+2. **Hierarchical sequential-sampling models.** ⏳ Deferred. HSSM remains the
+   primary candidate for the roughly 350 trials per subject, with `pyddm` as a
+   lighter custom-bound alternative. Neither is a dependency of this package.
+3. **Explicit urgency extraction.** ✅ `behavior/evidence.py` → `urgency`.
+   Per-subject intercept and slope of evidence at decision against decision
+   time, by condition, on both evidence scales.
+4. **Mixed-effects inference.** ✅ via the two-stage design described above:
+   every roadmap regression is fitted within subject and tested across
+   subjects, and the paired t-tests are retained for direct preprint
+   comparison. A single-model `DT ~ class * condition + (class * condition |
+   subject)` fit would additionally need `statsmodels`.
+5. **Model-based MEG regressors.** ◐ Behavioral half done. The trial-feature
+   table carries SP at decision, `sum_log_lr_at_decision`,
+   `token_lead_at_decision`, and the per-subject urgency parameters, all keyed
+   by `subject`/`condition`/`run`/`run_trial_index`. The join to source-space
+   features waits on those features existing.
+6. **Monkey–human comparison.** ✅ `behavior/individual.py` →
+   `speciescomparison`. DT by class, SP at decision by class, and criterion
+   decline, each row naming the published measure it corresponds to. The
+   movement-related comparisons in that literature are omitted for the reason
+   given in B8. Values from the papers are not reproduced in code.
 
 ## Suggested order after the active plan
 
-1. Tier A items 1–2 for distributional descriptions.
-2. Tier A items 3–6 for behavioral QC and descriptive completeness.
-3. Tier B items 2, 3, and 8 as the highest-value mechanistic tests.
-4. Tier C once trial-level MEG regressors and group infrastructure are stable.
+1. ~~Tier A items 1–2 for distributional descriptions.~~ Done.
+2. ~~Tier A items 3–6 for behavioral QC and descriptive completeness.~~ Done.
+3. ~~Tier B items 2, 3, and 8~~ — 2 and 3 done; 8 dropped as unmeasurable.
+4. Tier C1–C2 and C5 once trial-level MEG regressors and group infrastructure
+   are stable.
 
 ## References
 

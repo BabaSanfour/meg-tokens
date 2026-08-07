@@ -13,6 +13,13 @@ pipeline = "meg-tokens"
 # empty until the four preprint exclusions are confirmed.
 subject_exclusions = []
 
+# Classify random ('x') trials from the correct-target design profile.
+# Default true. Set false to use recorded 'e'/'a'/'m' labels only: inference
+# can add easy and ambiguous trials but never misleading ones (no random
+# trial has the correct target trailing after three jumps), so it enriches
+# two classes of three. See docs/behavior_t0_1_nprob_trial_class.md § 3b.
+infer_random_classes = true
+
 # TDMS files under data_root/tdms that are deliberately NOT ingested. Each is
 # a short aborted/practice block whose trials do not belong to any named run;
 # all three were verified against their same-day siblings (they overlap no

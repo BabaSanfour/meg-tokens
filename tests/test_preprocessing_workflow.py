@@ -44,6 +44,8 @@ def test_epoch_subjects_consumes_staged_raw_and_behavior(tmp_path):
             "nChoiceMade": [1, 2],
             "nCorrectChoice": [1, 2],
             "tGO": [1000, 2000],
+            "tEnterCenter": [0, 0],
+            "tExitCenter": [1400, 2400],
             "tEnterTarget": [1400, 2400],
             "tTrialEnd": [1600, 2600],
             "sTokenDirs": ["121", "212"],
