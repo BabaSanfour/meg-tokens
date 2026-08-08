@@ -1,6 +1,7 @@
 """BIDS-anat raw layer, tested against the real FreeSurfer reconstructions.
 
-Set ``MEG_TOKENS_SUBJECTS_DIR`` to the project's ``subjects_dir`` to run.
+Point ``MEG_TOKENS_DATA_ROOT`` at the project's ``data_root`` to run --
+``subjects_dir`` defaults to ``data_root/IRM``, same as ``ProjectConfig``.
 """
 
 import os
@@ -13,9 +14,10 @@ from meg_tokens.meg.anat_bids import RAW_T1_RELATIVE_PATH, discover_anat, write_
 
 @pytest.fixture()
 def real_subjects_dir():
-    root = os.environ.get("MEG_TOKENS_SUBJECTS_DIR")
-    if not root:
-        pytest.skip("Set MEG_TOKENS_SUBJECTS_DIR to the FreeSurfer subjects_dir to run this test.")
+    data_root = os.environ.get("MEG_TOKENS_DATA_ROOT")
+    if not data_root:
+        pytest.skip("Set MEG_TOKENS_DATA_ROOT to the project's data_root to run this test.")
+    root = os.path.join(data_root, "IRM")
     if not os.path.isdir(os.path.join(root, "H02", "mri")):
         pytest.skip(f"Real FreeSurfer subjects_dir not available under {root}")
     return root

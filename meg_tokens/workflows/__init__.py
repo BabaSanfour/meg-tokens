@@ -10,9 +10,9 @@ _EXPORTS = {
         "meg_tokens.workflows.behavior_analysis",
         "analyze_behavior",
     ),
-    "analyze_behavior_extended": (
-        "meg_tokens.workflows.behavior_extended",
-        "analyze_behavior_extended",
+    "analyze_behavior_characterization": (
+        "meg_tokens.workflows.behavior_characterization",
+        "analyze_behavior_characterization",
     ),
     "ingest_behavior": (
         "meg_tokens.workflows.behavior_ingest",

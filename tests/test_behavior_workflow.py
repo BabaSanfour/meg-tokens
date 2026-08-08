@@ -8,12 +8,12 @@ from meg_tokens.cli import main
 from meg_tokens.core import ProjectConfig
 from meg_tokens.io import DerivativeLayout, save_table, sidecar_path
 from meg_tokens.workflows import analyze_behavior, ingest_behavior
-from meg_tokens.workflows.behavior_extended import (
+from meg_tokens.workflows.behavior_characterization import (
     ROADMAP_ITEMS,
-    analyze_behavior_extended,
+    analyze_behavior_characterization,
 )
 
-from tests.behavior.factories import stage_behavior
+from tests.behavior.factories import stage_behavior, stage_raw_behavior
 
 
 def _behavior_table(subject, condition, run, enter_times, choices, correct):
@@ -171,28 +171,44 @@ def test_analyze_behavior_applies_configured_subject_exclusions(tmp_path):
 
 def test_ingest_behavior_dry_run_declares_outputs(tmp_path):
     project = ProjectConfig(data_root=tmp_path)
-    subject_dir = project.behavior_root / "H01"
-    subject_dir.mkdir(parents=True)
-    (subject_dir / "H1Slow1_180131.tdms").write_text("", encoding="utf-8")
+    stage_raw_behavior(project.bids_root, subject="H01", condition="Slow", run="1")
 
     result = ingest_behavior(project, dry_run=True)
 
     assert result.stage == "behavior_ingestion"
     assert result.settings["n_runs"] == 1
+    assert result.settings["subjects"] == ["H01"]
     assert result.outputs[0].name == "sub-H01_task-tokens_run-1_desc-slow_beh.tsv"
     assert not result.outputs[0].exists()
+
+
+def test_ingest_behavior_requires_stage0_to_have_run(tmp_path):
+    """Stage 1 reads the raw BIDS layer, so an unstaged dataset is a missing
+    prerequisite rather than a dataset with no behavior."""
+    project = ProjectConfig(data_root=tmp_path)
+    project.bids_root.mkdir(parents=True)
+
+    with pytest.raises(FileNotFoundError, match="No staged subject behavior"):
+        ingest_behavior(project, dry_run=True)
+
+
+def _write_tokens_toml(tmp_path, data_root):
+    config_path = tmp_path / "tokens.toml"
+    config_path.write_text(f'[project]\ndata_root = "{data_root}"\n', encoding="utf-8")
+    return config_path
 
 
 def test_unified_cli_runs_behavior_analysis(tmp_path, capsys):
     project = ProjectConfig(data_root=tmp_path)
     _write_behavior_inputs(project.bids_root)
+    config_path = _write_tokens_toml(tmp_path, tmp_path)
 
     exit_code = main(
         [
+            "--config",
+            str(config_path),
             "behavior",
             "analyze",
-            "--data-root",
-            str(tmp_path),
         ]
     )
 
@@ -200,11 +216,14 @@ def test_unified_cli_runs_behavior_analysis(tmp_path, capsys):
     assert str(DerivativeLayout(project.bids_root).behavior_summary()) in capsys.readouterr().out
 
 
-def test_unified_behavior_qc_help_is_available(capsys):
+@pytest.mark.parametrize("command", ["ingest", "analyze", "characterization", "qc"])
+def test_unified_behavior_help_is_side_effect_free(command, capsys):
     with pytest.raises(SystemExit) as error:
-        main(["behavior", "qc", "--help"])
+        main(["behavior", command, "--help"])
     assert error.value.code == 0
-    capsys.readouterr()
+    output = capsys.readouterr().out
+    if command != "qc":  # qc takes no arguments beyond --help
+        assert "--subjects" in output
 
 
 def test_unified_cli_runs_behavior_qc(tmp_path, monkeypatch, capsys):
@@ -215,12 +234,13 @@ def test_unified_cli_runs_behavior_qc(tmp_path, monkeypatch, capsys):
         lambda *args, **kwargs: (summary, details),
     )
 
+    config_path = _write_tokens_toml(tmp_path, tmp_path)
     exit_code = main(
         [
+            "--config",
+            str(config_path),
             "behavior",
             "qc",
-            "--data-root",
-            str(tmp_path),
         ]
     )
 
@@ -228,13 +248,6 @@ def test_unified_cli_runs_behavior_qc(tmp_path, monkeypatch, capsys):
     output = capsys.readouterr().out
     assert "log_rows" in output
     assert "Validated trials: 3" in output
-
-
-def test_unified_cli_help_is_side_effect_free(capsys):
-    with pytest.raises(SystemExit) as error:
-        main(["behavior", "ingest", "--help"])
-    assert error.value.code == 0
-    assert "--data-root" in capsys.readouterr().out
 
 
 def test_unified_meg_cli_help_is_available(capsys):
@@ -320,17 +333,17 @@ def test_unified_validation_help_is_available(capsys):
     assert "--comparison-config" in capsys.readouterr().out
 
 
-# --- extended analysis pipeline ----------------------------------------------
+# --- Stage 2b: behavioral characterization analyses ---------------------------
 
 
-def test_analyze_behavior_extended_writes_every_roadmap_table(tmp_path):
+def test_analyze_behavior_characterization_writes_every_roadmap_table(tmp_path):
     project = ProjectConfig(data_root=tmp_path)
     stage_behavior(project.bids_root)
     analyze_behavior(project)
 
-    result = analyze_behavior_extended(project)
+    result = analyze_behavior_characterization(project)
 
-    assert result.stage == "behavior_extended_analysis"
+    assert result.stage == "behavior_characterization_analysis"
     assert result.settings["n_subjects"] == 3
     layout = DerivativeLayout(project.bids_root)
     for name in ROADMAP_ITEMS:
@@ -344,10 +357,10 @@ def test_analyze_behavior_extended_writes_every_roadmap_table(tmp_path):
     assert set(criterion["response"]) == {"logged_spd", "logged_spd_log_odds"}
 
 
-def test_analyze_behavior_extended_requires_staged_trial_features(tmp_path):
+def test_analyze_behavior_characterization_requires_staged_trial_features(tmp_path):
     project = ProjectConfig(data_root=tmp_path)
     with pytest.raises(FileNotFoundError, match="behavior analyze"):
-        analyze_behavior_extended(project)
+        analyze_behavior_characterization(project)
 
 
 def test_behavior_analysis_paths_are_named_from_the_analysis(tmp_path):

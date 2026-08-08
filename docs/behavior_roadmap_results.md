@@ -6,7 +6,7 @@ produced by:
 ```bash
 meg-tokens --config tokens.toml behavior ingest
 meg-tokens --config tokens.toml behavior analyze
-meg-tokens --config tokens.toml behavior extended
+meg-tokens --config tokens.toml behavior characterization
 ```
 
 All values below are **N = 32 with no subject exclusions applied**

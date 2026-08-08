@@ -19,7 +19,6 @@ runs the rest of the suite.
 """
 
 import os
-from pathlib import Path
 
 import numpy as np
 import pytest
@@ -39,16 +38,9 @@ from meg_tokens.meg.raw_staging import (
 )
 
 _DATA_ROOT = os.environ.get("MEG_TOKENS_DATA_ROOT")
-_PROJECT = (
-    ProjectConfig(
-        data_root=_DATA_ROOT,
-        # The project TOML declares this; the real layout keeps the FreeSurfer
-        # reconstructions alongside raw/ and tdms/ under data_root.
-        subjects_dir=os.environ.get("MEG_TOKENS_SUBJECTS_DIR", Path(_DATA_ROOT) / "IRM"),
-    )
-    if _DATA_ROOT
-    else None
-)
+# subjects_dir defaults to data_root/IRM, the real layout, so nothing else
+# needs to be told about it here.
+_PROJECT = ProjectConfig(data_root=_DATA_ROOT) if _DATA_ROOT else None
 
 requires_real_data = pytest.mark.skipif(
     _PROJECT is None
@@ -141,6 +133,17 @@ def test_discover_noise_session_and_headshape_find_the_real_companions(project):
     # A date with no acquisition has neither.
     assert discover_noise_session(project.raw_meg_root, "H02", "19000101") is None
     assert discover_headshape(project.raw_meg_root, "H02", "19000101") is None
+
+
+@requires_real_data
+def test_discover_noise_session_redirects_the_known_corrupt_recording(project):
+    # NOISE_noise_20181206_01.ds (H26/H27's shared empty-room) has a corrupt
+    # .hc file -- reading it raises RuntimeError("HPI information not
+    # available") -- so KNOWN_NOISE_OVERRIDES points this date at the valid
+    # operator retake, _02.ds, instead.
+    found = discover_noise_session(project.raw_meg_root, "H26", "20181206")
+    assert found is not None
+    assert found.name == "NOISE_noise_20181206_02.ds"
 
 
 @requires_real_data

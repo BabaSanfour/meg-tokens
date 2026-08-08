@@ -181,9 +181,9 @@ class DerivativeLayout:
     def behavior_analysis(self, name: str) -> Path:
         """Return a group behavior derivative path for one named analysis.
 
-        Used by the extended (roadmap) behavioral analyses, each of which
-        writes its own subject-level table and, where it has one, a matching
-        group-statistics table.
+        Used by the Stage 2b behavioral characterization analyses, each of
+        which writes its own subject-level table and, where it has one, a
+        matching group-statistics table.
         """
         if not name or not name.isalnum():
             raise ValueError(

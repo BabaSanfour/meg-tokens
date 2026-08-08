@@ -15,7 +15,7 @@ from typing import Optional, Sequence
 
 import pandas as pd
 
-from meg_tokens.behavior.tdms import FILENAME_RE
+from meg_tokens.behavior.tdms import FILENAME_RE, parse_tdms_filename
 from meg_tokens.behavior.tdms_bids import write_beh_bids
 from meg_tokens.core import ProjectConfig, RawStagingConfig, WorkflowResult, normalize_subject_id
 from meg_tokens.io import DerivativeLayout, save_table
@@ -155,20 +155,53 @@ def plan_raw_staging(
 
 
 def _matching_tdms_files(project: ProjectConfig, subject: str) -> list[Path]:
-    """Every strictly-named TDMS run file for one subject.
+    """Every TDMS run file for one subject, or a refusal to guess.
 
-    Skips anything not matching the project's TDMS filename contract
-    (``meg_tokens.behavior.tdms.FILENAME_RE`` -- the same pattern
-    ``behavior ingest`` requires) rather than raising: unlike ingestion,
-    this raw-BIDS export has nothing that depends on a complete run set,
-    so an odd non-run file (e.g. a `temp_*.tdms` scratch export) is simply
-    not part of what gets staged. A missing subject directory glob()s to
-    an empty list rather than raising, for the same reason.
+    This is the only gate between the raw logs and the dataset: Stage 1 now
+    reads the staged BIDS tables rather than the ``.tdms`` files, so a log
+    dropped here is a log that never reaches any analysis. Both guards that
+    used to live in ``behavior ingest`` therefore apply at this boundary
+    instead of downstream of it.
+
+    A filename not matching the project's TDMS contract
+    (``meg_tokens.behavior.tdms.FILENAME_RE``) raises rather than being
+    skipped -- a misnamed real run and a scratch export look identical to a
+    glob, and only one of them is safe to ignore. Excluding a file is an
+    explicit act: name it in ``behavior_ignore_files`` in the project TOML,
+    where the reason can be recorded beside it.
+
+    Two files claiming the same ``(condition, run)`` likewise raise: they
+    resolve to one BIDS path, so the second would silently overwrite the
+    first and the loss would be invisible afterwards.
     """
-    subject_dir = Path(project.behavior_root) / normalize_subject_id(subject)
-    return sorted(
-        path for path in subject_dir.glob("*.tdms") if FILENAME_RE.match(path.name)
-    )
+    subject = normalize_subject_id(subject)
+    subject_dir = Path(project.behavior_root) / subject
+    ignored = set(project.behavior_ignore_files)
+
+    candidates = [
+        path for path in sorted(subject_dir.glob("*.tdms")) if path.name not in ignored
+    ]
+    unmatched = [path.name for path in candidates if not FILENAME_RE.match(path.name)]
+    if unmatched:
+        raise ValueError(
+            f"Refusing to silently skip .tdms files with non-canonical names under "
+            f"{subject_dir}: {unmatched}. Rename them to match "
+            "H<subject><Condition><run>_<YYMMDD>.tdms, or list their exact filenames "
+            "in behavior_ignore_files in the project TOML to exclude them explicitly."
+        )
+
+    seen: dict[tuple[str, str], Path] = {}
+    for path in candidates:
+        run_info = parse_tdms_filename(path.name)
+        key = (run_info.condition, run_info.run)
+        if key in seen:
+            raise ValueError(
+                f"Duplicate TDMS run for {subject} {key[0]}{key[1]}: both "
+                f"{seen[key].name} and {path.name} stage to the same BIDS path. "
+                "Resolve the collision before staging."
+            )
+        seen[key] = path
+    return candidates
 
 
 def _write_headshape(project: ProjectConfig, subject: str, eeg_path: Path) -> Path:

@@ -60,7 +60,18 @@ _HIST_DURATION_RE = re.compile(r"Trial duration:\s*(\S+)")
 _HIST_DATE_RE = re.compile(
     r"DATE:\s*\n(?P<date>[0-9]{1,2}-[A-Za-z]{3}-[0-9]{4}\s+[0-9]{1,2}:[0-9]{2})"
 )
-_NOISE_TEMPLATE = "NOISE_noise_{date}_01.ds"
+_NOISE_TEMPLATE = "NOISE_noise_{date}_{index:02d}.ds"
+
+# Dates where the legacy-convention NOISE_noise_<date>_01.ds recording exists
+# on media but is corrupt -- CTF failed to write head coil positions, so any
+# read of it unconditionally raises `RuntimeError: HPI information not
+# available`. An operator retake at a different index is used instead.
+# 20181206 (H26/H27, shared empty-room): _01.ds's .hc reads "Unable to make
+# head coil file. Reason: no data in this DataSet."; _02.ds has a complete,
+# valid .hc and is the recording actually used for source analysis.
+KNOWN_NOISE_OVERRIDES = {
+    "20181206": 2,
+}
 _HEADSHAPE_TEMPLATE = "{subject}_DDM-tthiery_{date}_HEADSHAPE.eeg"
 
 # Pinned per-run session mappings for H01 and H05, the two subjects with an
@@ -289,8 +300,13 @@ def discover_raw_sessions(
 
 
 def discover_noise_session(raw_root: Path, subject: str, date: str) -> Optional[Path]:
-    """The one legacy-convention empty-room recording for a subject's date, if any."""
-    candidate = Path(raw_root) / _NOISE_TEMPLATE.format(date=date)
+    """The one legacy-convention empty-room recording for a subject's date, if any.
+
+    Defaults to index 1 (``NOISE_noise_<date>_01.ds``); ``KNOWN_NOISE_OVERRIDES``
+    redirects specific dates whose default recording is corrupt on media.
+    """
+    index = KNOWN_NOISE_OVERRIDES.get(date, 1)
+    candidate = Path(raw_root) / _NOISE_TEMPLATE.format(date=date, index=index)
     return candidate if candidate.exists() else None
 
 
@@ -305,7 +321,7 @@ def load_behavior_runs(behavior_root: Path, subject: str) -> List[BehaviorRun]:
     """Chronologically sorted behavior runs for a subject, read straight from TDMS.
 
     Parses every strictly-named ``*.tdms`` run file under the subject's
-    input directory directly (``parse_tdms_file(..., infer_random_classes=
+    input directory directly (``parse_tdms_file`` (
     False)``, the same low-level parser ``meg_tokens.behavior.tdms_bids``
     uses) rather than reading ``behavior ingest``'s derivatives output --
     Stage 0 has no dependency on any other stage having run first. Files
@@ -321,7 +337,7 @@ def load_behavior_runs(behavior_root: Path, subject: str) -> List[BehaviorRun]:
         if not FILENAME_RE.match(tdms_path.name):
             continue
         run_info = parse_tdms_filename(tdms_path.name)
-        df = parse_tdms_file(str(tdms_path), infer_random_classes=False)
+        df = parse_tdms_file(str(tdms_path))
         ordered = df.sort_values("nTrialIndex")["nInitialTime"].to_numpy(dtype=float)
         runs.append(
             BehaviorRun(
@@ -855,7 +871,12 @@ def match_subject_assets(
     return [
         _asset_result(
             subject, "noise", discover_noise_session(raw_root, subject, date),
-            date=date, missing_note=f"No NOISE_noise_{date}_01.ds found.",
+            date=date,
+            missing_note=(
+                "No "
+                + _NOISE_TEMPLATE.format(date=date, index=KNOWN_NOISE_OVERRIDES.get(date, 1))
+                + " found."
+            ),
         ),
         _asset_result(
             subject, "headshape", discover_headshape(raw_root, subject, date),

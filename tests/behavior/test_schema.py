@@ -5,7 +5,9 @@ import pandas as pd
 import pytest
 
 from meg_tokens.behavior.schema import (
+    CLASSIFICATION_COLUMNS,
     OUTCOME_NEVER_STARTED,
+    RAW_TRIAL_COLUMNS,
     TRIAL_COLUMNS,
     TRIAL_FEATURE_COLUMNS,
     behavior_table_converters,
@@ -16,7 +18,7 @@ from meg_tokens.behavior.schema import (
     validate_trial_features,
 )
 
-from tests.behavior.factories import stage1_run, trial_features
+from tests.behavior.factories import raw_run, stage1_run, trial_features
 
 
 # --- token directions ---------------------------------------------------------
@@ -146,6 +148,41 @@ def test_validate_behavior_table_declares_the_full_stage1_column_set():
     for column in TRIAL_COLUMNS:
         with pytest.raises(ValueError, match="missing required columns"):
             validate_behavior_table(table.drop(columns=[column]))
+
+
+# --- the raw contract: the same table minus the judgement ---------------------
+
+
+def test_the_raw_contract_is_the_stage1_contract_without_the_classification():
+    assert set(TRIAL_COLUMNS) - set(RAW_TRIAL_COLUMNS) == set(CLASSIFICATION_COLUMNS)
+    assert len(RAW_TRIAL_COLUMNS) == len(TRIAL_COLUMNS) - len(CLASSIFICATION_COLUMNS)
+
+
+def test_a_raw_table_validates_without_a_trial_class():
+    """A staged raw table has not been through classification, so requiring
+    those columns would reject a correct file."""
+    table = raw_run()
+
+    validate_behavior_table(table, require_classification=False)
+
+
+@pytest.mark.parametrize("column", CLASSIFICATION_COLUMNS)
+def test_the_stage1_contract_still_demands_every_classification_column(column):
+    table = stage1_run(raw_rts=[900.0]).drop(columns=[column])
+
+    validate_behavior_table(table, require_classification=False)
+    with pytest.raises(ValueError, match=column):
+        validate_behavior_table(table)
+
+
+def test_relaxing_the_classification_requirement_relaxes_nothing_else():
+    """Every other rule concerns a transcribed field, so it applies to a raw
+    table exactly as it does to a derivative."""
+    table = raw_run()
+    table.at[0, "nProb"] = 0.6
+
+    with pytest.raises(ValueError, match="nProb must contain a sequence at row 0"):
+        validate_behavior_table(table, require_classification=False)
 
 
 def test_validate_behavior_table_rejects_a_scalar_in_a_sequence_field():

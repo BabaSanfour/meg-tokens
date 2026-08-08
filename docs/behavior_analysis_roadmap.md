@@ -7,7 +7,7 @@ require a hierarchical model fit or MEG source features. Run them with:
 
 ```bash
 meg-tokens --config tokens.toml behavior analyze     # trial features
-meg-tokens --config tokens.toml behavior extended    # this roadmap
+meg-tokens --config tokens.toml behavior characterization    # this roadmap
 ```
 
 Each item below carries its implementing module and the derivative it writes

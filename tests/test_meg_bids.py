@@ -26,9 +26,10 @@ def test_combined_event_id_respects_subject_overrides():
 
 @pytest.fixture()
 def real_raw_root():
-    root = os.environ.get("MEG_TOKENS_RAW_ROOT")
-    if not root:
-        pytest.skip("Set MEG_TOKENS_RAW_ROOT to the raw CTF session root to run this test.")
+    data_root = os.environ.get("MEG_TOKENS_DATA_ROOT")
+    if not data_root:
+        pytest.skip("Set MEG_TOKENS_DATA_ROOT to the project's data_root to run this test.")
+    root = os.path.join(data_root, "raw")
     session = os.path.join(root, "H02_DDM-tthiery_20180213_03.ds")
     noise = os.path.join(root, "NOISE_noise_20180213_01.ds")
     if not (os.path.exists(session) and os.path.exists(noise)):

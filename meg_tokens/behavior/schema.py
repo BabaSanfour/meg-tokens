@@ -23,6 +23,24 @@ TRIAL_COLUMNS = [
     "token_log_rows", "token_log_short", "nOutcome",
 ]
 
+# Columns produced by meg_tokens.behavior.classification, not by the TDMS
+# parser. They record a judgement (which class a trial recorded as 'x'
+# belongs to) rather than something LabVIEW wrote, so the raw BIDS layer
+# omits them and the derivative stage adds them back.
+CLASSIFICATION_COLUMNS: Final[tuple[str, ...]] = (
+    "sTrialClass",
+    "trial_class_source",
+    "trial_class_rule",
+)
+
+# What a raw behavioral table carries: every transcribed field, and nothing
+# this project inferred. `sTrialClassRaw` (the recorded label) and
+# `sp_design_correct` (the designed profile) both survive here, which is what
+# lets a derivative be regenerated from the raw layer alone.
+RAW_TRIAL_COLUMNS = [
+    column for column in TRIAL_COLUMNS if column not in CLASSIFICATION_COLUMNS
+]
+
 OUTCOME_NEVER_STARTED: Final[int] = 7003
 
 SEQUENCE_COLUMNS: Final[dict[str, type]] = {
@@ -285,13 +303,18 @@ def behavior_table_converters() -> dict[str, object]:
     return converters
 
 
-def validate_behavior_table(table: pd.DataFrame) -> None:
-    """Validate the complete canonical Stage 1 behavioral contract.
+def validate_behavior_table(table: pd.DataFrame, *, require_classification: bool = True) -> None:
+    """Validate the canonical behavioral contract.
 
     Parameters
     ----------
     table
-        Deserialized Stage 1 table for one behavioral run.
+        Deserialized table for one behavioral run.
+    require_classification
+        Whether ``CLASSIFICATION_COLUMNS`` must be present. False validates a
+        raw table (``RAW_TRIAL_COLUMNS``), whose trial classes have not been
+        assigned yet; every other rule is identical, since they all concern
+        transcribed fields.
 
     Raises
     ------
@@ -308,7 +331,8 @@ def validate_behavior_table(table: pd.DataFrame) -> None:
     trials. ``sp_design_correct`` is the only optional sequence because a
     correct target may be unavailable in the source trial.
     """
-    missing = [column for column in TRIAL_COLUMNS if column not in table.columns]
+    required = TRIAL_COLUMNS if require_classification else RAW_TRIAL_COLUMNS
+    missing = [column for column in required if column not in table.columns]
     if missing:
         raise ValueError(f"Behavior table is missing required columns: {missing}")
 

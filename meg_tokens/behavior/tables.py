@@ -92,6 +92,26 @@ def read_behavior_table(path: str | Path) -> pd.DataFrame:
     return table
 
 
+def read_raw_behavior_table(path: str | Path) -> pd.DataFrame:
+    """Load one staged raw behavioral table from ``BIDS/sub-*/beh/``.
+
+    Same deserialization as :func:`read_behavior_table`, but validated
+    against ``RAW_TRIAL_COLUMNS``: a raw table has not been through
+    :func:`meg_tokens.behavior.classification.classify_trials`, so it
+    carries no ``sTrialClass``/``trial_class_source``/``trial_class_rule``
+    and requiring them would reject a correct file.
+
+    Raises
+    ------
+    ValueError
+        If serialized values or the resulting table violate the raw
+        behavioral contract.
+    """
+    table = load_table(path, converters=behavior_table_converters())
+    validate_behavior_table(table, require_classification=False)
+    return table
+
+
 def read_trial_features(path: str | Path) -> pd.DataFrame:
     """Load the canonical analysis-ready trial-feature derivative.
 

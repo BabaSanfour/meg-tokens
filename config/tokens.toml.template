@@ -8,7 +8,8 @@
 #             (pipeline outputs)
 data_root = "/path/to/meg-tokens"
 
-subjects_dir = "/path/to/meg-tokens/IRM"
+# Defaults to data_root/IRM; set only to override.
+# subjects_dir = "/path/to/meg-tokens/IRM"
 trans_dir = "/path/to/trans-files"
 noise_dir = "/path/to/noise-recordings"
 task = "tokens"

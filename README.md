@@ -24,22 +24,22 @@ This repository contains the analysis scripts and a refactored Python library fo
 
 ## Pipeline Execution Flow & Module Map
 
-The analysis pipeline is designed to be executed sequentially from raw data ingestion to group-level parcellation and export. 
+The analysis pipeline is designed to be executed sequentially from raw data ingestion to group-level parcellation and export. This is a module-level map, in pipeline order; the numbered `Stage N` sections under [Running the Pipeline](#running-the-pipeline-cli) are the one authoritative stage numbering used by both the CLI walkthrough and the derivative naming — this table does not duplicate those numbers to avoid the two drifting apart.
 
-| Step | Stage | Module | Purpose |
-| :--- | :--- | :--- | :--- |
-| **0** | **Raw BIDSification** | [`raw_staging.py`](meg_tokens/meg/raw_staging.py), [`meg_bids.py`](meg_tokens/meg/meg_bids.py), [`tdms_bids.py`](meg_tokens/behavior/tdms_bids.py) | Matches raw CTF media sessions to behavior runs and copies `BIDS/sub-*/meg` + writes `BIDS/sub-*/beh`. |
-| **0b** | **Anatomical BIDSification** | [`anat_bids.py`](meg_tokens/meg/anat_bids.py) | Copies each subject's FreeSurfer T1 into `BIDS/sub-*/anat`. |
-| **1** | **Behavioral Log Parsing** | [`tdms.py`](meg_tokens/behavior/tdms.py), [`schema.py`](meg_tokens/behavior/schema.py), [`behavior_ingest.py`](meg_tokens/workflows/behavior_ingest.py) | Parses raw LabVIEW `.tdms` logs, validates the behavioral contract, and writes behavior derivatives. |
-| **2** | **Behavioral Metrics Extraction** | [`features.py`](meg_tokens/behavior/features.py) and [`performance.py`](meg_tokens/behavior/analyses/performance.py) | Computes choice RTs, accuracy, difficulty levels, and behavioral summaries. |
-| **3** | **Behavioral Reporting** | [`behavior.py`](meg_tokens/reports/behavior.py) | Renders performance diagnostics and RT distributions. |
-| **4** | **MEG Preprocessing & Filtering** | [`preprocessing.py`](meg_tokens/meg/preprocessing.py) | Loads raw CTF MEG, applies filters, performs ICA decomposition, and coregisters head points. |
-| **5** | **Epoch Extraction & Event Alignment** | [`epoching.py`](meg_tokens/meg/epoching.py) | Segments MEG data into trial epochs aligned to triggers and behavior. |
-| **6** | **Workflow Orchestration** | [`Snakefile`](workflow/Snakefile) | Schedules subjects, runs, shared source models, features, analyses, and reports. |
-| **7** | **Neural Source Localization** | [`sources.py`](meg_tokens/meg/sources.py) | Computes noise covariance, BEM models, sets up source spaces, and applies minimum-norm inverses. |
-| **8** | **Source-Space Time-Frequency Power** | [`time_frequency.py`](meg_tokens/features/time_frequency.py) | Extracts band power from source estimates using modern MNE calls. |
-| **9** | **ERP Slicing, Parcellation, & Export** | [`erp.py`](meg_tokens/features/erp.py) | Aligns, pads, parcellates, and exports labeled `.npy` arrays with JSON sidecars. |
-| **10** | **Group Analyses** | [`analysis/`](meg_tokens/analysis) | Provides permutation statistics, decoding, PCA, and dPCA estimators. |
+| Stage | Module | Purpose |
+| :--- | :--- | :--- |
+| **Raw BIDSification** | [`raw_staging.py`](meg_tokens/meg/raw_staging.py), [`meg_bids.py`](meg_tokens/meg/meg_bids.py), [`anat_bids.py`](meg_tokens/meg/anat_bids.py), [`tdms_bids.py`](meg_tokens/behavior/tdms_bids.py) | Identifies which raw session is which run, then stages the whole raw layer: `BIDS/sub-*/{meg,beh,anat}` and `sub-emptyroom`. |
+| **Behavioral Log Parsing** | [`classification.py`](meg_tokens/behavior/classification.py), [`schema.py`](meg_tokens/behavior/schema.py), [`behavior_ingest.py`](meg_tokens/workflows/behavior_ingest.py) | Reads the staged raw behavior, infers trial classes, validates the Stage 1 contract, and writes behavior derivatives. |
+| **Behavioral Metrics Extraction** | [`features.py`](meg_tokens/behavior/features.py) and [`performance.py`](meg_tokens/behavior/analyses/performance.py) | Computes choice RTs, accuracy, difficulty levels, and behavioral summaries. |
+| **Behavioral Characterization Analyses** | [`behavior_characterization.py`](meg_tokens/workflows/behavior_characterization.py) and [`behavior/analyses/`](meg_tokens/behavior/analyses) | Runs the full `docs/behavior_analysis_roadmap.md` battery over the trial-feature table: distributions, design/session effects, evidence, criterion decline, individual differences, and more. |
+| **Behavioral Reporting** | [`behavior.py`](meg_tokens/reports/behavior.py) | Renders performance diagnostics and RT distributions. |
+| **MEG Preprocessing & Filtering** | [`preprocessing.py`](meg_tokens/meg/preprocessing.py) | Loads raw CTF MEG, applies filters, performs ICA decomposition, and coregisters head points. |
+| **Epoch Extraction & Event Alignment** | [`epoching.py`](meg_tokens/meg/epoching.py) | Segments MEG data into trial epochs aligned to triggers and behavior. |
+| **Neural Source Localization** | [`sources.py`](meg_tokens/meg/sources.py) | Computes noise covariance, BEM models, sets up source spaces, and applies minimum-norm inverses. |
+| **Source-Space Time-Frequency Power** | [`time_frequency.py`](meg_tokens/features/time_frequency.py) | Extracts band power from source estimates using modern MNE calls. |
+| **ERP Slicing, Parcellation, & Export** | [`erp.py`](meg_tokens/features/erp.py) | Aligns, pads, parcellates, and exports labeled `.npy` arrays with JSON sidecars. |
+| **Group Analyses** | [`analysis/`](meg_tokens/analysis) | Provides permutation statistics, decoding, PCA, and dPCA estimators. |
+| **Workflow Orchestration** | [`Snakefile`](workflow/Snakefile) | Schedules subjects, runs, shared source models, features, analyses, and reports. |
 
 ## 💾 Data Locations
 
@@ -56,15 +56,15 @@ All project data lives under one convention data root, `meg-tokens`:
 *   **`BIDS/`** — Both the BIDS-raw layer Stage 0 writes (`sub-*/meg`, `sub-*/beh`,
     `sub-*/anat`, `sub-emptyroom`) and parsed/derived outputs under `BIDS/derivatives/`.
 *   **`IRM/`** — FreeSurfer `recon-all` output, one subject directory per reconstructed
-    subject (30/32; H07 and H10 have none). Set as `subjects_dir` in the project TOML, read
-    directly by the BEM/source-space stages, and staged into `BIDS/sub-*/anat` by Stage 0.
+    subject (30/32; H07 and H10 have none). Defaults to `data_root/IRM` as `subjects_dir`,
+    read directly by the BEM/source-space stages, and staged into `BIDS/sub-*/anat` by
+    Stage 0; set `subjects_dir` explicitly in the project TOML to override this.
 
-Set `data_root` once in a TOML file based on 
-[`config/tokens.toml.template`](config/tokens.toml.template) and `raw_meg_root`, `behavior_root`,
-and `bids_root` default to `data_root/raw`, `data_root/tdms`, and `data_root/BIDS` respectively
-— no per-field paths to keep in sync. Any of the three can still be overridden individually 
-(e.g. if raw MEG stays on a separate external drive) by uncommenting the matching line in the 
-template. Relative paths are resolved from the configuration file location.
+Set `data_root` once in a TOML file based on
+[`config/tokens.toml.template`](config/tokens.toml.template) and pass it with `--config`;
+`raw_meg_root`, `behavior_root`, `bids_root`, and `subjects_dir` derive from it as
+`data_root/raw`, `data_root/tdms`, `data_root/BIDS`, and `data_root/IRM`. Relative paths
+are resolved from the configuration file location.
 
 ---
 *Note: This repository was refactored and organized starting 2026-06-25.*
@@ -98,39 +98,43 @@ your edit. Applying copies the staged rows into `BIDS/sub-*/{meg,beh,anat}` and
 meg-tokens --config tokens.toml meg apply-raw-staging --subjects H01 H02
 ```
 
-### Stage 1: TDMS Behavioral Extraction
-Extracts trial-by-trial logs from the raw LabVIEW directories into behavior TSV derivatives with JSON sidecars.
+### Stage 1: Behavioral Log Parsing
+Builds the analysis-ready trial tables from the raw BIDS behavioral layer (`BIDS/sub-*/beh/`),
+applying trial-class inference and validation. Requires Stage 0 to have run first.
 ```bash
 meg-tokens --config tokens.toml behavior ingest
 ```
 
-Compute subject summaries, paired group statistics, and the trial-level
-MEG-joinable feature table from those staged TSV files:
+### Stage 2: Behavioral Metrics Extraction
+Computes subject summaries, paired group statistics, and the trial-level
+MEG-joinable feature table from Stage 1's staged TSV files:
 
 ```bash
 meg-tokens --config tokens.toml behavior analyze
 ```
 
-Run the extended behavioral analyses from `docs/behavior_analysis_roadmap.md`
-over that feature table — distributions, condition × class effects, session
+### Stage 2b: Behavioral Characterization Analyses
+Runs the full battery of behavioral analyses from `docs/behavior_analysis_roadmap.md`
+over Stage 2's trial-feature table — distributions, condition × class effects, session
 drift, lapses, continuous evidence, criterion decline and urgency, reverse
 correlation, conditional accuracy, trial history, and individual differences.
 Each writes its own group derivative; results on the current dataset are in
-`docs/behavior_roadmap_results.md`:
+`docs/behavior_roadmap_results.md`. Requires Stage 2 to have run first:
 
 ```bash
-meg-tokens --config tokens.toml behavior extended
+meg-tokens --config tokens.toml behavior characterization
 ```
 
-Re-run the source-log success-probability/SPD validation and print its summary:
+**Behavior QC** (not a pipeline stage — a standalone validation utility):
+re-run the source-log success-probability/SPD validation and print its summary:
 
 ```bash
 meg-tokens --config tokens.toml behavior qc
 ```
 
 
-### Stage 2: Epoch Extraction & Alignment
-Filters raw continuous MEG data and slices it into event-locked trial epochs. Epoching consumes Stage 1 behavior TSV derivatives and cleaned/filtered raw FIF derivatives.
+### Stage 3: MEG Preprocessing & Filtering
+Loads raw CTF MEG, applies filters, and optionally runs ICA:
 ```bash
 meg-tokens --config tokens.toml meg preprocess \
   --raw-path /path/to/H01Slow1.ds \
@@ -138,19 +142,21 @@ meg-tokens --config tokens.toml meg preprocess \
   --run Slow1
 ```
 
+### Stage 4: Epoch Extraction & Event Alignment
+Slices Stage 3's filtered continuous MEG into event-locked trial epochs, aligned to Stage 1 behavior TSV derivatives:
 ```bash
 meg-tokens --config tokens.toml meg epoch \
   --alignment go \
   --subjects H01 H02
 ```
 
-### Stage 3: Behavioral Distributions & Metrics Plotting
+### Stage 5: Behavioral Distributions & Metrics Plotting
 Generates behavioral diagnostic plots, including decision time probability densities and brain-behavior scatterplots.
 ```bash
 meg-tokens --config tokens.toml report behavior --subjects H01 H02 H03
 ```
 
-### Stage 4: Neural Source Localization
+### Stage 6: Neural Source Localization
 Builds noise covariance, BEM, source-space, forward, inverse, and trial source-estimate derivatives for each subject.
 ```bash
 meg-tokens --config tokens.toml meg source \
@@ -173,8 +179,8 @@ meg-tokens --config tokens.toml meg source \
   --volume-labels Left-Putamen Right-Putamen Left-Caudate Right-Caudate
 ```
 
-### Stage 5: Time-Frequency Power Extraction
-Extracts source-space frequency-band power from the Stage 3 source-estimate manifest using sliding-window Hilbert, Morlet, or multitaper transforms.
+### Stage 7: Time-Frequency Power Extraction
+Extracts source-space frequency-band power from the Stage 6 source-estimate manifest using sliding-window Hilbert, Morlet, or multitaper transforms.
 ```bash
 meg-tokens --config tokens.toml features power \
   --subjects H01 H02 \
@@ -187,8 +193,8 @@ meg-tokens --config tokens.toml features power \
   --step 110
 ```
 
-### Stage 5b: Power Spectral Density & Specparam Modeling
-Computes Welch or multitaper PSD on Stage 2 Epochs FIF derivatives and fits `specparam` models to separate periodic and aperiodic spectral structure, writing `.npy`/`.tsv` derivatives with JSON sidecars.
+### Stage 7b: Power Spectral Density & Specparam Modeling
+Computes Welch or multitaper PSD on Stage 4 Epochs FIF derivatives and fits `specparam` models to separate periodic and aperiodic spectral structure, writing `.npy`/`.tsv` derivatives with JSON sidecars.
 
 ```bash
 meg-tokens --config tokens.toml features spectral \
@@ -200,8 +206,8 @@ meg-tokens --config tokens.toml features spectral \
   --fmax 100.0
 ```
 
-### Stage 6: ERP Slicing & Parcellation
-Slices Stage 3 source estimates relative to task events, pads Go-aligned trials before response, parcellates into cortical atlases, and writes trial-level `.npy` arrays with aligned trial metadata.
+### Stage 8: ERP Slicing & Parcellation
+Slices Stage 6 source estimates relative to task events, pads Go-aligned trials before response, parcellates into cortical atlases, and writes trial-level `.npy` arrays with aligned trial metadata.
 *(Note: This natively replicates legacy scripts like `08_Decoding_SRC_POWER_Trial_types_time_Trial_Types.py` that extracted condition-specific Trial Types arrays).*
 ```bash
 meg-tokens --config tokens.toml features erp \
@@ -229,8 +235,8 @@ meg-tokens --config tokens.toml features erp \
 Use `--feature-space volume` for source estimates produced from mixed or volume
 source spaces.
 
-### Stage 7: Group-Level Statistics (Permutation T-Tests)
-Runs a paired subject-level permutation t-test on Stage 6 parcellated ERP derivatives.
+### Stage 9: Group-Level Statistics (Permutation T-Tests)
+Runs a paired subject-level permutation t-test on Stage 8 parcellated ERP derivatives.
 ```bash
 meg-tokens --config tokens.toml analyze statistics \
   --conditions Fast Slow \
@@ -253,8 +259,8 @@ meg-tokens --config tokens.toml analyze lateralization \
   --permutations 1000
 ```
 
-### Stage 7: Statistical Plotting & Correlations
-Generates summary tables and selected label time-course figures from Stage 7 group-statistics derivatives. Optional behavior correlations read Stage 1 behavior TSV derivatives.
+### Stage 10: Statistical Plotting & Correlations
+Generates summary tables and selected label time-course figures from Stage 9 group-statistics derivatives. Optional behavior correlations read Stage 1 behavior TSV derivatives.
 ```bash
 meg-tokens --config tokens.toml report statistics \
   --conditions Fast Slow \
@@ -276,11 +282,11 @@ meg-tokens --config tokens.toml report statistics \
 
 > **Tip:** You can append `--help` or `-h` to any of these commands to view all available path override arguments.
 
-### Stage 8: Brain-Behavior Correlations
-(Integrated directly into Stage 7 execution output. Automatically generated alongside stats).
+### Stage 11: Brain-Behavior Correlations
+(Integrated directly into Stage 10 execution output. Automatically generated alongside stats).
 
-### Stage 9: Time-Resolved MVPA Decoding (Classification)
-Runs time-resolved Linear Discriminant Analysis over Stage 6 ERP/parcellation derivatives or Stage 4 source-power derivatives. Outputs are `.npy` arrays with JSON sidecars plus a decoding time-course figure.
+### Stage 12: Time-Resolved MVPA Decoding (Classification)
+Runs time-resolved Linear Discriminant Analysis over Stage 8 ERP/parcellation derivatives or Stage 7 source-power derivatives. Outputs are `.npy` arrays with JSON sidecars plus a decoding time-course figure.
 
 ```bash
 meg-tokens --config tokens.toml analyze decoding \
@@ -302,7 +308,7 @@ meg-tokens --config tokens.toml analyze decoding \
   --permutations 100
 ```
 
-Trial-metadata decoding, such as sensory-evidence classes inside Fast/Slow runs, uses the Stage 6 `erptrials.tsv` metadata:
+Trial-metadata decoding, such as sensory-evidence classes inside Fast/Slow runs, uses the Stage 8 `erptrials.tsv` metadata:
 
 ```bash
 meg-tokens --config tokens.toml analyze decoding \
@@ -328,10 +334,10 @@ meg-tokens --config tokens.toml analyze decoding \
   --lateralize
 ```
 
-### Stage 9.5: PCA Trajectories and Loadings
+### Stage 12.5: PCA Trajectories and Loadings
 This replaces the legacy `@nmData` MATLAB PCA trajectory framework (`Neural_space_Thomas_*.m`, `Neural_space_AL_all_sources.m`) and the PCA/LDA plotting notebooks.
 
-The replicated behavior is: load real Stage 4 power or Stage 5 ERP derivatives, optionally select labels/ROIs, average trials into subject-level condition observations by default, fit PCA over condition-by-time samples, project condition means onto shared loadings, and save `.npy`/`.tsv` outputs with JSON sidecars.
+The replicated behavior is: load real Stage 7 power or Stage 8 ERP derivatives, optionally select labels/ROIs, average trials into subject-level condition observations by default, fit PCA over condition-by-time samples, project condition means onto shared loadings, and save `.npy`/`.tsv` outputs with JSON sidecars.
 
 ```bash
 meg-tokens --config tokens.toml analyze decomposition \
@@ -346,7 +352,7 @@ meg-tokens --config tokens.toml analyze decomposition \
   --n-components 20
 ```
 
-For Stage 4 power derivatives:
+For Stage 7 power derivatives:
 
 ```bash
 meg-tokens --config tokens.toml analyze decomposition \
@@ -375,7 +381,7 @@ meg-tokens --config tokens.toml report pca-variance \
   --variance-path /path/to/sub-group_task-tokens_desc-fast-vs-slow-erp-go-dSPM-HCPMMP1-pca_pcavariance.npy
 ```
 
-For source-space power PCA, loading sidecars carry source vertices when Stage 4 provided them:
+For source-space power PCA, loading sidecars carry source vertices when Stage 6 provided them:
 
 ```bash
 meg-tokens --config tokens.toml report pca-loadings \
@@ -383,7 +389,7 @@ meg-tokens --config tokens.toml report pca-loadings \
   --subjects-dir /path/to/freesurfer/subjects
 ```
 
-### Stage 9.6: Optional Demixed PCA
+### Stage 12.6: Optional Demixed PCA
 `meg-tokens analyze decomposition --analysis dpca` builds demixed-PCA tensors from real ERP derivatives and their `erptrials.tsv` sidecars. This mode requires the optional Python `dPCA` package.
 
 ```bash
@@ -398,8 +404,8 @@ meg-tokens --config tokens.toml report dpca \
   --n-components 3
 ```
 
-### Stage 10: Functional Connectivity
-Extracts spectral connectivity between Stage 5 parcellated source time courses. This replaces `08_SRC_Connectivity.py` and `08_SRC_Connectivity_all2ROI.py` without writing full vertex-to-vertex matrices.
+### Stage 13: Functional Connectivity
+Extracts spectral connectivity between Stage 8 parcellated source time courses. This replaces `08_SRC_Connectivity.py` and `08_SRC_Connectivity_all2ROI.py` without writing full vertex-to-vertex matrices.
 
 ```bash
 meg-tokens --config tokens.toml features connectivity \
@@ -437,8 +443,8 @@ meg-tokens --config tokens.toml report seed-connectivity \
   --permutations 1000
 ```
 
-### Stage 11: Hilbert Features for PAC/CFC
-Extracts band-filtered signal, Hilbert amplitude, Hilbert power, and phase from Stage 5 parcellated source time courses. This modernizes the Brainpipe amplitude/power/sigfilt extraction visible in the legacy CFC notebooks and writes `.npy` arrays with JSON sidecars.
+### Stage 14: Hilbert Features for PAC/CFC
+Extracts band-filtered signal, Hilbert amplitude, Hilbert power, and phase from Stage 8 parcellated source time courses. This modernizes the Brainpipe amplitude/power/sigfilt extraction visible in the legacy CFC notebooks and writes `.npy` arrays with JSON sidecars.
 
 ```bash
 meg-tokens --config tokens.toml features hilbert \
@@ -451,8 +457,8 @@ meg-tokens --config tokens.toml features hilbert \
   --feature-types amplitude phase power sigfilt
 ```
 
-### Stage 12: PAC/CFC Modulation Index
-Computes final phase-amplitude coupling statistics from Stage 11 low-frequency phase and high-frequency amplitude derivatives.
+### Stage 15: PAC/CFC Modulation Index
+Computes final phase-amplitude coupling statistics from Stage 14 low-frequency phase and high-frequency amplitude derivatives.
 
 ```bash
 meg-tokens --config tokens.toml features pac \

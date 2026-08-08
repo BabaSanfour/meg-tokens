@@ -1,7 +1,22 @@
+"""Transcription tests for the TDMS parser.
+
+The parser transcribes what LabVIEW wrote and derives the designed
+success-probability profile; it assigns no trial class. Everything about
+which class a trial belongs to now lives in
+``tests/behavior/test_classification.py``, next to the module that decides
+it.
+"""
+
 import os
 import re
 import pytest
 import pandas as pd
+from meg_tokens.behavior.math.probability import success_probability_profile
+from meg_tokens.behavior.schema import (
+    CLASSIFICATION_COLUMNS,
+    RAW_TRIAL_COLUMNS,
+    parse_token_directions,
+)
 from meg_tokens.behavior.tdms import (
     parse_single_trial,
     parse_tdms_file,
@@ -70,12 +85,14 @@ def test_parse_single_trial():
     assert trial_dict['nProb'] == [0.70947265625000, 0.81234567890123]
     
     assert trial_dict['sTrialClassRaw'] == 'x'
-    assert trial_dict['sTrialClass'] == 1
-    assert trial_dict['trial_class_source'] == 'inferred'
-    assert trial_dict['trial_class_rule'] == 'easy_sp2_sp5_sp8'
     assert len(trial_dict['sp_design_correct']) == 15
     assert trial_dict['token_log_rows'] == 2
     assert trial_dict['token_log_short'] is False
+
+    # Trial classes are a derivative-stage judgement; the parser emits the
+    # raw label and the profile inference reads, and nothing more.
+    assert set(trial_dict) == set(RAW_TRIAL_COLUMNS)
+    assert set(CLASSIFICATION_COLUMNS).isdisjoint(trial_dict)
 
 
 def test_parse_single_trial_raises_on_missing_structural_field():
@@ -104,63 +121,42 @@ def test_parse_single_trial_allows_missing_tenter_target_when_skipped():
     assert trial_dict['nChoiceMade'] == 0
     assert trial_dict['tEnterTarget'] == 0
 
-@pytest.mark.parametrize(("raw_label", "expected"), [("e", 1), ("a", 2), ("m", 3)])
-def test_designed_trial_label_is_preserved(raw_label, expected):
+@pytest.mark.parametrize("raw_label", ["e", "a", "m", "x", "r", "2"])
+def test_recorded_trial_label_is_transcribed_verbatim(raw_label):
+    """Every accepted label survives as text, and none of them buys the row a
+    class: reading a class out of a label is the derivative stage's call."""
     events_str = make_events([0.9] * 15, trial_class=raw_label)
     trial_dict = parse_single_trial(events_str)
 
     assert trial_dict['sTrialClassRaw'] == raw_label
-    assert trial_dict['sTrialClass'] == expected
-    assert trial_dict['trial_class_source'] == 'design'
-    assert trial_dict['trial_class_rule'] == 'recorded_label'
+    assert set(CLASSIFICATION_COLUMNS).isdisjoint(trial_dict)
 
 
-def test_random_trial_uses_design_profile_instead_of_logged_probability():
+def test_design_profile_comes_from_the_token_sequence_not_the_logged_path():
+    """``sp_design_correct`` is what class inference later reads. It is derived
+    from the designed sequence and the correct target, so a logged probability
+    path that disagrees with it cannot leak into a class."""
     events_str = make_events([0.1] * 15)
     trial_dict = parse_single_trial(events_str)
 
-    assert trial_dict['sTrialClass'] == 1
-    assert trial_dict['trial_class_rule'] == 'easy_sp2_sp5_sp8'
-
-
-def test_random_sp11_boundary_is_ambiguous():
-    events_str = make_events(
-        [0.5] * 15,
-        token_dirs="212112111111212",
-        correct_choice=1,
+    assert trial_dict['sp_design_correct'] == success_probability_profile(
+        parse_token_directions("221221122212211"), target=2
     )
-    trial_dict = parse_single_trial(events_str)
-
-    assert trial_dict['sTrialClass'] == 2
-    assert trial_dict['trial_class_rule'] == 'ambiguous_sp11_boundary'
+    assert trial_dict['sp_design_correct'] != trial_dict['nProb']
 
 
-def test_random_unmatched_sequence_remains_unclassified():
-    events_str = make_events(
-        [0.5] * 15,
-        token_dirs="111122221111111",
-        correct_choice=1,
-    )
-    trial_dict = parse_single_trial(events_str)
-
-    assert trial_dict['sTrialClass'] == 0
-    assert trial_dict['trial_class_source'] == 'unclassified'
-    assert trial_dict['trial_class_rule'] == 'unclassified'
-
-
-def test_random_trial_without_correct_target_remains_unclassified():
+def test_trial_without_a_correct_target_has_no_design_profile():
     events_str = EVENTS_STR.replace("nChoiceMade: 2", "nChoiceMade: 0").replace(
         "nCorrectChoice: 2", "nCorrectChoice: 0"
     )
     trial_dict = parse_single_trial(events_str)
 
-    assert trial_dict['sTrialClass'] == 0
     assert trial_dict['sp_design_correct'] is None
-    assert trial_dict['trial_class_source'] == 'unclassified'
-    assert trial_dict['trial_class_rule'] == 'no_correct_target'
 
 
-def test_random_classification_is_identical_for_14_and_15_log_rows():
+def test_design_profile_is_identical_for_14_and_15_log_rows():
+    """A truncated runtime log shortens nProb but not the designed profile,
+    which is why a 14-row trial classifies exactly like a 15-row one."""
     kwargs = {
         "token_dirs": "212112111111212",
         "correct_choice": 1,
@@ -168,9 +164,8 @@ def test_random_classification_is_identical_for_14_and_15_log_rows():
     short = parse_single_trial(make_events([0.5] * 14, **kwargs))
     complete = parse_single_trial(make_events([0.5] * 15, **kwargs))
 
-    assert short['sTrialClass'] == complete['sTrialClass'] == 2
-    assert short['trial_class_rule'] == complete['trial_class_rule']
     assert short['sp_design_correct'] == complete['sp_design_correct']
+    assert len(short['sp_design_correct']) == 15
     assert short['token_log_rows'] == 14
     assert short['token_log_short'] is True
     assert complete['token_log_rows'] == 15
@@ -242,31 +237,24 @@ def test_parse_tdms_file_wraps_dataframe_validation_error_with_file_path(monkeyp
 
 
 def test_parse_real_tdms_integration():
-    real_path = os.environ.get(
-        "MEG_TOKENS_TDMS_ROOT",
-        "/Users/hamzaabdelhedi/Projects/data/meg-tokens/tdms",
-    ) + "/H1/H1Slow1_180131.tdms"
-    if os.path.exists(real_path):
-        df = parse_tdms_file(real_path)
-        
-        # Verify dataframe structure
-        assert isinstance(df, pd.DataFrame)
-        assert not df.empty
-        expected_cols = [
-            'nTrialIndex', 'sTrialClass', 'sTrialClassRaw',
-            'trial_class_source', 'trial_class_rule', 'sp_design_correct',
-            'nInitialTime', 'nChoiceMade',
-            'nCorrectChoice', 'tGO', 'tEnterCenter', 'tExitCenter',
-            'tEnterTarget', 'tTrialEnd',
-            'sTokenDirs', 'nTokenNum', 'nTokenDir', 'tTime', 'nProb',
-            'token_log_rows', 'token_log_short', 'nOutcome'
-        ]
-        assert list(df.columns) == expected_cols
-        
-        # TrialData indices should be sequential starting at 1
-        assert df['nTrialIndex'].iloc[0] == 1
-    else:
-        pytest.skip("Real integration TDMS file not accessible.")
+    real_root = os.environ.get("MEG_TOKENS_TDMS_ROOT")
+    if not real_root:
+        pytest.skip("Set MEG_TOKENS_TDMS_ROOT to the behavioral log root to run this test.")
+    real_path = os.path.join(real_root, "H02", "H02Slow1_180213.tdms")
+    if not os.path.exists(real_path):
+        pytest.skip(f"Real TDMS data not available at {real_path}")
+
+    df = parse_tdms_file(real_path)
+
+    assert isinstance(df, pd.DataFrame)
+    assert not df.empty
+    assert list(df.columns) == RAW_TRIAL_COLUMNS
+    # TrialData indices should be sequential starting at 1
+    assert df['nTrialIndex'].iloc[0] == 1
+    # A real run records labels the acquisition software wrote, and no
+    # column this project inferred.
+    assert set(df['sTrialClassRaw']) <= {'x', 'e', 'a', 'm', 'r'}
+    assert set(CLASSIFICATION_COLUMNS).isdisjoint(df.columns)
 
 
 def test_parse_single_trial_reads_scientific_notation_nprob():

@@ -13,12 +13,9 @@ from pathlib import Path
 import pandas as pd
 from nptdms import TdmsFile
 
-from meg_tokens.behavior.math.probability import (
-    classify_design_profile,
-    success_probability_profile,
-)
+from meg_tokens.behavior.math.probability import success_probability_profile
 from meg_tokens.behavior.schema import (
-    TRIAL_COLUMNS,
+    RAW_TRIAL_COLUMNS,
     parse_token_directions,
     validate_behavior_table,
 )
@@ -86,7 +83,7 @@ def parse_tdms_filename(filename: str) -> TdmsRunInfo:
     )
 
 
-def parse_single_trial(events_str: str, *, infer_random_classes: bool = True) -> dict:
+def parse_single_trial(events_str: str) -> dict:
     """Parse the ``Events`` property from one TDMS trial group.
 
     Parameters
@@ -94,18 +91,15 @@ def parse_single_trial(events_str: str, *, infer_random_classes: bool = True) ->
     events_str
         Raw LabVIEW event block containing scalar trial metadata and an
         optional ``Tokens.Data`` section.
-    infer_random_classes
-        If true, trials recorded as ``sTrialClass='x'`` are classified from
-        their complete correct-target design profile. If false, they remain
-        class ``0``. Recorded ``e``, ``a``, and ``m`` labels are always
-        preserved.
 
     Returns
     -------
     dict
-        One row of canonical ``TRIAL_COLUMNS`` values. Runtime token fields are
-        parallel Python lists; timestamps are milliseconds; probabilities are
-        constrained to ``[0, 1]``; class provenance and rule are explicit.
+        One row of canonical ``RAW_TRIAL_COLUMNS`` values -- every transcribed
+        field and nothing inferred. Runtime token fields are parallel Python
+        lists; timestamps are milliseconds; probabilities are constrained to
+        ``[0, 1]``. Trial classes are assigned separately, by
+        :func:`meg_tokens.behavior.classification.classify_trials`.
 
     Raises
     ------
@@ -235,44 +229,22 @@ def parse_single_trial(events_str: str, *, infer_random_classes: bool = True) ->
     else:
         sp_design_correct = None
 
-    # Preserve recorded designed labels. Only random ('x') trials are assigned
-    # a posteriori from the complete, correct-target designed SP profile.
+    # The recorded label is transcribed verbatim; assigning a class from it
+    # -- in particular reading one out of the design profile for a trial
+    # logged 'x' -- is a judgement, and belongs to the derivative stage that
+    # owns that choice (meg_tokens.behavior.classification). The value is
+    # still validated here so a malformed log fails at transcription, where
+    # the source file and trial number are still in hand, rather than later.
     trial_class_raw = meta.get('sTrialClass', 'x')
-    normalized_trial_class = str(trial_class_raw).lower()
-    recorded_classes = {'e': 1, 'a': 2, 'm': 3}
-    if normalized_trial_class in recorded_classes:
-        s_trial_class = recorded_classes[normalized_trial_class]
-        trial_class_source = 'design'
-        trial_class_rule = 'recorded_label'
-    elif normalized_trial_class == 'x':
-        if not infer_random_classes:
-            s_trial_class = 0
-            trial_class_source = 'unclassified'
-            trial_class_rule = 'inference_disabled'
-        elif sp_design_correct is None:
-            s_trial_class = 0
-            trial_class_source = 'unclassified'
-            trial_class_rule = 'no_correct_target'
-        else:
-            s_trial_class, trial_class_rule = classify_design_profile(
-                sp_design_correct
-            )
-            trial_class_source = 'inferred' if s_trial_class else 'unclassified'
-    elif normalized_trial_class == 'r':
-        s_trial_class = 0
-        trial_class_source = 'not_applicable'
-        trial_class_rule = 'not_applicable'
-    else:
+    if str(trial_class_raw).lower() not in ('x', 'e', 'a', 'm', 'r'):
         try:
-            s_trial_class = int(trial_class_raw)
+            int(trial_class_raw)
         except ValueError:
             raise ValueError(
                 f"Trial {n_trial_index}: unrecognized sTrialClass value "
-                f"{trial_class_raw!r} (expected 'x', 'e', 'a', 'm', or an "
+                f"{trial_class_raw!r} (expected 'x', 'e', 'a', 'm', 'r', or an "
                 "integer)"
             )
-        trial_class_source = 'design' if s_trial_class in (1, 2, 3) else 'unclassified'
-        trial_class_rule = 'recorded_numeric_label'
 
     token_log_rows = len(n_prob_list)
     token_log_short = token_log_rows == 14
@@ -304,10 +276,7 @@ def parse_single_trial(events_str: str, *, infer_random_classes: bool = True) ->
 
     return {
         'nTrialIndex': n_trial_index,
-        'sTrialClass': s_trial_class,
         'sTrialClassRaw': trial_class_raw,
-        'trial_class_source': trial_class_source,
-        'trial_class_rule': trial_class_rule,
         'sp_design_correct': sp_design_correct,
         'nInitialTime': n_initial_time,
         'nChoiceMade': n_choice_made,
@@ -327,26 +296,22 @@ def parse_single_trial(events_str: str, *, infer_random_classes: bool = True) ->
         'nOutcome': n_outcome,
     }
 
-def parse_tdms_file(
-    file_path: str,
-    *,
-    infer_random_classes: bool = True,
-) -> pd.DataFrame:
+def parse_tdms_file(file_path: str) -> pd.DataFrame:
     """Parse and validate every trial in one behavioral TDMS file.
 
     Parameters
     ----------
     file_path
         Path to the source TDMS file.
-    infer_random_classes
-        Passed unchanged to :func:`parse_single_trial`.
 
     Returns
     -------
     pandas.DataFrame
         Canonical trial rows ordered as encountered in the file and restricted
-        to ``TRIAL_COLUMNS``. Run identity is added later by
-        :func:`meg_tokens.behavior.tables.add_run_metadata`.
+        to ``RAW_TRIAL_COLUMNS``. Trial classes are assigned by
+        :func:`meg_tokens.behavior.classification.classify_trials` and run
+        identity by :func:`meg_tokens.behavior.tables.add_run_metadata`, both
+        in the derivative stage.
 
     Raises
     ------
@@ -367,10 +332,7 @@ def parse_tdms_file(
             missing_events.append(group.name)
             continue
         try:
-            trial_dict = parse_single_trial(
-                events_str,
-                infer_random_classes=infer_random_classes,
-            )
+            trial_dict = parse_single_trial(events_str)
         except ValueError as error:
             raise ValueError(f"{file_path}: {error}") from error
         trial_data.append(trial_dict)
@@ -383,9 +345,9 @@ def parse_tdms_file(
     if not trial_data:
         raise ValueError(f"{file_path}: no TrialData groups with trial data found")
 
-    df = pd.DataFrame(trial_data, columns=TRIAL_COLUMNS)
+    df = pd.DataFrame(trial_data, columns=RAW_TRIAL_COLUMNS)
     try:
-        validate_behavior_table(df)
+        validate_behavior_table(df, require_classification=False)
     except ValueError as error:
         raise ValueError(f"{file_path}: {error}") from error
     return df

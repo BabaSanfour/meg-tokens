@@ -1,4 +1,4 @@
-"""Run the complete extended behavioral analysis pipeline.
+"""Run the Stage 2b behavioral characterization analysis pipeline.
 
 ``analyze_behavior`` produces the preprint-comparison summaries. This workflow
 consumes its trial-feature table and adds distributional descriptions, design
@@ -86,13 +86,13 @@ ROADMAP_ITEMS: dict[str, str] = {
 }
 
 
-def analyze_behavior_extended(
+def analyze_behavior_characterization(
     project: ProjectConfig,
     *,
     subjects: Optional[Sequence[str]] = None,
     neural_metrics_path: Optional[str | Path] = None,
 ) -> WorkflowResult:
-    """Run the extended behavioral pipeline over staged trial features."""
+    """Run the Stage 2b behavioral characterization pipeline over staged trial features."""
     layout = DerivativeLayout(
         project.bids_root,
         task=project.task,
@@ -101,7 +101,7 @@ def analyze_behavior_extended(
     summary_path = layout.behavior_summary()
     if not features_path.is_file():
         raise FileNotFoundError(
-            "The trial-feature table is required by the extended behavioral "
+            "The trial-feature table is required by the behavioral characterization "
             f"analyses but does not exist: {features_path}. Run "
             "'meg-tokens behavior analyze' first."
         )
@@ -198,7 +198,7 @@ def analyze_behavior_extended(
             output_path,
             table,
             metadata={
-                "stage": "behavior_extended_analysis",
+                "stage": "behavior_characterization_analysis",
                 "analysis": name,
                 "roadmap_item": ROADMAP_ITEMS.get(
                     name.removesuffix("stats").removesuffix("trials"), name
@@ -215,7 +215,7 @@ def analyze_behavior_extended(
         outputs.append(output_path)
 
     return WorkflowResult(
-        stage="behavior_extended_analysis",
+        stage="behavior_characterization_analysis",
         inputs=(features_path, summary_path),
         outputs=tuple(outputs),
         settings={

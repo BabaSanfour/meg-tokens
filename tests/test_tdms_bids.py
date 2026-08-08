@@ -3,7 +3,12 @@ import os
 import pandas as pd
 import pytest
 
-from meg_tokens.behavior.tdms_bids import write_beh_bids
+from meg_tokens.behavior.schema import CLASSIFICATION_COLUMNS, RAW_TRIAL_COLUMNS
+from meg_tokens.behavior.tdms_bids import (
+    raw_behavior_files,
+    read_raw_behavior_sidecar,
+    write_beh_bids,
+)
 
 EVENTS_STR = """sTaskType: 'TokensMvt'
 dDate: '2018/02/13 02:20:52.738 PM'
@@ -44,7 +49,7 @@ class _FakeTdmsFile:
         return self._groups
 
 
-def test_write_beh_bids_uses_bids_entities_and_disables_inference(tmp_path, monkeypatch):
+def test_write_beh_bids_uses_bids_entities_and_omits_classification(tmp_path, monkeypatch):
     fake = _FakeTdmsFile([_FakeGroup("TrialData0", {"Events": EVENTS_STR})])
     monkeypatch.setattr("meg_tokens.behavior.tdms.TdmsFile", lambda path: fake)
 
@@ -59,11 +64,13 @@ def test_write_beh_bids_uses_bids_entities_and_disables_inference(tmp_path, monk
     )
     df = pd.read_csv(written, sep="\t")
     assert len(df) == 1
-    # 'x' trials are raw/unresolved without inference -- sTrialClass stays 0
-    # and the provenance column records why, exactly like
-    # parse_tdms_file(..., infer_random_classes=False) documents.
-    assert df.loc[0, "sTrialClass"] == 0
-    assert df.loc[0, "trial_class_rule"] == "inference_disabled"
+    # The raw layer asserts no class -- not even a placeholder saying it
+    # declined to. It keeps what inference consumes, so the derivative stays
+    # reproducible from here.
+    assert list(df.columns) == RAW_TRIAL_COLUMNS
+    assert set(CLASSIFICATION_COLUMNS).isdisjoint(df.columns)
+    assert df.loc[0, "sTrialClassRaw"] == "x"
+    assert df.loc[0, "sp_design_correct"]
 
     sidecar = written.with_suffix(".json")
     assert sidecar.exists()
@@ -74,6 +81,47 @@ def test_write_beh_bids_rejects_non_standard_filename(tmp_path):
     tdms_path.write_text("")
     with pytest.raises(ValueError):
         write_beh_bids(tdms_path, bids_root=tmp_path / "BIDS")
+
+
+def test_raw_behavior_files_finds_every_staged_run_for_one_subject(tmp_path, monkeypatch):
+    fake = _FakeTdmsFile([_FakeGroup("TrialData0", {"Events": EVENTS_STR})])
+    monkeypatch.setattr("meg_tokens.behavior.tdms.TdmsFile", lambda path: fake)
+    bids_root = tmp_path / "BIDS"
+
+    for name in ("H02Slow1_180213.tdms", "H02Fast1_180213.tdms"):
+        path = tmp_path / name
+        path.write_text("")
+        write_beh_bids(path, bids_root=bids_root)
+
+    assert [p.name for p in raw_behavior_files(bids_root, "h2")] == [
+        "sub-H02_task-tokens_acq-fast_run-1_beh.tsv",
+        "sub-H02_task-tokens_acq-slow_run-1_beh.tsv",
+    ]
+    # A subject Stage 0 never staged is indistinguishable from one with no runs.
+    assert raw_behavior_files(bids_root, "H09") == []
+
+
+def test_read_raw_behavior_sidecar_recovers_run_identity(tmp_path, monkeypatch):
+    fake = _FakeTdmsFile([_FakeGroup("TrialData0", {"Events": EVENTS_STR})])
+    monkeypatch.setattr("meg_tokens.behavior.tdms.TdmsFile", lambda path: fake)
+    tdms_path = tmp_path / "H02Slow1_180213.tdms"
+    tdms_path.write_text("")
+
+    written = write_beh_bids(tdms_path, bids_root=tmp_path / "BIDS")
+    metadata = read_raw_behavior_sidecar(written)
+
+    # Recovered from the sidecar, not re-derived from (lowercased, dateless)
+    # BIDS entities.
+    assert metadata["subject"] == "H02"
+    assert metadata["condition"] == "Slow"
+    assert metadata["run"] == 1
+    assert metadata["acquisition_date"] == "180213"
+    assert metadata["source_file"] == str(tdms_path)
+
+
+def test_read_raw_behavior_sidecar_raises_without_one(tmp_path):
+    with pytest.raises(FileNotFoundError):
+        read_raw_behavior_sidecar(tmp_path / "no-such_beh.tsv")
 
 
 def test_write_beh_bids_real_tdms_file_integration():
@@ -90,6 +138,9 @@ def test_write_beh_bids_real_tdms_file_integration():
         written = write_beh_bids(real_path, bids_root=tmp)
         df = pd.read_csv(written, sep="\t")
         assert not df.empty
-        # infer_random_classes=False means no row can go through the
-        # design-profile inference path (trial_class_source == "inferred").
-        assert (df["trial_class_source"] != "inferred").all()
+        # A real run stages as pure transcription: no class asserted, and
+        # both inputs classification later reads still present.
+        assert list(df.columns) == RAW_TRIAL_COLUMNS
+        assert set(CLASSIFICATION_COLUMNS).isdisjoint(df.columns)
+        assert set(df["sTrialClassRaw"].astype(str)) <= {"x", "e", "a", "m", "r"}
+        assert df["sp_design_correct"].notna().any()

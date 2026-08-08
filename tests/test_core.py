@@ -83,6 +83,7 @@ def test_project_config_derives_roots_from_data_root(tmp_path):
     assert config.raw_meg_root == tmp_path / "meg-tokens" / "raw"
     assert config.behavior_root == tmp_path / "meg-tokens" / "tdms"
     assert config.bids_root == tmp_path / "meg-tokens" / "BIDS"
+    assert config.subjects_dir == tmp_path / "meg-tokens" / "IRM"
 
 
 def test_project_config_requires_data_root():

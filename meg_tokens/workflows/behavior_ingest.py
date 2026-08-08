@@ -1,89 +1,78 @@
-"""Behavioral TDMS ingestion workflow."""
+"""Stage 1: raw BIDS behavior -> analysis-ready behavioral derivatives.
+
+Reads the raw behavioral layer Stage 0 stages under ``BIDS/sub-*/beh/``,
+not the ``.tdms`` containers, so the derivative is derived from the raw
+BIDS layer in the ordinary BIDS sense rather than from a proprietary
+format sitting outside the dataset. One consequence worth stating: Stage 0
+must have run first. That is a real ordering dependency, accepted because
+the alternative -- two independent readers of the LabVIEW container, and a
+raw layer nothing consumes -- is worse.
+
+What this stage adds on top of the raw log is exactly what makes it a
+derivative rather than a copy: trial classes inferred from the designed
+profile (:mod:`meg_tokens.behavior.classification`), run identity and the
+response fields derived from it (``rawRT``, ``isCorrect``), and validation
+against the full Stage 1 contract.
+"""
 
 from __future__ import annotations
 
 from pathlib import Path
 from typing import Optional, Sequence
 
+from meg_tokens.behavior.classification import classify_trials
 from meg_tokens.behavior.schema import validate_behavior_table
-from meg_tokens.behavior.tables import add_run_metadata
-from meg_tokens.behavior.tdms import (
-    TdmsRunInfo,
-    parse_tdms_file,
-    parse_tdms_filename,
-)
+from meg_tokens.behavior.tables import add_run_metadata, read_raw_behavior_table
+from meg_tokens.behavior.tdms import TdmsRunInfo
+from meg_tokens.behavior.tdms_bids import raw_behavior_files, read_raw_behavior_sidecar
 from meg_tokens.core import ProjectConfig, WorkflowResult, normalize_subject_id
 from meg_tokens.io import DerivativeLayout, save_table
 
 
-def _subject_input_dir(root: Path, subject: str) -> Path:
-    subject_dir = root / normalize_subject_id(subject)
-    if not subject_dir.is_dir():
-        raise FileNotFoundError(f"Subject input directory does not exist for {subject} under {root}")
-    return subject_dir
+def _run_info(table_path: Path) -> tuple[TdmsRunInfo, str]:
+    """Run identity for one staged table, from the sidecar Stage 0 wrote."""
+    metadata = read_raw_behavior_sidecar(table_path)
+    missing = [key for key in ("subject", "condition", "run") if key not in metadata]
+    if missing:
+        raise ValueError(
+            f"Staged behavior sidecar for {table_path.name} is missing {missing}. "
+            "Re-run `meg-tokens meg apply-raw-staging` to rewrite it."
+        )
+    run_info = TdmsRunInfo(
+        subject=normalize_subject_id(str(metadata["subject"])),
+        condition=str(metadata["condition"]),
+        run=str(metadata["run"]),
+        date=str(metadata.get("acquisition_date", "")),
+    )
+    return run_info, str(metadata.get("source_file", table_path.name))
 
 
 def ingest_subject_behavior(
     subject: str,
     *,
-    input_root: str | Path,
+    bids_root: str | Path,
     output_root: str | Path,
     dry_run: bool = False,
-    ignore_files: Sequence[str] = (),
     infer_random_classes: bool = True,
 ) -> tuple[dict[str, object], ...]:
-    """Parse every standard TDMS run for one subject.
+    """Build Stage 1 derivatives for every staged run of one subject.
 
-    Every ``*.tdms`` file under the subject directory must either match the
-    canonical ``H<subject><Condition><run>_<YYMMDD>.tdms`` naming pattern or
-    have its filename listed in ``ignore_files``. A file that matches
-    neither is a data-quality problem, not something to skip quietly, so it
-    raises instead of being dropped. The same guard applies to duplicate
-    ``(subject, condition, run)`` combinations, which would otherwise
-    silently overwrite one another's derivative output.
+    Raises ``FileNotFoundError`` when the subject has no staged raw
+    behavior: that is a missing prerequisite, not an empty result, and
+    silently producing nothing would look identical to success.
     """
-    input_root = Path(input_root)
-    subject_dir = _subject_input_dir(input_root, subject)
     layout = DerivativeLayout(output_root)
-    ignore = set(ignore_files)
-
-    candidates = sorted(subject_dir.glob("*.tdms"))
-    parsed: list[tuple[Path, TdmsRunInfo]] = []
-    unmatched: list[Path] = []
-    for input_path in candidates:
-        if input_path.name in ignore:
-            continue
-        try:
-            run_info = parse_tdms_filename(input_path.name)
-        except ValueError:
-            unmatched.append(input_path)
-            continue
-        parsed.append((input_path, run_info))
-
-    if unmatched:
-        raise ValueError(
-            "Refusing to silently skip .tdms files with non-canonical "
-            f"names under {subject_dir}: "
-            f"{[path.name for path in unmatched]}. Rename them to match "
-            "H<subject><Condition><run>_<YYMMDD>.tdms, or pass their exact "
-            "filenames via ignore_files (behavior_ignore_files in the "
-            "project TOML) to exclude them explicitly."
+    table_paths = raw_behavior_files(bids_root, subject)
+    if not table_paths:
+        raise FileNotFoundError(
+            f"No staged raw behavior for {normalize_subject_id(subject)} under "
+            f"{Path(bids_root)}. Stage 1 reads the raw BIDS layer, so run "
+            "`meg-tokens meg stage-raw` and `meg-tokens meg apply-raw-staging` first."
         )
 
-    seen: dict[tuple[str, str, str], Path] = {}
-    for input_path, run_info in parsed:
-        key = (run_info.subject, run_info.condition, run_info.run)
-        if key in seen:
-            raise ValueError(
-                f"Duplicate TDMS run for subject={key[0]} "
-                f"condition={key[1]} run={key[2]}: found in both "
-                f"{seen[key].name} and {input_path.name}. Resolve the "
-                "collision before ingesting."
-            )
-        seen[key] = input_path
-
     records = []
-    for input_path, run_info in parsed:
+    for table_path in table_paths:
+        run_info, source_file = _run_info(table_path)
         output_path = layout.behavior(
             subject=run_info.subject,
             run=run_info.run,
@@ -92,12 +81,12 @@ def ingest_subject_behavior(
         trial_count = 0
         if not dry_run:
             table = add_run_metadata(
-                parse_tdms_file(
-                    str(input_path),
+                classify_trials(
+                    read_raw_behavior_table(table_path),
                     infer_random_classes=infer_random_classes,
                 ),
                 run_info,
-                input_path.name,
+                source_file,
             )
             validate_behavior_table(table)
             save_table(
@@ -108,8 +97,10 @@ def ingest_subject_behavior(
                     "subject": run_info.subject,
                     "condition": run_info.condition,
                     "run": run_info.run,
-                    "source_file": input_path.name,
+                    "source_file": source_file,
                     "source_date": run_info.date,
+                    "raw_behavior_table": str(table_path),
+                    "infer_random_classes": infer_random_classes,
                 },
             )
             trial_count = len(table)
@@ -118,7 +109,7 @@ def ingest_subject_behavior(
                 "subject": run_info.subject,
                 "condition": run_info.condition,
                 "run": run_info.run,
-                "input": str(input_path),
+                "input": str(table_path),
                 "output": str(output_path),
                 "trials": trial_count,
             }
@@ -132,22 +123,23 @@ def ingest_behavior(
     subjects: Optional[Sequence[str]] = None,
     dry_run: bool = False,
 ) -> WorkflowResult:
-    """Ingest selected subjects from the configured behavioral source root."""
-    if project.behavior_root is None:
-        raise ValueError("Project configuration requires behavior_root for ingestion")
-    if not project.behavior_root.is_dir():
+    """Ingest selected subjects from the staged raw behavioral layer."""
+    bids_root = project.bids_root
+    if not bids_root.is_dir():
         raise FileNotFoundError(
-            f"Behavior input root does not exist: {project.behavior_root}"
+            f"BIDS root does not exist: {bids_root}. Run `meg-tokens meg stage-raw` "
+            "and `meg-tokens meg apply-raw-staging` before ingesting."
         )
 
     selected = list(subjects) if subjects else sorted(
-        path.name
-        for path in project.behavior_root.iterdir()
-        if path.is_dir() and path.name.upper().startswith("H")
+        path.name.removeprefix("sub-")
+        for path in bids_root.glob("sub-*")
+        if path.is_dir() and (path / "beh").is_dir() and path.name != "sub-emptyroom"
     )
     if not selected:
         raise FileNotFoundError(
-            f"No subject directories were found under {project.behavior_root}"
+            f"No staged subject behavior was found under {bids_root}. Run "
+            "`meg-tokens meg apply-raw-staging` first."
         )
 
     records = []
@@ -155,10 +147,9 @@ def ingest_behavior(
         records.extend(
             ingest_subject_behavior(
                 subject,
-                input_root=project.behavior_root,
-                output_root=project.bids_root,
+                bids_root=bids_root,
+                output_root=bids_root,
                 dry_run=dry_run,
-                ignore_files=project.behavior_ignore_files,
                 infer_random_classes=project.infer_random_classes,
             )
         )

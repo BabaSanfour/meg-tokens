@@ -27,6 +27,22 @@ of this without feeding back into it. Workflows locate inputs, call these
 layers, and write outputs; they never implement scientific formulas
 themselves.
 
+**Transcription and judgement are separated at the parser boundary.**
+`behavior/tdms.py` emits `RAW_TRIAL_COLUMNS` -- every field LabVIEW wrote,
+and nothing inferred. Trial classes are *not* among them: a trial recorded
+as `'x'` carries no class, and recovering one means reading it back out of
+the designed success-probability profile, which is an interpretation. That
+belongs to `behavior/classification.py`, applied by the derivative stage
+that owns the choice (`ProjectConfig.infer_random_classes`).
+
+The parser still *validates* the recorded label, raising on anything that
+is neither a known code (`x`/`e`/`a`/`m`/`r`) nor an integer, so a
+malformed log fails at transcription where the file and trial number are
+still in hand. It just declines to interpret it. Because both inputs to
+inference (`sTrialClassRaw`, `sp_design_correct`) survive into the raw
+table, a derivative can be regenerated -- with inference on or off -- from
+the staged raw layer alone, with no access to the `.tdms` container.
+
 ## Storage
 
 - Raw and cleaned MEG data uses MNE-native formats under a BIDS derivatives
@@ -157,6 +173,14 @@ the conformed volumes.
 
 ## Stage 1: Behavioral Log Parsing
 
+**Stage 1 reads `BIDS/sub-*/beh/`, not `tdms/`.** The derivative is derived
+from the raw BIDS layer, in the ordinary BIDS sense, rather than from a
+proprietary container sitting outside the dataset -- which also means the
+LabVIEW format has exactly one reader in the project. The consequence is a
+real ordering dependency: **all of Stage 0 must have run first**, and a
+subject with no staged behavior raises a `FileNotFoundError` naming
+`apply-raw-staging` rather than quietly producing nothing.
+
 Every `*.tdms` file under a subject's `behavior_root` must match
 `H<subject><Condition><run>_<YYMMDD>.tdms` (e.g. `H01Slow1_180131.tdms`),
 where `<Condition>` is `Slow`, `Fast`, or `RT`. A non-matching filename
@@ -164,9 +188,12 @@ raises `ValueError` unless listed in `behavior_ignore_files` (add only
 after confirming by hand it's not a real run, with the reason recorded in
 the config comment). Two files resolving to the same `(subject, condition,
 run)` also raise `ValueError` rather than one silently overwriting the
-other.
+other. Both guards now run in **Stage 0**
+(`workflows/raw_staging._matching_tdms_files`), because that is where the
+logs are read: a file dropped there never reaches any analysis, so the
+refusal has to happen at that boundary rather than downstream of it.
 
-Stage 1 writes one table per TDMS run:
+Stage 1 writes one table per staged run:
 
 ```text
 derivatives/sub-H01/beh/sub-H01_task-tokens_run-1_desc-slow_beh.tsv
@@ -178,6 +205,10 @@ Required trial columns: `subject`, `condition`, `run`, `source_file`,
 `tGO`, `tEnterCenter`, `tExitCenter`, `tEnterTarget`, `tTrialEnd`,
 `sTokenDirs`, `nTokenNum`, `nTokenDir`, `tTime`, `nProb`, `token_log_rows`,
 `token_log_short`, `nOutcome`, `rawRT`, `isCorrect`.
+
+Of these, `sTrialClass`, `trial_class_source` and `trial_class_rule` are
+added *here*, by `behavior/classification.py` -- they are absent from the
+raw layer, which asserts no class. Everything else is transcribed.
 
 Subject labels are normalized to `H01` style. The parser validates
 sequential trial indices, event ordering, and equal lengths across the
@@ -203,6 +234,129 @@ ordering is validated as `tGO <= tExitCenter <= tEnterTarget <= tTrialEnd`
 on chosen trials. Rows with `nOutcome == 7003` are retained for provenance
 but must have `tGO == 0` and `nChoiceMade == 0` (never started). Derivatives
 written before these fields existed must be re-ingested.
+
+## Stage 2: Behavioral Metrics Extraction
+
+**Stage 2 reads Stage 1's `derivatives/sub-*/beh/*_beh.tsv` tables**, not the
+raw BIDS layer -- it is a pure function of the trial-class-inferred behavior
+derivatives, with no dependency on `raw/`, `tdms/`, or Stage 0 having run in
+this process. `behavior/features.py` performs the single deterministic
+transform from those tables to the canonical trial-feature table;
+`behavior/analyses/summary.py` and `behavior/analyses/performance.py` build
+on it. Neither module selects trials or infers anything Stage 1 didn't
+already decide -- eligibility is expressed as boolean flags on every row,
+never by deleting it.
+
+Stage 2 writes three group derivatives:
+
+```text
+derivatives/sub-group/beh/sub-group_task-tokens_desc-trialfeatures_beh.tsv
+derivatives/sub-group/beh/sub-group_task-tokens_desc-summary_beh.tsv
+derivatives/sub-group/beh/sub-group_task-tokens_desc-groupstats_beh.tsv
+```
+
+**Trial-feature table** (`build_trial_features`): one row per staged trial
+across every subject, including never-started and no-response trials. Its
+MEG join key is `subject`, `condition`, `run`, and one-based
+`run_trial_index`. Motor baseline is each subject's arithmetic mean `rawRT`
+across RT-condition trials with a response, computed once and stamped onto
+every one of that subject's rows. `dt_ms` is `rawRT - motor_baseline_ms`,
+computed only for started, chosen Fast/Slow trials -- everywhere else
+(RT-condition, never-started, no-response rows) it is `NaN`. Negative
+`dt_ms` (an anticipation) is retained rather than clipped, and flagged
+separately as `dt_anticipation`.
+
+`logged_spd` is the logged chosen-target success probability nearest the
+motor-corrected commitment time (`tEnterTarget - motor_baseline_ms`), read
+from the trial's parallel `nProb`/`tTime` sequences.
+`logged_spd_validated_15row` repeats that same value only when the trial's
+token log has exactly 15 rows (`token_log_rows == 15`); otherwise it is
+`NaN` -- there is no silent fallback to the unvalidated value when
+validation fails. `evidence_at_decision` is `logged_spd - 0.5`. The
+`sp_design_*` / `sum_log_lr_*` / `token_lead_at_decision` columns are the
+*designed* (not logged) evidence, derived purely from `sTokenDirs` and
+`nCorrectChoice`: `sp_design_early`/`sum_log_lr_design_early` are always
+evaluated after the third jump regardless of when the subject actually
+responded, while the `_at_decision` variants use the number of designed
+tokens the subject had actually observed by commitment. A correct-target
+value outside `{1, 2}` or a design shorter than three tokens returns
+`NaN`/`pd.NA` rather than a guess.
+
+Four boolean eligibility flags summarize selection without deleting rows:
+`is_started` (outcome is not `OUTCOME_NEVER_STARTED`), `has_choice` (finite
+`rawRT`), `is_no_response` (started but no choice), and
+`primary_analysis_eligible` (started, chosen, and a Fast/Slow condition --
+excludes RT-condition runs and never-started/no-response rows).
+`design_time_alignment_valid` additionally requires the 15-row token log.
+Analyses that need lapses (started, chosen, but not primary-eligible for
+some other reason) select them explicitly rather than relying on a flag's
+absence.
+
+**Subject summary** (`summarize_behavior`): one row per subject. Reports the
+motor baseline; Fast/Slow/RT and trial-class trial and decision-time counts;
+percent-correct (0--100 scale) overall and by condition; and paired
+all-logged/validated-15-row SPD means, overall and by trial class (`easy`,
+`ambiguous`, `misleading` -- unclassified trials are excluded from the
+class-keyed breakdowns but still counted in the overall figures). Counts
+follow the eligibility rule named by the column, and two differently-named
+counts are deliberately not the same denominator: `n_fast_trials` counts
+every started Fast-condition row including no-response trials, while
+`n_fast_dt_trials` counts only finite decision times among
+primary-analysis-eligible trials.
+
+**Group statistics** (`behavior_group_statistics`): one row per fixed,
+declared-in-advance contrast -- Fast-vs-Slow decision time, Fast-vs-Slow raw
+error count, all three pairwise trial-class decision-time contrasts, and all
+three class contrasts for each SPD view. Each row carries a paired t-test
+and Cohen's dz from `behavior/math/inference.paired_subject_statistics`,
+pairing by subject row and excluding a subject from one contrast when
+either value is non-finite. Contrasts are never chosen from observed
+results and receive no multiplicity correction; error counts are raw
+trial counts, not converted to rates.
+
+Subject exclusions (`ProjectConfig.subject_exclusions`) are applied before
+any of the three tables are built, so an excluded subject's trials never
+enter the motor-baseline calculation, the trial-feature table, or either
+summary.
+
+## Stage 2b: Behavioral Characterization Analyses
+
+**Stage 2b reads Stage 2's trial-feature and subject-summary tables**, not
+the raw Stage 1 layer, and requires Stage 2 to have run first --
+`analyze_behavior_characterization` raises `FileNotFoundError` naming
+`behavior analyze` otherwise. It runs the fixed battery of analyses from
+`docs/behavior_analysis_roadmap.md` -- distributions, condition x class and
+session-order effects, lapses, continuous evidence, criterion decline and
+urgency, psychophysical reverse correlation, conditional accuracy, choice
+history and post-error slowing, individual differences, and cross-species
+comparison -- implemented under `behavior/analyses/` and orchestrated by
+`workflows/behavior_characterization.py`.
+
+Each analysis writes its own derivative and, where it has one, a matching
+`*stats` group-statistics derivative, so that one failed model never
+truncates the rest of the output:
+
+```text
+derivatives/sub-group/beh/sub-group_task-tokens_desc-conditionclass_beh.tsv
+derivatives/sub-group/beh/sub-group_task-tokens_desc-conditionclassstats_beh.tsv
+```
+
+`ROADMAP_ITEMS` in `workflows/behavior_characterization.py` is the single
+source mapping each derivative's `desc` name to its roadmap item code (e.g.
+`conditionclass` -> "A3 condition x class breakdown"). That code, plus the
+analysis name, the subjects included and excluded, and both source table
+paths, are recorded in every derivative's JSON sidecar, so a derivative
+states its own provenance back to the planning document without a second
+lookup; results on the current dataset are tracked separately in
+`docs/behavior_roadmap_results.md`. Inference throughout is "per-subject fit
+followed by a group test on the fitted values" (two-stage summary
+statistics), also recorded in the sidecar.
+
+`individual_profile` -- the source of the `individualprofile` and
+`individualcorrelations` derivatives -- optionally joins a subject-level MEG
+metrics table (`--neural-metrics`, a TSV/CSV with a `subject` column) into
+the individual-difference profile; when omitted, those columns are simply
+absent rather than backfilled.
 
 ## Path Convention
 

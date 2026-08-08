@@ -47,6 +47,8 @@ class ProjectConfig:
             "subject_exclusions",
             tuple(normalize_subject_id(subject) for subject in self.subject_exclusions),
         )
+        if self.subjects_dir is None:
+            object.__setattr__(self, "subjects_dir", self.data_root / "IRM")
         for field_name in ("subjects_dir", "trans_dir", "noise_dir"):
             value = getattr(self, field_name)
             if value is not None:

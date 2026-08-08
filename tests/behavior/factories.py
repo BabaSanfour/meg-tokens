@@ -12,9 +12,12 @@ module against itself.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 
+from meg_tokens.behavior.schema import RAW_TRIAL_COLUMNS
 from meg_tokens.io import DerivativeLayout, save_table
 
 
@@ -111,6 +114,54 @@ def stage1_run(
     for column, values in columns.items():
         table[column] = values
     return table
+
+
+def raw_run(*, raw_rts=(400.0, None), **kwargs) -> pd.DataFrame:
+    """Build one valid raw behavioral run: ``RAW_TRIAL_COLUMNS`` and no more.
+
+    This is what Stage 0 stages under ``BIDS/sub-*/beh/`` -- the transcribed
+    fields only. It is the Stage 1 table with the derivative-stage additions
+    removed (trial class and its provenance, run identity, ``rawRT``,
+    ``isCorrect``), so the two shapes cannot drift apart here.
+    """
+    table = stage1_run(raw_rts=list(raw_rts), **kwargs)
+    return table[RAW_TRIAL_COLUMNS].reset_index(drop=True)
+
+
+def stage_raw_behavior(
+    bids_root,
+    *,
+    subject: str = "H01",
+    condition: str = "Slow",
+    run: str = "1",
+    date: str = "180131",
+    task: str = "tokens",
+    **kwargs,
+) -> Path:
+    """Write one raw behavioral run where Stage 0 puts it, sidecar included.
+
+    Stage 1 reads run identity from the sidecar rather than from the BIDS
+    entities (which lowercase the condition and drop the date), so a fixture
+    that omits it would not be readable by the stage under test.
+    """
+    table = raw_run(subject=subject, condition=condition, run=int(run), **kwargs)
+    path = (
+        Path(bids_root) / f"sub-{subject}" / "beh"
+        / f"sub-{subject}_task-{task}_acq-{condition.lower()}_run-{run}_beh.tsv"
+    )
+    save_table(
+        path,
+        table,
+        metadata={
+            "stage": "raw_bids",
+            "subject": subject,
+            "condition": condition,
+            "run": int(run),
+            "acquisition_date": date,
+            "source_file": f"{subject}{condition}{run}_{date}.tdms",
+        },
+    )
+    return path
 
 
 def trial_features(**columns) -> pd.DataFrame:

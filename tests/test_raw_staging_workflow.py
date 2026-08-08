@@ -209,3 +209,45 @@ def test_apply_raw_staging_raises_without_manifest(tmp_path):
 def test_matching_tdms_files_returns_empty_for_missing_subject_dir(tmp_path):
     (tmp_path / "tdms").mkdir()
     assert _matching_tdms_files(_project(tmp_path), "H99") == []
+
+
+def _subject_logs(tmp_path, *names) -> Path:
+    subject_dir = tmp_path / "tdms" / "H01"
+    subject_dir.mkdir(parents=True)
+    for name in names:
+        (subject_dir / name).write_text("")
+    return subject_dir
+
+
+# The two guards below used to sit downstream in `behavior ingest`. Stage 1
+# now reads the staged BIDS tables, so this is the only gate between the raw
+# logs and the dataset: a file dropped here never reaches any analysis.
+
+
+def test_matching_tdms_files_refuses_to_guess_at_a_non_canonical_name(tmp_path):
+    """A misnamed real run and a scratch export look identical to a glob, and
+    only one of them is safe to skip."""
+    _subject_logs(tmp_path, "H1Slow1_180131.tdms", "temp_180131.tdms")
+
+    with pytest.raises(ValueError, match="temp_180131.tdms"):
+        _matching_tdms_files(_project(tmp_path), "H01")
+
+
+def test_matching_tdms_files_skips_only_explicitly_ignored_names(tmp_path):
+    _subject_logs(tmp_path, "H1Slow1_180131.tdms", "temp_180131.tdms")
+    project = ProjectConfig(
+        data_root=tmp_path, behavior_ignore_files=("temp_180131.tdms",)
+    )
+
+    matched = _matching_tdms_files(project, "H01")
+
+    assert [path.name for path in matched] == ["H1Slow1_180131.tdms"]
+
+
+def test_matching_tdms_files_rejects_two_logs_claiming_one_bids_path(tmp_path):
+    """Both resolve to the same staged file, so the second would overwrite the
+    first and the loss would be invisible afterwards."""
+    _subject_logs(tmp_path, "H1Slow1_180131.tdms", "H1Slow1_190101.tdms")
+
+    with pytest.raises(ValueError, match="Duplicate TDMS run"):
+        _matching_tdms_files(_project(tmp_path), "H01")

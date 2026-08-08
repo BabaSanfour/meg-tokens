@@ -28,22 +28,11 @@ from meg_tokens.core import (
 )
 
 
-def _add_root_option(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument(
-        "--data-root",
-        dest="data_root",
-        help=(
-            "Data root containing raw/ (raw MEG), tdms/ (behavioral logs), "
-            "and BIDS/ (derivatives) as siblings. Only used without --config."
-        ),
-    )
-
-
 def build_parser() -> argparse.ArgumentParser:
     """Build the side-effect-free project command parser."""
     parser = argparse.ArgumentParser(prog="meg-tokens")
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
-    parser.add_argument("--config", help="Project TOML configuration.")
+    parser.add_argument("--config", required=True, help="Project TOML configuration.")
     domains = parser.add_subparsers(dest="domain", required=True)
 
     behavior = domains.add_parser("behavior", help="Behavior ingestion and analysis.")
@@ -53,7 +42,6 @@ def build_parser() -> argparse.ArgumentParser:
         "ingest",
         help="Parse TDMS runs into behavior derivatives.",
     )
-    _add_root_option(ingest)
     ingest.add_argument("--subjects", nargs="+")
     ingest.add_argument("--dry-run", dest="dry_run", action="store_true")
 
@@ -61,19 +49,17 @@ def build_parser() -> argparse.ArgumentParser:
         "analyze",
         help="Compute subject behavioral summaries from staged TSV files.",
     )
-    _add_root_option(analyze)
     analyze.add_argument("--subjects", nargs="+")
 
-    extended = behavior_commands.add_parser(
-        "extended",
+    characterization = behavior_commands.add_parser(
+        "characterization",
         help=(
-            "Run the docs/behavior_analysis_roadmap.md analyses over the "
-            "staged trial-feature table."
+            "Stage 2b: run the docs/behavior_analysis_roadmap.md analyses "
+            "over the staged trial-feature table."
         ),
     )
-    _add_root_option(extended)
-    extended.add_argument("--subjects", nargs="+")
-    extended.add_argument(
+    characterization.add_argument("--subjects", nargs="+")
+    characterization.add_argument(
         "--neural-metrics",
         dest="neural_metrics",
         help=(
@@ -86,7 +72,6 @@ def build_parser() -> argparse.ArgumentParser:
         "qc",
         help="Validate source TDMS success-probability and SPD profiles.",
     )
-    _add_root_option(qc)
 
     meg = domains.add_parser("meg", help="MEG preprocessing and epoching.")
     meg_commands = meg.add_subparsers(dest="meg_command", required=True)
@@ -100,7 +85,6 @@ def build_parser() -> argparse.ArgumentParser:
             "touches BIDS/."
         ),
     )
-    _add_root_option(stage_raw)
     stage_raw.add_argument("--subjects", nargs="+", required=True)
 
     apply_raw_staging_parser = meg_commands.add_parser(
@@ -111,7 +95,6 @@ def build_parser() -> argparse.ArgumentParser:
             "`stage-raw`, or hand-reviewed). Only action=stage rows."
         ),
     )
-    _add_root_option(apply_raw_staging_parser)
     apply_raw_staging_parser.add_argument("--subjects", nargs="+")
     apply_raw_staging_parser.add_argument(
         "--manifest",
@@ -122,7 +105,6 @@ def build_parser() -> argparse.ArgumentParser:
         "preprocess",
         help="Filter one CTF recording and optionally apply ICA.",
     )
-    _add_root_option(preprocess)
     preprocess.add_argument("--raw-path", dest="raw_path", required=True)
     preprocess.add_argument("--subject", required=True)
     preprocess.add_argument("--run", required=True)
@@ -137,7 +119,6 @@ def build_parser() -> argparse.ArgumentParser:
         "epoch",
         help="Build event-locked epochs from staged raw and behavior derivatives.",
     )
-    _add_root_option(epoch)
     epoch.add_argument("--subjects", nargs="+", required=True)
     epoch.add_argument("--alignment", "--align-to", dest="alignment", choices=["go", "enter", "feedback"], default="go")
     epoch.add_argument("--tmin", type=float, default=-0.5)
@@ -149,7 +130,6 @@ def build_parser() -> argparse.ArgumentParser:
         "source",
         help="Run source reconstruction stages for selected subjects.",
     )
-    _add_root_option(source)
     source.add_argument("--subjects", nargs="+", required=True)
     source.add_argument("--run")
     source.add_argument("--condition")
@@ -169,7 +149,6 @@ def build_parser() -> argparse.ArgumentParser:
     feature_commands = features.add_subparsers(dest="feature_command", required=True)
 
     erp = feature_commands.add_parser("erp", help="Extract ERP source features.")
-    _add_root_option(erp)
     erp.add_argument("--subjects", nargs="+", required=True)
     erp.add_argument("--run", required=True)
     erp.add_argument("--condition")
@@ -188,7 +167,6 @@ def build_parser() -> argparse.ArgumentParser:
     erp.add_argument("--behavior-root")
 
     power = feature_commands.add_parser("power", help="Extract source-space band power.")
-    _add_root_option(power)
     power.add_argument("--subjects", nargs="+", required=True)
     power.add_argument("--run", required=True)
     power.add_argument("--condition")
@@ -204,7 +182,6 @@ def build_parser() -> argparse.ArgumentParser:
     power.add_argument("--source-root")
 
     spectral = feature_commands.add_parser("spectral", help="Compute Epochs PSD and specparam.")
-    _add_root_option(spectral)
     spectral.add_argument("--subjects", nargs="+", required=True)
     spectral.add_argument("--run")
     spectral.add_argument("--condition")
@@ -219,7 +196,6 @@ def build_parser() -> argparse.ArgumentParser:
     spectral.add_argument("--epochs-root")
 
     hilbert = feature_commands.add_parser("hilbert", help="Extract analytic-signal features.")
-    _add_root_option(hilbert)
     hilbert.add_argument("--subjects", nargs="+", required=True)
     hilbert.add_argument("--conditions", nargs="+", required=True)
     hilbert.add_argument("--alignment", choices=["go", "enter", "feedback"], default="go")
@@ -233,7 +209,6 @@ def build_parser() -> argparse.ArgumentParser:
     hilbert.add_argument("--feature-root")
 
     pac = feature_commands.add_parser("pac", help="Compute phase-amplitude coupling.")
-    _add_root_option(pac)
     pac.add_argument("--subjects", nargs="+", required=True)
     pac.add_argument("--conditions", nargs="+", required=True)
     pac.add_argument("--phase-bands", nargs="+", required=True)
@@ -246,7 +221,6 @@ def build_parser() -> argparse.ArgumentParser:
     pac.add_argument("--feature-root")
 
     connectivity = feature_commands.add_parser("connectivity", help="Compute spectral connectivity.")
-    _add_root_option(connectivity)
     connectivity.add_argument("--subjects", nargs="+", required=True)
     connectivity.add_argument("--conditions", nargs="+", required=True)
     connectivity.add_argument("--alignment", choices=["go", "enter", "feedback"], default="enter")
@@ -266,7 +240,6 @@ def build_parser() -> argparse.ArgumentParser:
     analysis_commands = analyze.add_subparsers(dest="analysis_command", required=True)
 
     statistics = analysis_commands.add_parser("statistics", help="Run a paired group contrast.")
-    _add_root_option(statistics)
     statistics.add_argument("--conditions", nargs=2, default=["Fast", "Slow"])
     statistics.add_argument("--subjects", nargs="+")
     statistics.add_argument("--alignment", choices=["go", "enter", "feedback"], default="go")
@@ -284,7 +257,6 @@ def build_parser() -> argparse.ArgumentParser:
         "lateralization",
         help="Test homologous left-minus-right ERP labels.",
     )
-    _add_root_option(lateralization)
     lateralization.add_argument("--condition", required=True)
     lateralization.add_argument("--subjects", nargs="+")
     lateralization.add_argument("--alignment", choices=["go", "enter", "feedback"], default="go")
@@ -298,7 +270,6 @@ def build_parser() -> argparse.ArgumentParser:
     lateralization.add_argument("--feature-root")
 
     decoding = analysis_commands.add_parser("decoding", help="Run time-resolved decoding.")
-    _add_root_option(decoding)
     decoding.add_argument("--conditions", nargs="+", default=["Fast", "Slow"])
     decoding.add_argument("--input-conditions", nargs="+")
     decoding.add_argument("--subjects", nargs="+")
@@ -318,7 +289,6 @@ def build_parser() -> argparse.ArgumentParser:
     decoding.add_argument("--feature-root")
 
     decomposition = analysis_commands.add_parser("decomposition", help="Run PCA trajectories or dPCA.")
-    _add_root_option(decomposition)
     decomposition.add_argument("--conditions", nargs="+", default=["Fast", "Slow"])
     decomposition.add_argument("--subjects", nargs="+")
     decomposition.add_argument("--analysis", choices=["pca", "dpca"], default="pca")
@@ -344,7 +314,6 @@ def build_parser() -> argparse.ArgumentParser:
         "spatial-decoding",
         help="Run sensor-space decoding on staged trial arrays.",
     )
-    _add_root_option(spatial_decoding)
     spatial_decoding.add_argument("--data-dir", required=True)
     spatial_decoding.add_argument("--conditions", nargs="+", default=["Fast", "Slow"])
     spatial_decoding.add_argument("--permutations", type=int, default=0)
@@ -355,14 +324,12 @@ def build_parser() -> argparse.ArgumentParser:
     report_commands = report.add_subparsers(dest="report_command", required=True)
 
     behavior_report = report_commands.add_parser("behavior", help="Plot staged behavioral results.")
-    _add_root_option(behavior_report)
     behavior_report.add_argument("--subjects", nargs="+")
     behavior_report.add_argument("--behavior-root")
     behavior_report.add_argument("--output-root")
     behavior_report.add_argument("--neural-metrics")
 
     statistics_report = report_commands.add_parser("statistics", help="Plot group statistics.")
-    _add_root_option(statistics_report)
     statistics_report.add_argument("--conditions", nargs=2, default=["Fast", "Slow"])
     statistics_report.add_argument("--alignment", default="go", choices=["go", "enter", "feedback"])
     statistics_report.add_argument("--source-method", default="dSPM")
@@ -377,7 +344,6 @@ def build_parser() -> argparse.ArgumentParser:
     statistics_report.add_argument("--output-root")
 
     connectivity_report = report_commands.add_parser("connectivity", help="Plot a connectivity circle.")
-    _add_root_option(connectivity_report)
     connectivity_report.add_argument("--condition", required=True)
     connectivity_report.add_argument("--band", default="alpha")
     connectivity_report.add_argument("--p-threshold", type=float, default=0.05)
@@ -387,7 +353,6 @@ def build_parser() -> argparse.ArgumentParser:
     connectivity_report.add_argument("--output-root")
 
     seed_report = report_commands.add_parser("seed-connectivity", help="Create a seed-connectivity report.")
-    _add_root_option(seed_report)
     seed_report.add_argument("--condition", required=True)
     seed_report.add_argument("--seed-roi", required=True)
     seed_report.add_argument("--band", default="alpha")
@@ -398,7 +363,6 @@ def build_parser() -> argparse.ArgumentParser:
     seed_report.add_argument("--output-root")
 
     onset_report = report_commands.add_parser("decoding-onset", help="Compare decoding onset times.")
-    _add_root_option(onset_report)
     onset_report.add_argument("--scores", nargs="+", required=True)
     onset_report.add_argument("--thresholds", nargs="+", required=True)
     onset_report.add_argument("--names", nargs="+", required=True)
@@ -407,38 +371,32 @@ def build_parser() -> argparse.ArgumentParser:
     onset_report.add_argument("--output-root")
 
     spatial_report = report_commands.add_parser("spatial-decoding", help="Plot sensor decoding scores.")
-    _add_root_option(spatial_report)
     spatial_report.add_argument("--score-path", required=True)
     spatial_report.add_argument("--info-fif", required=True)
     spatial_report.add_argument("--output-root")
 
     trajectory_report = report_commands.add_parser("pca-trajectory", help="Plot PCA trajectories.")
-    _add_root_option(trajectory_report)
     trajectory_report.add_argument("--timecourse-path", required=True)
     trajectory_report.add_argument("--conditions", nargs="+")
     trajectory_report.add_argument("--components", type=int, nargs="+", default=[1, 2, 3])
     trajectory_report.add_argument("--output-root")
 
     timecourse_report = report_commands.add_parser("pca-timecourse", help="Plot PCA component time courses.")
-    _add_root_option(timecourse_report)
     timecourse_report.add_argument("--timecourse-path", required=True)
     timecourse_report.add_argument("--components", type=int, default=3)
     timecourse_report.add_argument("--conditions", nargs="+")
     timecourse_report.add_argument("--output-root")
 
     variance_report = report_commands.add_parser("pca-variance", help="Plot PCA explained variance.")
-    _add_root_option(variance_report)
     variance_report.add_argument("--variance-path", required=True)
     variance_report.add_argument("--output-root")
 
     heatmap_report = report_commands.add_parser("pca-heatmap", help="Plot a PCA ROI heatmap.")
-    _add_root_option(heatmap_report)
     heatmap_report.add_argument("--data-path", required=True)
     heatmap_report.add_argument("--rois", nargs="+")
     heatmap_report.add_argument("--output-root")
 
     loadings_report = report_commands.add_parser("pca-loadings", help="Plot PCA source loadings.")
-    _add_root_option(loadings_report)
     loadings_report.add_argument("--loadings-path", required=True)
     loadings_report.add_argument("--subjects-dir")
     loadings_report.add_argument("--threshold-percentile", type=float)
@@ -449,7 +407,6 @@ def build_parser() -> argparse.ArgumentParser:
     loadings_report.add_argument("--output-root")
 
     dpca_report = report_commands.add_parser("dpca", help="Plot dPCA components.")
-    _add_root_option(dpca_report)
     dpca_report.add_argument("--component-paths", nargs="+")
     dpca_report.add_argument("--dpca-root")
     dpca_report.add_argument("--n-components", type=int, default=3)
@@ -458,7 +415,6 @@ def build_parser() -> argparse.ArgumentParser:
     validate = domains.add_parser("validate", help="Validate staged derivatives.")
     validation_commands = validate.add_subparsers(dest="validation_command", required=True)
     golden = validation_commands.add_parser("golden", help="Compare derivatives with real references.")
-    _add_root_option(golden)
     golden.add_argument("--comparison-config", required=True)
     golden.add_argument("--out-tsv", required=True)
     golden.add_argument("--allow-failures", action="store_true")
@@ -466,12 +422,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _project_from_args(args: argparse.Namespace) -> ProjectConfig:
-    if args.config:
-        project = ProjectConfig.from_toml(args.config)
-    else:
-        if not args.data_root:
-            raise ValueError("Provide --config or --data-root")
-        project = ProjectConfig(data_root=Path(args.data_root))
+    project = ProjectConfig.from_toml(args.config)
 
     updates = {}
     for argument, field_name in (
@@ -503,10 +454,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             from meg_tokens.workflows.behavior_analysis import analyze_behavior
 
             result = analyze_behavior(project, subjects=args.subjects)
-        elif args.domain == "behavior" and args.behavior_command == "extended":
-            from meg_tokens.workflows.behavior_extended import analyze_behavior_extended
+        elif args.domain == "behavior" and args.behavior_command == "characterization":
+            from meg_tokens.workflows.behavior_characterization import (
+                analyze_behavior_characterization,
+            )
 
-            result = analyze_behavior_extended(
+            result = analyze_behavior_characterization(
                 project,
                 subjects=args.subjects,
                 neural_metrics_path=args.neural_metrics,
