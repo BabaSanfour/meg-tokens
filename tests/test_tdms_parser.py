@@ -2,16 +2,10 @@ import os
 import re
 import pytest
 import pandas as pd
-from meg_tokens.behavior.schema import (
-    OUTCOME_NEVER_STARTED,
-    validate_behavior_table,
-)
-from meg_tokens.behavior.tables import read_behavior_table
 from meg_tokens.behavior.tdms import (
     parse_single_trial,
     parse_tdms_file,
 )
-from meg_tokens.io import save_table
 
 # Sample Events string mimicking the real TDMS structure
 EVENTS_STR = """sTaskType: 'TokensMvt'
@@ -37,10 +31,6 @@ Tokens.Data: (
 [tTime: 1460, nTokenNum: 2, nTokenDir: 2, nProb: 0.81234567890123, nTokenX: 576, nTokenY: 475]
 )
 """
-
-
-def test_never_started_outcome_matches_labview_contract():
-    assert OUTCOME_NEVER_STARTED == 7003
 
 
 def make_events(
@@ -277,162 +267,6 @@ def test_parse_real_tdms_integration():
         assert df['nTrialIndex'].iloc[0] == 1
     else:
         pytest.skip("Real integration TDMS file not accessible.")
-
-
-def test_validate_behavior_table_rejects_invalid_event_order():
-    df = pd.DataFrame({
-        'nTrialIndex': [1],
-        'sTrialClass': [1],
-        'sTrialClassRaw': ['e'],
-        'trial_class_source': ['design'],
-        'trial_class_rule': ['recorded_label'],
-        'sp_design_correct': [[0.6]],
-        'nInitialTime': [0],
-        'nChoiceMade': [1],
-        'nCorrectChoice': [1],
-        'tGO': [2000],
-        'tEnterCenter': [0],
-        'tExitCenter': [1000],
-        'tEnterTarget': [1000],
-        'tTrialEnd': [2500],
-        'sTokenDirs': ['121'],
-        'nTokenNum': [[1]],
-        'nTokenDir': [[1]],
-        'tTime': [[1100]],
-        'nProb': [[0.6]],
-        'token_log_rows': [1],
-        'token_log_short': [False],
-        'nOutcome': [0],
-    })
-
-    with pytest.raises(ValueError, match="Invalid event ordering"):
-        validate_behavior_table(df)
-
-
-def _make_behavior_df(indices):
-    n = len(indices)
-    return pd.DataFrame({
-        'nTrialIndex': indices,
-        'sTrialClass': [1] * n,
-        'sTrialClassRaw': ['e'] * n,
-        'trial_class_source': ['design'] * n,
-        'trial_class_rule': ['recorded_label'] * n,
-        'sp_design_correct': [[0.6]] * n,
-        'nInitialTime': list(range(n)),
-        'nChoiceMade': [1] * n,
-        'nCorrectChoice': [1] * n,
-        'tGO': [500] * n,
-        'tEnterCenter': [0] * n,
-        'tExitCenter': [1000] * n,
-        'tEnterTarget': [1000] * n,
-        'tTrialEnd': [1500] * n,
-        'sTokenDirs': ['121'] * n,
-        'nTokenNum': [[1]] * n,
-        'nTokenDir': [[1]] * n,
-        'tTime': [[600]] * n,
-        'nProb': [[0.6]] * n,
-        'token_log_rows': [1] * n,
-        'token_log_short': [False] * n,
-        'nOutcome': [0] * n,
-    })
-
-
-def test_read_behavior_table_deserializes_sequence_columns(tmp_path):
-    table = _make_behavior_df([1, 2])
-    table.at[1, 'sp_design_correct'] = None
-    table.at[1, 'nChoiceMade'] = 0
-    table.at[1, 'nTokenNum'] = []
-    table.at[1, 'nTokenDir'] = []
-    table.at[1, 'tTime'] = []
-    table.at[1, 'nProb'] = []
-    table.at[1, 'token_log_rows'] = 0
-    path = tmp_path / 'behavior.tsv'
-    save_table(path, table)
-
-    loaded = read_behavior_table(path)
-
-    assert loaded.at[0, 'sp_design_correct'] == [0.6]
-    assert loaded.at[0, 'nTokenNum'] == [1]
-    assert loaded.at[0, 'nTokenDir'] == [1]
-    assert loaded.at[0, 'tTime'] == [600.0]
-    assert loaded.at[0, 'nProb'] == [0.6]
-    assert loaded.at[1, 'sp_design_correct'] is None
-    assert loaded.at[1, 'nTokenNum'] == []
-    assert loaded.at[1, 'nTokenDir'] == []
-    assert loaded.at[1, 'tTime'] == []
-    assert loaded.at[1, 'nProb'] == []
-    assert bool(loaded.at[0, 'token_log_short']) is False
-
-
-def test_read_behavior_table_rejects_scalar_sequence_fields(tmp_path):
-    table = _make_behavior_df([1])
-    table.at[0, 'nProb'] = 0
-    path = tmp_path / 'behavior.tsv'
-    save_table(path, table)
-
-    with pytest.raises(ValueError, match="nProb must contain a sequence"):
-        read_behavior_table(path)
-
-
-def test_read_behavior_table_rejects_numeric_boolean_fields(tmp_path):
-    table = _make_behavior_df([1])
-    table['token_log_short'] = [0]
-    path = tmp_path / 'behavior.tsv'
-    save_table(path, table)
-
-    with pytest.raises(ValueError, match="token_log_short must be boolean"):
-        read_behavior_table(path)
-
-
-def test_validate_behavior_table_accepts_consecutive_run_not_starting_at_1():
-    """Real files show nTrialIndex is a session-scoped counter, not reset per
-    .tdms file -- a run starting above 1 is a benign offset, not corruption.
-    """
-    df = _make_behavior_df([7, 8, 9])
-    validate_behavior_table(df)  # should not raise
-
-
-def test_validate_behavior_table_rejects_index_below_1():
-    df = _make_behavior_df([0, 1, 2])
-    with pytest.raises(ValueError, match="nTrialIndex must start at 1 or above"):
-        validate_behavior_table(df)
-
-
-def test_validate_behavior_table_rejects_gap_in_sequence():
-    df = _make_behavior_df([5, 6, 8])
-    with pytest.raises(ValueError, match="gap-free consecutive sequence"):
-        validate_behavior_table(df)
-
-
-def test_validate_behavior_table_accepts_consistent_never_started_trial():
-    df = _make_behavior_df([1])
-    df.loc[0, ["nOutcome", "tGO", "nChoiceMade"]] = [
-        OUTCOME_NEVER_STARTED,
-        0,
-        0,
-    ]
-
-    validate_behavior_table(df)
-
-
-@pytest.mark.parametrize(
-    ("column", "value"),
-    [("tGO", 500), ("nChoiceMade", 1)],
-)
-def test_validate_behavior_table_rejects_inconsistent_never_started_trial(
-    column,
-    value,
-):
-    df = _make_behavior_df([1])
-    df.loc[0, ["nOutcome", "tGO", "nChoiceMade"]] = [
-        OUTCOME_NEVER_STARTED,
-        0,
-        0,
-    ]
-    df.loc[0, column] = value
-
-    with pytest.raises(ValueError, match="must have tGO == 0 and nChoiceMade == 0"):
-        validate_behavior_table(df)
 
 
 def test_parse_single_trial_reads_scientific_notation_nprob():

@@ -8,6 +8,12 @@ from meg_tokens.cli import main
 from meg_tokens.core import ProjectConfig
 from meg_tokens.io import DerivativeLayout, save_table, sidecar_path
 from meg_tokens.workflows import analyze_behavior, ingest_behavior
+from meg_tokens.workflows.behavior_extended import (
+    ROADMAP_ITEMS,
+    analyze_behavior_extended,
+)
+
+from tests.behavior.factories import stage_behavior
 
 
 def _behavior_table(subject, condition, run, enter_times, choices, correct):
@@ -312,3 +318,42 @@ def test_unified_validation_help_is_available(capsys):
         main(["validate", "golden", "--help"])
     assert error.value.code == 0
     assert "--comparison-config" in capsys.readouterr().out
+
+
+# --- extended analysis pipeline ----------------------------------------------
+
+
+def test_analyze_behavior_extended_writes_every_roadmap_table(tmp_path):
+    project = ProjectConfig(data_root=tmp_path)
+    stage_behavior(project.bids_root)
+    analyze_behavior(project)
+
+    result = analyze_behavior_extended(project)
+
+    assert result.stage == "behavior_extended_analysis"
+    assert result.settings["n_subjects"] == 3
+    layout = DerivativeLayout(project.bids_root)
+    for name in ROADMAP_ITEMS:
+        assert layout.behavior_analysis(name) in result.outputs
+    for path in result.outputs:
+        assert path.is_file()
+
+    cells = pd.read_csv(layout.behavior_analysis("conditionclass"), sep="\t")
+    assert set(cells["subject"]) == {"H01", "H02", "H03"}
+    criterion = pd.read_csv(layout.behavior_analysis("criteriondecline"), sep="\t")
+    assert set(criterion["response"]) == {"logged_spd", "logged_spd_log_odds"}
+
+
+def test_analyze_behavior_extended_requires_staged_trial_features(tmp_path):
+    project = ProjectConfig(data_root=tmp_path)
+    with pytest.raises(FileNotFoundError, match="behavior analyze"):
+        analyze_behavior_extended(project)
+
+
+def test_behavior_analysis_paths_are_named_from_the_analysis(tmp_path):
+    layout = DerivativeLayout(tmp_path)
+    assert layout.behavior_analysis("urgency").as_posix().endswith(
+        "sub-group/beh/sub-group_task-tokens_desc-urgency_beh.tsv"
+    )
+    with pytest.raises(ValueError, match="alphanumeric"):
+        layout.behavior_analysis("post_error")

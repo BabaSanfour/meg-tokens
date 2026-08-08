@@ -268,6 +268,9 @@ def decision_time_distribution_statistics(
     metrics
         Distribution-summary columns to test.  The defaults compare the 10th,
         50th, and 90th percentiles, skewness, and ex-Gaussian ``tau``.
+        Requested metrics absent from ``subject_distributions`` are skipped,
+        because ``exgaussian_tau`` exists only when the caller asked
+        :func:`decision_time_distributions` to fit it.
 
     Returns
     -------
@@ -281,13 +284,18 @@ def decision_time_distribution_statistics(
     The declared contrasts are easy versus ambiguous, easy versus misleading,
     ambiguous versus misleading, and fast versus slow.  Pairing is by subject;
     the shared inference helper removes incomplete pairs.  A contrast is
-    omitted when either input column is absent.  The function performs no
-    multiplicity correction and does not choose contrasts from the observed
-    results.  Duplicate subject/stratum rows cause pandas ``pivot`` to raise
-    rather than being silently aggregated.
+    omitted when its metric or either of its strata is absent.  The function
+    performs no multiplicity correction and does not choose contrasts from the
+    observed results.  Duplicate subject/stratum rows cause pandas ``pivot`` to
+    raise rather than being silently aggregated.
     """
+    available = [
+        metric for metric in metrics if metric in subject_distributions.columns
+    ]
+    if not available:
+        return pd.DataFrame()
     wide = subject_distributions.pivot(
-        index="subject", columns="stratum", values=list(metrics)
+        index="subject", columns="stratum", values=available
     )
     contrasts = [
         ("class", "easy", "ambiguous"),
@@ -297,7 +305,7 @@ def decision_time_distribution_statistics(
     ]
     rows = []
     for stratum_type, first, second in contrasts:
-        for metric in metrics:
+        for metric in available:
             if (metric, first) not in wide.columns or (metric, second) not in wide.columns:
                 continue
             pair = wide[[(metric, first), (metric, second)]].copy()
