@@ -99,8 +99,28 @@ flagged for review, never staged), then to chronological 1:1 pairing when
 the remaining candidate and run counts are equal. Anything still unresolved
 is flagged `ambiguous` with each candidate's pulse count and fingerprint
 error as evidence, for hand-resolution in the manifest. Every accepted pair
-is additionally cross-checked against the real trigger-pulse count. Full
-design and evidence: `docs/meg_t0_7_raw_bidsification_plan.md`.
+is additionally cross-checked against the real trigger-pulse count.
+
+**H01 and H05** are the only subjects whose duration counts don't match
+8-Slow/Fast + 2-RT (H01: 10 SLOWFAST; H05: 9 SLOWFAST, 1 RT). Pinned as
+`KNOWN_SESSION_OVERRIDES`, cross-referenced against
+`archive/replicated/DDM_scripts/scripts_new/55_CTF_to_FIF.ipynb` (H01,
+labeled `Pilot01` there). H05's RT deficit is a real recording gap, not an
+ambiguity. The fingerprint independently reproduces all 17 entries; the
+overrides now serve only as a cross-check and a fallback.
+
+**Known dataset gaps** -- permanent, not resolvable by re-running Stage 0:
+
+| Subject | Kind | Gap |
+| :--- | :--- | :--- |
+| H01 | headshape | not found |
+| H05 | run RT1 | no raw MEG counterpart |
+| H05 | noise | not found, any date |
+| H07, H10 | anat | no FreeSurfer reconstruction |
+| H26/H27 | noise (`20181206`) | `_01.ds` `.hc` corrupt (`RuntimeError: HPI information not available`); `_02.ds` valid |
+
+`KNOWN_NOISE_OVERRIDES` (`meg_tokens/meg/raw_staging.py`) redirects
+H26/H27's noise date to `_02.ds`, same pattern as `KNOWN_SESSION_OVERRIDES`.
 
 Because `desc` is derivatives-only in real BIDS, condition uses `acq`
 instead (`Slow2` -> `acq-slow_run-2`); `task` stays singular (`tokens`); no
@@ -145,7 +165,8 @@ separately-managed `-trans.fif`, never `coordsystem.json`).
 is unchanged by Stage 0 -- the `sub-emptyroom` tree doesn't feed it yet.
 
 **Behavior raw layer:** `BIDS/sub-<ID>/beh/*_beh.tsv` is a minimally-parsed
-TDMS export (`parse_tdms_file(path, infer_random_classes=False)`) under
+TDMS export (`parse_tdms_file(path)`, which never infers trial classes --
+see "Behavioral module boundaries" above) under
 raw-legal BIDS entities, independent of and additive to
 `derivatives/sub-*/beh/*_beh.tsv` (the `behavior ingest` output,
 which already makes real analysis choices like trial-class inference, so
@@ -173,67 +194,42 @@ the conformed volumes.
 
 ## Stage 1: Behavioral Log Parsing
 
-**Stage 1 reads `BIDS/sub-*/beh/`, not `tdms/`.** The derivative is derived
-from the raw BIDS layer, in the ordinary BIDS sense, rather than from a
-proprietary container sitting outside the dataset -- which also means the
-LabVIEW format has exactly one reader in the project. The consequence is a
-real ordering dependency: **all of Stage 0 must have run first**, and a
-subject with no staged behavior raises a `FileNotFoundError` naming
-`apply-raw-staging` rather than quietly producing nothing.
+Input: `BIDS/sub-*/beh/`, not `tdms/`. Requires Stage 0 first; a subject
+with no staged behavior raises `FileNotFoundError` naming
+`apply-raw-staging`.
 
-Every `*.tdms` file under a subject's `behavior_root` must match
-`H<subject><Condition><run>_<YYMMDD>.tdms` (e.g. `H01Slow1_180131.tdms`),
-where `<Condition>` is `Slow`, `Fast`, or `RT`. A non-matching filename
-raises `ValueError` unless listed in `behavior_ignore_files` (add only
-after confirming by hand it's not a real run, with the reason recorded in
-the config comment). Two files resolving to the same `(subject, condition,
-run)` also raise `ValueError` rather than one silently overwriting the
-other. Both guards now run in **Stage 0**
-(`workflows/raw_staging._matching_tdms_files`), because that is where the
-logs are read: a file dropped there never reaches any analysis, so the
-refusal has to happen at that boundary rather than downstream of it.
+Filename contract: `H<subject><Condition><run>_<YYMMDD>.tdms`, `<Condition>`
+in `{Slow, Fast, RT}`. Name/duplicate-run guards run in **Stage 0**
+(`workflows/raw_staging._matching_tdms_files`), not here.
 
-Stage 1 writes one table per staged run:
+Output, one table per run:
 
 ```text
 derivatives/sub-H01/beh/sub-H01_task-tokens_run-1_desc-slow_beh.tsv
 ```
 
-Required trial columns: `subject`, `condition`, `run`, `source_file`,
-`nTrialIndex`, `sTrialClass`, `sTrialClassRaw`, `trial_class_source`,
-`trial_class_rule`, `sp_design_correct`, `nChoiceMade`, `nCorrectChoice`,
-`tGO`, `tEnterCenter`, `tExitCenter`, `tEnterTarget`, `tTrialEnd`,
-`sTokenDirs`, `nTokenNum`, `nTokenDir`, `tTime`, `nProb`, `token_log_rows`,
+Columns: `subject`, `condition`, `run`, `source_file`, `nTrialIndex`,
+`sTrialClass`, `sTrialClassRaw`, `trial_class_source`, `trial_class_rule`,
+`sp_design_correct`, `nChoiceMade`, `nCorrectChoice`, `tGO`,
+`tEnterCenter`, `tExitCenter`, `tEnterTarget`, `tTrialEnd`, `sTokenDirs`,
+`nTokenNum`, `nTokenDir`, `tTime`, `nProb`, `token_log_rows`,
 `token_log_short`, `nOutcome`, `rawRT`, `isCorrect`.
 
-Of these, `sTrialClass`, `trial_class_source` and `trial_class_rule` are
-added *here*, by `behavior/classification.py` -- they are absent from the
-raw layer, which asserts no class. Everything else is transcribed.
+| Column(s) | Rule |
+| :--- | :--- |
+| `sTrialClass`, `trial_class_source`, `trial_class_rule` | added here (`behavior/classification.py`); rest transcribed |
+| `sTrialClassRaw` | unmodified LabVIEW label |
+| `sTrialClass` | recorded label; inferred from `sp_design_correct` only for raw `'x'` |
+| `infer_random_classes=false` | `'x'` left unclassified, `trial_class_rule="inference_disabled"` (`docs/behavioral_pipeline.md`, Findings) |
+| `sp_design_correct` | absent when LabVIEW records no correct target |
+| `sTokenDirs` vs `nTokenDir` | designed sequence vs runtime-recorded |
+| `sp_design_correct`, `nTokenNum`, `nTokenDir`, `tTime`, `nProb` | deserialized to numeric sequences on load; empty token logs -> empty sequences |
+| `tEnterCenter`/`tExitCenter` | center-hold timestamps; `tEnterTarget - tExitCenter` is the only recorded movement duration, ~0 on most trials (`docs/behavior_qc_report.md` §1) |
+| `nOutcome == 7003` | never-started; requires `tGO==0`, `nChoiceMade==0` |
 
-Subject labels are normalized to `H01` style. The parser validates
-sequential trial indices, event ordering, and equal lengths across the
-per-token `nTokenNum`/`nTokenDir`/`tTime`/`nProb` arrays before writing.
-`sTokenDirs` is the trial-level designed sequence; `nTokenDir` independently
-holds the runtime-recorded directions. `sTrialClassRaw` preserves the
-LabVIEW label; `sTrialClass` keeps recorded designed labels and is inferred
-only for raw `'x'` trials from `sp_design_correct` (provenance in
-`trial_class_source`/`trial_class_rule`). Inference is on by default;
-`infer_random_classes = false` leaves `'x'` trials unclassified
-(`trial_class_rule = "inference_disabled"`; see
-`docs/behavior_t0_1_nprob_trial_class.md` § 3b for why this is a real
-analysis choice). `sp_design_correct` is unavailable when LabVIEW records
-no correct target. The Stage 1 table loader deserializes
-`sp_design_correct`, `nTokenNum`, `nTokenDir`, `tTime`, `nProb` into numeric
-sequences before validation/analysis -- downstream code never parses
-sequence-valued cells itself; empty runtime token logs are empty sequences.
-`tEnterCenter`/`tExitCenter` are the center-hold timestamps, retained
-because `tEnterTarget - tExitCenter` is the only recorded movement
-duration; LabVIEW writes both from the same event, so this duration is zero
-on essentially every trial (`docs/behavior_qc_report.md` § 1). Event
-ordering is validated as `tGO <= tExitCenter <= tEnterTarget <= tTrialEnd`
-on chosen trials. Rows with `nOutcome == 7003` are retained for provenance
-but must have `tGO == 0` and `nChoiceMade == 0` (never started). Derivatives
-written before these fields existed must be re-ingested.
+Validation: sequential `nTrialIndex`; `tGO <= tExitCenter <= tEnterTarget <=
+tTrialEnd` on chosen trials; equal-length `nTokenNum`/`nTokenDir`/`tTime`/
+`nProb`. Subject IDs normalized to `H01` style.
 
 ## Stage 2: Behavioral Metrics Extraction
 

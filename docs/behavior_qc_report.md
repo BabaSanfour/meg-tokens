@@ -1,122 +1,11 @@
-# Behavior (TDMS) and MEG/Behavior Alignment QC
+# MEG/Behavior Alignment QC (Stage 4: Epoching)
 
-This report records the final quality controls for Stage 1 TDMS ingestion and
-MEG/behavior alignment. Results were checked against 323 TDMS files from 32
-subjects and 399 raw CTF recordings in the `DDM-tthiery` dataset.
+Event-level alignment QC for epoch extraction. Stage 0/1 issues (TDMS
+ingestion, trial classification, MEG session matching) moved to
+`docs/behavioral_pipeline.md`. Results checked against 323 TDMS files from
+32 subjects and 399 raw CTF recordings in the `DDM-tthiery` dataset.
 
-## 1. Stage 1 ingestion
-
-`meg_tokens/behavior/tdms.py` parses the source records and
-`meg_tokens/behavior/schema.py` applies strict structural validation before
-the ingestion workflow writes one BIDS-derivative behavior table per run:
-
-- Every `.tdms` filename must match `H<subject><condition><run>_<YYMMDD>.tdms`.
-  Non-matching files raise an error unless explicitly listed in
-  `behavior_ignore_files`.
-- Duplicate `(subject, condition, run)` files raise an error rather than
-  overwriting one another.
-- Missing `Events` properties, empty trial groups, and missing structural
-  fields raise a file/trial-specific error. Valid no-choice trials remain
-  valid: `nChoiceMade == 0` and a missing `tEnterTarget` are expected outcomes.
-- `sTrialClass == 'r'` is recognized as the RT-task label and encoded as
-  class `0` (Thomas's parser used `4`; inconsequential, since nothing
-  downstream filters on that value for RT trials).
-- `nOutcome` is retained and validated. `nTrialIndex` must be gap-free,
-  duplicate-free, ordered, and consecutive, but may start above 1 because the
-  LabVIEW counter is session-scoped rather than reset per file.
-
-The corrected index rule resolves the 15 apparent failures found in the full
-scan (14 genuine runs plus one scratch file): all 320 retained runs now parse
-and validate; the three excluded files are documented scratch recordings.
-
-### Excluded scratch files
-
-These files are short aborted/test fragments, not experimental runs:
-
-| Subject | File |
-|---|---|
-| H03 | `temp_180214.tdms` |
-| H18 | `temp_181024.tdms` |
-| H23 | `temp_181121.tdms` |
-
-They are excluded only through the explicit `behavior_ignore_files` config
-allowlist. Any other unexpected `.tdms` file remains an error.
-
-### Never-started trials
-
-`nOutcome == 7003` means that no go cue was issued, no tokens were shown, and
-the subject made no choice (`tGO == 0`, empty `Tokens.Data`,
-`nChoiceMade == 0`). All 229 occurrences across 54 source files matched this
-structure; production retains 226 occurrences across 53 files after excluding
-the scratch files. Codes `7021`, `7006`, and `7011` represent trials with a
-real go cue and do not affect MEG alignment.
-
-During synchronization, `OUTCOME_NEVER_STARTED` rows are retained in the Stage
-1 tables but excluded from behavioral counts and MEG event matching. The
-accounting is:
-
-| Condition | Logged rows | Started trials | Excluded 7003 | Change |
-|---|---:|---:|---:|---:|
-| RT | 2,565 | 2,527 | 38 | -1.48% |
-| Fast | 9,070 | 8,990 | 80 | -0.88% |
-| Slow | 7,455 | 7,347 | 108 | -1.45% |
-| **Total** | **19,090** | **18,864** | **226** | **-1.18%** |
-
-The excluded count is reported as `n_never_started_trials`. Motor baseline,
-Fast/Slow decision time, accuracy, correct/error decision time, and difficulty
-means are unchanged because those analyses already required a choice. Removing
-never-started rows does correct post-error adjacency: post-correct means
-changed for 16 subjects and post-error means for 5. The largest shifts were
-H11 post-correct, -9.30 ms, and H08 post-error, +9.85 ms.
-
-### Movement time is not recorded
-
-The LabVIEW error codes distinguish reaction-time errors (`7005`/`7006`) from
-movement-time errors (`7007`/`7008`), so the task does monitor a movement
-interval, recorded as `tEnterTarget - tExitCenter`. This build writes both
-timestamps from the same event: the value is **0 ms on 18,833 of 18,846
-chosen trials**, and 1 ms on the remaining 13. Both fields are parsed and
-retained in Stage 1, but no analysis in the package computes a movement
-measure. Response-vigor analysis is omitted rather than implemented against a
-field that carries no usable variation.
-
-`tTrialEnd - tEnterTarget` is not a substitute: after a choice the remaining
-tokens replay at roughly 20 ms intervals, so that interval is essentially
-`(15 - tokens seen) x 20 ms` plus feedback (133 ms mean in Fast, 1,013 ms in
-Slow, 3.6 ms in RT runs where no tokens fall), and it correlates with decision
-time at r = -0.98 (Fast) / -0.96 (Slow). It is not carried into the
-trial-feature table under any name.
-
-### Block order comes from the session clock, not `nTrialIndex`
-
-`nTrialIndex` is not reset per `.tdms` file — a run may legitimately start
-above 1 when its first trials went to a preceding scratch file — but in
-practice it restarts at 1 in almost every run, so it does not order blocks
-within a session; filenames carry a date (`YYMMDD`) and no time.
-
-`nInitialTime` is a monotonically increasing session clock in milliseconds and
-does order them. It also shows that **Fast and Slow blocks interleave**: a
-typical session runs RT1, Fast1, Slow1, Fast2, Slow2, ..., RT2 (15 subjects
-began on a Fast block, 17 on Slow). Analyses of session drift, block order,
-and condition order all use `initial_time_ms` from the trial-feature table
-rather than condition/run number.
-
-## 2. Dataset-wide MEG matching
-
-Each retained TDMS run was matched to a subject’s candidate `.ds` recordings
-using two independent timing fingerprints:
-
-1. Inter-trial intervals between MEG trial-start pulses (code `262144`, or
-   `524288` for H06) were compared with intervals between TDMS `nInitialTime`
-   values. The correct offset separated from the next-best match by 100–1000×
-   in mean error and reached sub-millisecond precision. H06’s swapped
-   start-trigger code was the only subject-specific trigger exception.
-2. Trial-start-to-go-cue latency was checked against TDMS `tGO`; confirmed
-   matches differed by approximately 1.6–4.3 ms with no exceptions.
-
-This avoids relying on recording order or software timestamps alone.
-
-## 3. Alignment results and explicit exceptions
+## 1. Alignment results and explicit exceptions
 
 | Category | Count | Production resolution |
 |---|---:|---|
@@ -176,7 +65,7 @@ events. The matched events have a 2.38 ms mean and 4.83 ms maximum `tGO`
 residual. `exclude_unrecoverable_trials` removes only
 `('H12', 'Slow', '2') → {2}` before synchronization.
 
-## 4. Code and verification
+## 2. Code and verification
 
 | Area | Final implementation |
 |---|---|
@@ -212,10 +101,11 @@ that replay must verify go-cue reconstruction, unrecoverable-trial exclusion,
 Checked against Thomas's original TDMS parser
 (`archive/replicated/DDM_analysis_scripts/Create_df.ipynb`) and behavior
 notebooks (`archive/replicated/DDM_scripts/scripts_new/`), two mismatches
-matter beyond the `sTrialClass` encoding and `H02` baseline noted above: the
+matter beyond the `sTrialClass` `'r'`-code encoding (`docs/behavioral_pipeline.md`)
+and the `H02` baseline decision above: the
 `sTrialClass` reference-frame difference in `Modify_df_preproc.ipynb` (root
 cause of the reversed ambiguous/misleading contrast — see
-`docs/behavior_t0_1_nprob_trial_class.md` §3b), and our `key: value` line
+`docs/behavioral_pipeline.md`, Findings), and our `key: value` line
 parser replacing Thomas's fixed-offset string slicing, a deliberate
 modernization (`docs/data_contract.md`) that is functionally equivalent on
 every field both extract. `rawRT` and the post-error-slowing adjacency rule

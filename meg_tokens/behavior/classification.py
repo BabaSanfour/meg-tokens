@@ -6,7 +6,7 @@ class asserted. Recovering a class for those trials means reading it back out
 of the trial's *designed* success-probability profile
 (:func:`meg_tokens.behavior.math.probability.classify_design_profile`), which
 is an interpretation of the data, not a fact recorded in it. See
-``docs/behavior_t0_1_nprob_trial_class.md`` section 3b.
+``docs/behavioral_pipeline.md``, Findings: trial-classification reference frame.
 
 That is why this lives apart from the TDMS parser. The parser transcribes
 what LabVIEW wrote -- including ``sTrialClassRaw`` and the design profile

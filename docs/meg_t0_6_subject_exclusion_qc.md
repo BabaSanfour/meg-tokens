@@ -131,5 +131,5 @@ anything the spectral/ICA checks probe.
   H04-vs-rest gap as the robust result.
 
 Related: `docs/behavior_metrics_readiness.md` (status),
-`docs/behavior_qc_report.md` (TDMS/MEG alignment QC),
-`docs/behavior_t0_1_nprob_trial_class.md` (trial-class frame analysis).
+`docs/behavior_qc_report.md` (MEG alignment QC),
+`docs/behavioral_pipeline.md` (trial-class frame analysis).

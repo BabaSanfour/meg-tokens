@@ -3,7 +3,7 @@
 ``plan_raw_staging`` is read-only beyond writing a reviewable manifest.
 ``apply_raw_staging`` reads that manifest (fresh or hand-edited) and
 materializes the BIDS raw layers -- see
-``docs/meg_t0_7_raw_bidsification_plan.md``.
+``docs/data_contract.md``, "Stage 0: Raw BIDSification".
 """
 
 from __future__ import annotations
@@ -67,8 +67,8 @@ def _notable_message(result: MatchResult) -> Optional[str]:
     if result.match_method == "known_override":
         return (
             "fingerprint did not resolve this run; matched via the documented session "
-            "mapping (KNOWN_SESSION_OVERRIDES -- see "
-            "docs/meg_t0_7_raw_bidsification_plan.md 'H01 and H05')"
+            "mapping (KNOWN_SESSION_OVERRIDES -- see docs/data_contract.md "
+            "'H01 and H05')"
         )
     if result.count_agreement == "mismatch" and result.action == "stage":
         return (

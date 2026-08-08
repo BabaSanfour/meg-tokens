@@ -83,7 +83,7 @@ _HEADSHAPE_TEMPLATE = "{subject}_DDM-tthiery_{date}_HEADSHAPE.eeg"
 # fingerprint result against this table and flags disagreement for review,
 # and falls back to it only for a run the fingerprint cannot score at all.
 # The evidence behind each entry -- and why these two subjects need one --
-# is in docs/meg_t0_7_raw_bidsification_plan.md, "H01 and H05".
+# is in docs/data_contract.md, "H01 and H05".
 KNOWN_SESSION_OVERRIDES = {
     ("H01", "Slow", 1): 5,
     ("H01", "Fast", 1): 6,
@@ -743,8 +743,8 @@ def _match_duration_class(
                     run, candidate, context, match_method="known_override",
                     note=(
                         "Fingerprint did not resolve this run; falling back to the "
-                        "documented mapping in docs/meg_t0_7_raw_bidsification_plan.md "
-                        "\"H01/H05 resolution\" (KNOWN_SESSION_OVERRIDES)."
+                        "documented mapping in docs/data_contract.md "
+                        "\"H01 and H05\" (KNOWN_SESSION_OVERRIDES)."
                     ),
                 )
             )
@@ -805,8 +805,7 @@ def match_subject(
     fallback. Every such run is reported ``match_method="ambiguous"`` with
     each remaining candidate's Start-pulse count and fingerprint error in
     its ``note``, so a human has the evidence to fill in the correct
-    ``source_path`` by hand (see
-    ``docs/meg_t0_7_raw_bidsification_plan.md``).
+    ``source_path`` by hand (see ``docs/data_contract.md``).
     """
     results: List[MatchResult] = []
     context = _MatchContext(date=date, settings=settings, pulse_times={})

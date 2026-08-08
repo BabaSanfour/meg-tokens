@@ -57,19 +57,19 @@ only. The chosen frame does flip the contrast to the published sign, but it is
 confounded — most of its "misleading" class are trials where evidence clearly
 favoured the correct target and the subject simply erred. **We keep the
 design frame.** Comparison table, confound breakdown, and the
-zero-inferred-misleading explanation: `docs/behavior_t0_1_nprob_trial_class.md`
-§3b.
+zero-inferred-misleading explanation: `docs/behavioral_pipeline.md`,
+Findings.
 
 Also ruled out: trial filtering, and the `H02` `RT1`/`RT2` baseline (~1.4 ms
 on group means, cancels in every paired contrast; detail in
-`docs/behavior_qc_report.md` §3).
+`docs/behavior_qc_report.md`, "H02 motor baseline").
 
 Related details are maintained in:
 
+- `docs/behavioral_pipeline.md` — Stage 0-1 issues, handling, impact, and findings
 - `docs/behavior_analysis_roadmap.md` — extended analyses and their status
 - `docs/behavior_roadmap_results.md` — measured results for those analyses
-- `docs/behavior_qc_report.md` — ingestion and MEG/behavior alignment QC
-- `docs/behavior_t0_1_nprob_trial_class.md` — class and SPD specification
+- `docs/behavior_qc_report.md` — MEG/behavior alignment QC (Stage 4)
 - `docs/data_contract.md` — derivative schemas and join keys
 - `docs/meg_t0_6_subject_exclusion_qc.md` — MEG-quality subject exclusion
   investigation.

@@ -1,6 +1,7 @@
 """Trial-class reference frames: ours vs Thomas's, on the real TDMS data.
 
-Reproduces every number in docs/behavior_t0_1_nprob_trial_class.md section 3b:
+Reproduces every number in docs/behavioral_pipeline.md's Findings section
+(trial-classification reference frame):
 
   1. group DT statistics under three classification choices, showing that the
      chosen-target frame flips Ambiguous-vs-Misleading to the published sign

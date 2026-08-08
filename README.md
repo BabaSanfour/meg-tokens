@@ -1,30 +1,28 @@
 # MEG Tokens Task Analysis (DDM Project)
 
-This repository contains the analysis scripts and a refactored Python library for investigating decision-making dynamics using the **Tokens Task** paired with Magnetoencephalography (MEG). iEEG notebooks in the archive are out of scope for this refactor.
+Analysis library for decision-making dynamics on the **Tokens Task** with MEG. `archive/` iEEG notebooks are out of scope.
 
 ## Project Structure
 
-*   **`meg_tokens/`**: Main Python package with refactored, clean production code.
-    *   `core/`: Canonical subject/run identifiers, project configuration, and workflow result models.
-    *   `behavior/`: TDMS parsing and behavioral metrics.
-    *   `meg/`: Modules for neural data preprocessing, ICA, and source localization.
-    *   `features/`: ERP, power, spectral, Hilbert, PAC, and connectivity estimators.
-    *   `analysis/`: Statistics, decoding, PCA, and dPCA estimators.
-    *   `workflows/`: Filesystem-aware processing and analysis stages.
-    *   `reports/`: Figure and report-table generation.
-    *   `cli/`: The unified `meg-tokens` command.
-    *   `io/`: Central derivative layout and `.npy`/JSON, xarray, and table contracts.
-*   **`workflow/`**: Snakemake DAG and local/Slurm profiles.
-*   **`tests/`**: Unit tests.
-*   **`docs/`**: Data contracts and refactor notes, including the strict one-row-per-file legacy mapping in [`docs/legacy_traceability.md`](docs/legacy_traceability.md) and the post-replication architecture contract in [`docs/refactor/architecture.md`](docs/refactor/architecture.md).
-*   **`pyproject.toml`**: Metadata and dependency configuration for the python package.
-*   **`archive/`**: Contains the raw, unorganized scripts copied from the external drives:
-    *   `DDM_scripts/`: Python/Jupyter notebooks (`scripts_new/`) and Matlab scripts (`matlab_scripts/`) copied from the `DDM_scripts` partition.
-    *   `DDM_analysis_scripts/`: Jupyter notebooks copied from the `DDM/scripts/` partition.
+*   **`meg_tokens/`**: package.
+    *   `core/`: subject/run identifiers, project config, workflow result models.
+    *   `behavior/`: TDMS parsing, behavioral metrics.
+    *   `meg/`: preprocessing, ICA, source localization.
+    *   `features/`: ERP, power, spectral, Hilbert, PAC, connectivity estimators.
+    *   `analysis/`: statistics, decoding, PCA, dPCA estimators.
+    *   `workflows/`: filesystem-aware processing/analysis stages.
+    *   `reports/`: figures, report tables.
+    *   `cli/`: the `meg-tokens` command.
+    *   `io/`: derivative layout, `.npy`/JSON/xarray/table contracts.
+*   **`workflow/`**: Snakemake DAG, local/Slurm profiles.
+*   **`tests/`**: unit tests.
+*   **`docs/`**: data contracts, refactor notes -- [`legacy_traceability.md`](docs/legacy_traceability.md) (old-script mapping), [`refactor/architecture.md`](docs/refactor/architecture.md) (architecture contract).
+*   **`pyproject.toml`**: package metadata/deps.
+*   **`archive/`**: raw scripts copied from the external drives -- `DDM_scripts/` (`scripts_new/` Python/Jupyter + `matlab_scripts/`), `DDM_analysis_scripts/` (Jupyter, from `DDM/scripts/`).
 
 ## Pipeline Execution Flow & Module Map
 
-The analysis pipeline is designed to be executed sequentially from raw data ingestion to group-level parcellation and export. This is a module-level map, in pipeline order; the numbered `Stage N` sections under [Running the Pipeline](#running-the-pipeline-cli) are the one authoritative stage numbering used by both the CLI walkthrough and the derivative naming — this table does not duplicate those numbers to avoid the two drifting apart.
+Module map, in pipeline order. Stage numbers live only under [Running the Pipeline](#running-the-pipeline-cli), not here.
 
 | Stage | Module | Purpose |
 | :--- | :--- | :--- |
@@ -44,63 +42,53 @@ The analysis pipeline is designed to be executed sequentially from raw data inge
 ## 💾 Data Locations
 
 > [!NOTE]
-> The raw data files are large and are stored outside this repository.
+> Raw data lives outside this repo.
 
-All project data lives under one convention data root, `meg-tokens`:
+Data root `meg-tokens`:
 
-*   **`raw/`** — Raw CTF MEG acquisition sessions (`.ds` folders, `NOISE_noise_*.ds` empty-room
-    recordings, digitized head shapes, and fiducial photos), read by `meg-tokens meg stage-raw`.
-    Read-only to this project: nothing here is ever modified, only copied into `BIDS/`.
-*   **`tdms/`** — Raw behavioral logs (TDMS).
-    *   Contains LabVIEW behavioral event logs for all 32 subjects (`H1` to `H32`).
-*   **`BIDS/`** — Both the BIDS-raw layer Stage 0 writes (`sub-*/meg`, `sub-*/beh`,
-    `sub-*/anat`, `sub-emptyroom`) and parsed/derived outputs under `BIDS/derivatives/`.
-*   **`IRM/`** — FreeSurfer `recon-all` output, one subject directory per reconstructed
-    subject (30/32; H07 and H10 have none). Defaults to `data_root/IRM` as `subjects_dir`,
-    read directly by the BEM/source-space stages, and staged into `BIDS/sub-*/anat` by
-    Stage 0; set `subjects_dir` explicitly in the project TOML to override this.
+*   **`raw/`** — raw CTF sessions (`.ds`), `NOISE_noise_*.ds` empty-room, headshapes, fiducial
+    photos. Read-only; only copied into `BIDS/` (`meg-tokens meg stage-raw`).
+*   **`tdms/`** — LabVIEW behavioral logs, all 32 subjects (`H1`-`H32`).
+*   **`BIDS/`** — Stage 0's raw layer (`sub-*/meg`, `sub-*/beh`, `sub-*/anat`,
+    `sub-emptyroom`) + `BIDS/derivatives/`.
+*   **`IRM/`** — FreeSurfer `recon-all` output (30/32; H07, H10 missing). Default
+    `subjects_dir` (`data_root/IRM`); override in the project TOML.
 
-Set `data_root` once in a TOML file based on
-[`config/tokens.toml.template`](config/tokens.toml.template) and pass it with `--config`;
-`raw_meg_root`, `behavior_root`, `bids_root`, and `subjects_dir` derive from it as
-`data_root/raw`, `data_root/tdms`, `data_root/BIDS`, and `data_root/IRM`. Relative paths
-are resolved from the configuration file location.
+`data_root` set once in a TOML ([`config/tokens.toml.template`](config/tokens.toml.template)),
+passed via `--config`; `raw_meg_root`/`behavior_root`/`bids_root`/`subjects_dir` derive from it.
+Relative paths resolve from the config file's location.
 
 ---
-*Note: This repository was refactored and organized starting 2026-06-25.*
+*Refactored/organized starting 2026-06-25.*
 
 ## Running the Pipeline (CLI)
 
-The installed `meg-tokens` command is the supported execution API. All stages
-also have callable workflow functions under `meg_tokens.workflows`.
+`meg-tokens` is the supported execution API; every stage also has a callable workflow
+function under `meg_tokens.workflows`.
 
 ### Stage 0: Raw BIDSification
-Plans the entire raw layer for a subject -- MEG runs, empty-room, head shape and anatomical --
-and writes a reviewable manifest. Reads `raw/`, `tdms/` and `subjects_dir` directly, with no
-dependency on Stage 1 or any other stage having run first, and never touches `BIDS/` by itself:
+Plans the raw layer per subject (MEG runs, empty-room, headshape, anat) into a reviewable
+manifest. Reads `raw/`, `tdms/`, `subjects_dir`; no Stage 1 dependency; never touches `BIDS/`:
 ```bash
 meg-tokens --config tokens.toml meg stage-raw --subjects H01 H02
 ```
-Each run is identified by its **inter-trial-interval fingerprint**: the logged per-trial
-`nInitialTime` gaps and the real MEG trial-start pulse gaps are the same physical intervals on
-two unrelated clocks, so the correct session reproduces them to well under a millisecond while
-any other is off by hundreds. A match is accepted only when it clears both an absolute error
-threshold and a margin over the runner-up, and when no other run claims the same session --
-otherwise the run is flagged `review` rather than matched to a best-available guess.
 
-Every flagged row's `note` carries its evidence: the candidate sessions, their real trigger-pulse
-counts, and the best fingerprint score. To resolve one, open the manifest TSV, set that row's
-`source_path` to the correct session and `action` to `stage`, save, and re-run
-`apply-raw-staging` -- it applies the manifest exactly as saved, so a re-plan never overwrites
-your edit. Applying copies the staged rows into `BIDS/sub-*/{meg,beh,anat}` and
-`BIDS/sub-emptyroom`; the originals under `raw/`, `tdms/` and `IRM/` are never modified:
+Matching: **inter-trial-interval fingerprint** — logged `nInitialTime` gaps vs. real MEG
+trial-start pulse gaps, the same physical intervals on two unrelated clocks. Accepted only
+within an error threshold and a margin over the runner-up, with no session claimed twice;
+otherwise `review`.
+
+Resolve a flagged row: edit the manifest's `source_path`/`action`, re-run
+`apply-raw-staging` (applies the manifest as saved, never recomputes). Applying copies staged
+rows into `BIDS/sub-*/{meg,beh,anat}` and `BIDS/sub-emptyroom`; originals under `raw/`,
+`tdms/`, `IRM/` are untouched:
 ```bash
 meg-tokens --config tokens.toml meg apply-raw-staging --subjects H01 H02
 ```
 
 ### Stage 1: Behavioral Log Parsing
-Builds the analysis-ready trial tables from the raw BIDS behavioral layer (`BIDS/sub-*/beh/`),
-applying trial-class inference and validation. Requires Stage 0 to have run first.
+Builds trial tables from `BIDS/sub-*/beh/` (trial-class inference + validation). Requires
+Stage 0.
 ```bash
 meg-tokens --config tokens.toml behavior ingest
 ```
