@@ -32,8 +32,27 @@ class RawStagingConfig:
 
     slowfast_nominal_duration: float = 315.0
     rt_nominal_duration: float = 135.0
+    # Real nominal durations across all 412 subject sessions on the
+    # dataset take exactly four values -- 135.0, 315.0, 360.0, 420.0
+    # -- with a minimum 45s gap between clusters, so 20s leaves wide margin
+    # without risking a false match (verified across this dataset).
     duration_tolerance: float = 20.0
+    # Small slack for real-world Start-pulse-count logging jitter, kept
+    # deliberately tight: documented per-run exceptions
+    # (KNOWN_TRAILING_TRIAL_MISMATCHES) are whitelisted individually rather
+    # than absorbed by loosening this general tolerance. Unlike
+    # duration_tolerance, this value has not been empirically validated
+    # against the real per-session pulse-vs-trial-count distribution.
     count_tolerance: int = 3
+    # Inter-trial-interval fingerprint acceptance guards (see
+    # meg_tokens.meg.raw_staging.fingerprint_candidates). On the real
+    # dataset a correct match scores 0.39-0.57ms mean absolute error and
+    # beats the runner-up by 144-892x, so these thresholds sit in the wide
+    # empty gap between "unambiguously right" and anything else -- a
+    # candidate that fails them is reported ambiguous for human review
+    # rather than accepted as a best-available guess.
+    fingerprint_max_error_ms: float = 5.0
+    fingerprint_min_separation: float = 20.0
 
     def __post_init__(self) -> None:
         if self.slowfast_nominal_duration <= 0 or self.rt_nominal_duration <= 0:
@@ -42,6 +61,10 @@ class RawStagingConfig:
             raise ValueError("duration_tolerance must be non-negative")
         if self.count_tolerance < 0:
             raise ValueError("count_tolerance must be non-negative")
+        if self.fingerprint_max_error_ms <= 0:
+            raise ValueError("fingerprint_max_error_ms must be positive")
+        if self.fingerprint_min_separation < 1:
+            raise ValueError("fingerprint_min_separation must be at least 1")
 
 
 @dataclass(frozen=True)

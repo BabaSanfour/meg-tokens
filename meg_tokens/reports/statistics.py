@@ -354,7 +354,7 @@ def save_timecourse_figure(
 
 def _behavior_tables_for_subject(behavior_dir: str, subject: str, conditions: Sequence[str]) -> list[Path]:
     subject = normalize_subject_id(subject)
-    beh_dir = Path(behavior_dir) / "derivatives" / "meg-tokens" / f"sub-{subject}" / "beh"
+    beh_dir = Path(behavior_dir) / "derivatives" / f"sub-{subject}" / "beh"
     paths = []
     for condition in conditions:
         paths.extend(beh_dir.glob(f"sub-{subject}_task-tokens_run-*_desc-{condition.lower()}_beh.tsv"))

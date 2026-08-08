@@ -69,7 +69,10 @@ def mismatch_policy(subject: str, condition: Optional[str], run: str) -> str:
     independent ways: (1) an exhaustive per-subject scan (every .ds file for
     that subject, not just the nearest-timestamp guess) finds one alignment
     offset that separates from the next-best by 100-1000x, at sub-ms mean
-    error; (2) the trial-start->go-cue latency on the aligned (non-boundary)
+    error -- that scan is now
+    ``meg_tokens.meg.raw_staging.fingerprint_candidates``, which Stage 0 uses
+    to identify recordings in the first place; (2) the
+    trial-start->go-cue latency on the aligned (non-boundary)
     portion matches TDMS tGO to within 1.6-4.25ms across all of them, zero
     exceptions -- confirming the alignment is correct, not coincidental.
     Full per-run evidence is in docs/behavior_qc_report.md. `truncate`
@@ -125,15 +128,22 @@ def exclude_unrecoverable_trials(
 
 
 # Runs where one or more trials have a real trial-start pulse but no go-cue
-# pulse in the raw MEG recording -- a genuine trigger dropout, not something
-# on_mismatch="truncate" can fix, since the missing event(s) aren't confined
-# to a boundary. H02RT1 is the extreme case (all ~39 trials); the other 20
-# each have exactly one interior dropout. Verified per-run: trial-start
-# pulses align with TDMS's nInitialTime sequence at sub-ms precision across
-# the whole run (not just up to a boundary), and for the trials that *do*
-# have a go-cue, its latency after trial-start matches TDMS tGO to ~2-4ms --
-# the same calibration reconstruct_missing_go_events uses to fill the gap(s).
-# See docs/behavior_qc_report.md.
+# pulse in the raw MEG recording -- a genuine trigger dropout. H02RT1 is the
+# extreme case (its entire go channel is missing, all ~39 trials); in the
+# other 20 the dropout is a single trial, and in every one of those checked
+# it is the run's *final* trial: the recording stopped between that trial's
+# start pulse and its go cue. Verified per-run: trial-start pulses align with
+# TDMS's nInitialTime sequence at sub-ms precision across the whole run, and
+# for the trials that *do* have a go-cue, its latency after trial-start
+# matches TDMS tGO to ~2-4ms (measured at 3.20 +/- 1.19ms over 2230 real
+# trials) -- the same calibration reconstruct_missing_go_events uses to fill
+# the gap. Reproduce with scripts/qc/meg_trial_pulse_qc.py; see also
+# docs/behavior_qc_report.md.
+#
+# on_mismatch="truncate" would also "fix" a final-trial dropout, by dropping
+# that trial. Reconstruction is preferred because it keeps it: the trial's
+# start pulse, tGO and behavioral record are all intact, so there is no
+# reason to discard real data over a missing trigger edge.
 KNOWN_GO_RECONSTRUCTION_RUNS = {
     ('H01', 'Slow', '1'), ('H02', 'RT', '1'), ('H04', 'Fast', '2'), ('H05', 'Fast', '4'), ('H06', 'Fast', '2'), ('H06', 'Slow', '4'),
     ('H07', 'Slow', '2'), ('H07', 'Slow', '4'), ('H08', 'Fast', '2'), ('H08', 'Slow', '1'), ('H10', 'Fast', '1'), ('H10', 'Slow', '3'),

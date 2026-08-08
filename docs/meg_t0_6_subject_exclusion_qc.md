@@ -25,9 +25,8 @@ myographic (EMG) artifact, 1× MEG system interruption.
 ## Dataset
 
 - Raw MEG (CTF `.ds`, read-only throughout): `/media/karim/Hamza/DDM-tthiery`.
-  `H01` is stored as `Pilot01`. 32/32 subjects, 8 Slow/Fast (315 s) + 2 RT
-  (135 s) recordings each.
-- TDMS: `/home/karim/Data/meg-tokens/tdms` — 32/32 subjects, 10 runs each.
+  32/32 subjects, 8 Slow/Fast (315 s) + 2 RT (135 s) recordings each.
+- TDMS: `/media/karim/Hamza/meg-tokens/tdms` — 32/32 subjects, 10 runs each.
 - No active project TOML yet — only `config/tokens.toml.template`.
 
 ## Identification

@@ -56,7 +56,6 @@ def _clean_extension(extension: str) -> str:
 def derivative_path(
     root: PathLike,
     *,
-    pipeline: str = "meg-tokens",
     subject: str,
     suffix: str,
     extension: str,
@@ -93,7 +92,7 @@ def derivative_path(
     stem = "_".join(f"{key}-{value}" for key, value in entities if value is not None)
     filename = f"{stem}_{_clean_entity(suffix) or suffix}{_clean_extension(extension)}"
 
-    parts = [Path(root), "derivatives", _clean_entity(pipeline) or pipeline, f"sub-{subject_clean}"]
+    parts = [Path(root), "derivatives", f"sub-{subject_clean}"]
     session_clean = _clean_entity(session)
     if session_clean is not None:
         parts.append(f"ses-{session_clean}")

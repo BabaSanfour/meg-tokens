@@ -19,7 +19,6 @@ def test_real_behavior_group_statistics_match_preprint():
     project = ProjectConfig.from_toml(config_path)
     summary_path = DerivativeLayout(
         project.bids_root,
-        pipeline=project.pipeline,
         task=project.task,
     ).behavior_summary()
     if not summary_path.is_file():

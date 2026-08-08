@@ -87,7 +87,7 @@ def test_save_clean_raw_derivative(tmp_path):
     path = save_clean_raw(raw, tmp_path, subject_id='H1', run_id='Slow1', processing='filt')
 
     assert path.endswith(
-        "derivatives/meg-tokens/sub-H01/meg/sub-H01_task-tokens_run-1_proc-filt_desc-slow_raw.fif"
+        "derivatives/sub-H01/meg/sub-H01_task-tokens_run-1_proc-filt_desc-slow_raw.fif"
     )
     assert os.path.exists(path)
     sidecar = path.replace(".fif", ".json")

@@ -186,7 +186,6 @@ def test_source_derivative_path_uses_bids_derivatives(tmp_path):
     assert path == (
         tmp_path
         / "derivatives"
-        / "meg-tokens"
         / "sub-H01"
         / "meg"
         / "sub-H01_task-tokens_run-2_desc-slow-go_fwd.fif"

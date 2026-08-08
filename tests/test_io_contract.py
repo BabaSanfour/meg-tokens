@@ -26,7 +26,6 @@ def test_derivative_path_builds_bids_derivative_name(tmp_path):
     assert path == (
         tmp_path
         / "derivatives"
-        / "meg-tokens"
         / "sub-H01"
         / "meg"
         / "sub-H01_task-tokens_desc-goalphafast_power.npy"

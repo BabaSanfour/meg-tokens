@@ -1,38 +1,26 @@
 [project]
-# The data for this project lives in this folder. It must contain tdms/
-# (raw behavioral logs) and BIDS/ (both the BIDS-raw layer this project
-# writes under BIDS/sub-*/meg and BIDS/sub-*/beh, and the
-# BIDS/derivatives/meg-tokens pipeline outputs).
-#
-# `raw/` is not a project-managed folder: `meg-tokens meg stage-raw`
-# defaults to reading raw CTF media from data_root/raw (this
-# ProjectConfig.raw_meg_root path), so point it at (or symlink it to)
-# wherever the acquisition media is mounted -- or pass `--media-root`
-# explicitly on each `stage-raw` call instead. See
-# docs/meg_t0_7_raw_bidsification_plan.md.
+# All project data lives under one root. Expected layout:
+#   raw/   -- raw CTF MEG acquisition (.ds sessions, NOISE_*.ds empty-room,
+#             digitized head shapes)
+#   tdms/  -- raw behavioral logs (LabVIEW TDMS)
+#   IRM/   -- FreeSurfer subjects_dir (recon-all output, one folder per subject)
+#   BIDS/  -- BIDS/sub-*/{meg,beh,anat} (raw layer) and BIDS/derivatives/sub-*
+#             (pipeline outputs)
 data_root = "/path/to/meg-tokens"
 
-subjects_dir = "/path/to/freesurfer-subjects"
+subjects_dir = "/path/to/meg-tokens/IRM"
 trans_dir = "/path/to/trans-files"
 noise_dir = "/path/to/noise-recordings"
 task = "tokens"
-pipeline = "meg-tokens"
 
-# Subjects excluded from group analyses after MEG/data-quality review. Leave
-# empty until the four preprint exclusions are confirmed.
+# Subjects excluded from group analyses (MEG/data-quality review).
 subject_exclusions = []
 
 # Classify random ('x') trials from the correct-target design profile.
-# Default true. Set false to use recorded 'e'/'a'/'m' labels only: inference
-# can add easy and ambiguous trials but never misleading ones (no random
-# trial has the correct target trailing after three jumps), so it enriches
-# two classes of three. See docs/behavior_t0_1_nprob_trial_class.md § 3b.
+# Set false to use recorded 'e'/'a'/'m' labels only.
 infer_random_classes = true
 
-# TDMS files under data_root/tdms that are deliberately NOT ingested. Each is
-# a short aborted/practice block whose trials do not belong to any named run;
-# all three were verified against their same-day siblings (they overlap no
-# named run's time range and immediately precede a restarted run).
+# TDMS files deliberately not ingested (short aborted/practice blocks).
 behavior_ignore_files = [
     "temp_180214.tdms",  # H03: 9 trials, 09:57-09:59, between RT1 and Fast1
     "temp_181024.tdms",  # H18: 12 trials, ends 14:47, ~1 min before RT2 start

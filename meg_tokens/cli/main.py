@@ -94,24 +94,21 @@ def build_parser() -> argparse.ArgumentParser:
     stage_raw = meg_commands.add_parser(
         "stage-raw",
         help=(
-            "Stage 0: match raw CTF media sessions to already-ingested "
-            "behavior runs and write a reviewable manifest. Plan only -- "
-            "never touches BIDS/."
+            "Stage 0: plan the whole raw layer -- match CTF sessions to "
+            "behavior runs, and locate each subject's empty-room, head shape "
+            "and anatomical -- into a reviewable manifest. Plan only; never "
+            "touches BIDS/."
         ),
     )
     _add_root_option(stage_raw)
     stage_raw.add_argument("--subjects", nargs="+", required=True)
-    stage_raw.add_argument(
-        "--media-root",
-        dest="media_root",
-        help="Raw CTF media root. Defaults to the project's raw_meg_root.",
-    )
 
     apply_raw_staging_parser = meg_commands.add_parser(
         "apply-raw-staging",
         help=(
-            "Stage 0: materialize BIDS/sub-*/meg and BIDS/sub-*/beh from a "
-            "Stage 0 manifest (fresh from `stage-raw`, or hand-reviewed)."
+            "Stage 0: materialize BIDS/sub-*/{meg,beh,anat} and "
+            "BIDS/sub-emptyroom from a Stage 0 manifest (fresh from "
+            "`stage-raw`, or hand-reviewed). Only action=stage rows."
         ),
     )
     _add_root_option(apply_raw_staging_parser)
@@ -527,11 +524,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         elif args.domain == "meg" and args.meg_command == "stage-raw":
             from meg_tokens.workflows.raw_staging import plan_raw_staging
 
-            result = plan_raw_staging(
-                project,
-                subjects=args.subjects,
-                media_root=args.media_root,
-            )
+            result = plan_raw_staging(project, subjects=args.subjects)
             for subject, counts in result.settings["summary_by_subject"].items():
                 counts_text = ", ".join(f"{action}={count}" for action, count in sorted(counts.items()))
                 print(f"{subject}: {counts_text}")

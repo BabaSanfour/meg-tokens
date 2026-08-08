@@ -33,7 +33,7 @@ def test_batch_process_dry_run(tmp_path):
     input_dir = tmp_path / "tdms"
     output_dir = tmp_path / "dataframes"
     
-    subject_input_dir = input_dir / "H1"
+    subject_input_dir = input_dir / "H01"
     os.makedirs(subject_input_dir, exist_ok=True)
     
     # Create empty TDMS files
@@ -52,13 +52,13 @@ def test_batch_process_dry_run(tmp_path):
     
     assert len(results) == 3
     assert results[0]['output'].endswith(
-        "derivatives/meg-tokens/sub-H01/beh/sub-H01_task-tokens_run-2_desc-fast_beh.tsv"
+        "derivatives/sub-H01/beh/sub-H01_task-tokens_run-2_desc-fast_beh.tsv"
     )
     assert results[1]['output'].endswith(
-        "derivatives/meg-tokens/sub-H01/beh/sub-H01_task-tokens_run-1_desc-rt_beh.tsv"
+        "derivatives/sub-H01/beh/sub-H01_task-tokens_run-1_desc-rt_beh.tsv"
     )
     assert results[2]['output'].endswith(
-        "derivatives/meg-tokens/sub-H01/beh/sub-H01_task-tokens_run-1_desc-slow_beh.tsv"
+        "derivatives/sub-H01/beh/sub-H01_task-tokens_run-1_desc-slow_beh.tsv"
     )
     
     # Dry run shouldn't write files
@@ -68,7 +68,7 @@ def test_batch_process_dry_run(tmp_path):
 def test_batch_process_writes_behavior_derivative(tmp_path, monkeypatch):
     input_dir = tmp_path / "tdms"
     output_dir = tmp_path / "dataframes"
-    subject_input_dir = input_dir / "H1"
+    subject_input_dir = input_dir / "H01"
     os.makedirs(subject_input_dir, exist_ok=True)
     tdms_file = subject_input_dir / "H1Fast2_180131.tdms"
     tdms_file.write_text("")
@@ -133,7 +133,7 @@ def test_batch_process_writes_behavior_derivative(tmp_path, monkeypatch):
 def test_batch_process_raises_on_unrecognized_filename(tmp_path):
     input_dir = tmp_path / "tdms"
     output_dir = tmp_path / "dataframes"
-    subject_input_dir = input_dir / "H1"
+    subject_input_dir = input_dir / "H01"
     os.makedirs(subject_input_dir, exist_ok=True)
 
     (subject_input_dir / "H1Slow1_180131.tdms").write_text("")
@@ -151,7 +151,7 @@ def test_batch_process_raises_on_unrecognized_filename(tmp_path):
 def test_batch_process_ignore_files_excludes_unrecognized_filename(tmp_path):
     input_dir = tmp_path / "tdms"
     output_dir = tmp_path / "dataframes"
-    subject_input_dir = input_dir / "H1"
+    subject_input_dir = input_dir / "H01"
     os.makedirs(subject_input_dir, exist_ok=True)
 
     (subject_input_dir / "H1Slow1_180131.tdms").write_text("")
@@ -172,7 +172,7 @@ def test_batch_process_ignore_files_excludes_unrecognized_filename(tmp_path):
 def test_batch_process_raises_on_duplicate_run(tmp_path):
     input_dir = tmp_path / "tdms"
     output_dir = tmp_path / "dataframes"
-    subject_input_dir = input_dir / "H1"
+    subject_input_dir = input_dir / "H01"
     os.makedirs(subject_input_dir, exist_ok=True)
 
     # Two distinct source dates parsing to the same (subject, condition, run).

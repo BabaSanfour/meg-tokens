@@ -45,12 +45,10 @@ def reconstruct_sources(
     destination = Path(output_root or project.bids_root)
     output_layout = DerivativeLayout(
         destination,
-        pipeline=project.pipeline,
         task=project.task,
     )
     epoch_layout = DerivativeLayout(
         epochs_root or project.bids_root,
-        pipeline=project.pipeline,
         task=project.task,
     )
     inputs = []

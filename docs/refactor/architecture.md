@@ -76,24 +76,12 @@ Where a path is valid BIDS, that implementation may delegate to
 `mne_bids.BIDSPath`. Project-specific analysis suffixes remain explicit layout
 methods.
 
-## Resolved Dependency Debt
+## Dependency Boundary
 
-The Phase 1 baseline recorded four imports that violated the target dependency
-direction:
-
-```text
-meg_tokens.meg.preprocessing -> meg_tokens.utils.batch_processor
-meg_tokens.meg.preprocessing -> meg_tokens.utils.epochs_builder
-meg_tokens.meg.sources       -> meg_tokens.utils.batch_processor
-meg_tokens.meg.sources       -> meg_tokens.utils.epochs_builder
-```
-
-Phase 2 removed these imports by moving subject and run entities into `core`.
-The final boundary test requires zero `utils` modules and enforces the complete
-dependency direction for `core`, domain packages, workflows, reports, and CLI.
-
-The transitional batch modules and forwarding shims were removed after all
-tests, documentation, and workflow rules used their final owners.
+Subject and run entities live in `core`. There are no `utils` modules and no
+forwarding shims; the boundary test enforces the complete dependency
+direction for `core`, domain packages, workflows, reports, and CLI (zero
+`utils` imports anywhere).
 
 ## Phase Gate
 

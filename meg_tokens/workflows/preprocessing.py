@@ -102,12 +102,10 @@ def epoch_subjects(
     """Build event-locked epochs for every staged run of selected subjects."""
     raw_layout = DerivativeLayout(
         raw_root or project.bids_root,
-        pipeline=project.pipeline,
         task=project.task,
     )
     behavior_layout = DerivativeLayout(
         behavior_root or project.bids_root,
-        pipeline=project.pipeline,
         task=project.task,
     )
     destination = Path(output_root or project.bids_root)

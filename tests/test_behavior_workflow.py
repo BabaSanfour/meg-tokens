@@ -171,7 +171,7 @@ def test_analyze_behavior_applies_configured_subject_exclusions(tmp_path):
 
 def test_ingest_behavior_dry_run_declares_outputs(tmp_path):
     project = ProjectConfig(data_root=tmp_path)
-    subject_dir = project.behavior_root / "H1"
+    subject_dir = project.behavior_root / "H01"
     subject_dir.mkdir(parents=True)
     (subject_dir / "H1Slow1_180131.tdms").write_text("", encoding="utf-8")
 

@@ -47,7 +47,6 @@ def analyze_behavior(
     """Build canonical trial features and behavioral analysis derivatives."""
     layout = DerivativeLayout(
         project.bids_root,
-        pipeline=project.pipeline,
         task=project.task,
     )
     paths = layout.behavior_tables(subjects=subjects)

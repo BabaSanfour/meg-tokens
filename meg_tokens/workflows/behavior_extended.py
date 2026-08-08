@@ -95,7 +95,6 @@ def analyze_behavior_extended(
     """Run the extended behavioral pipeline over staged trial features."""
     layout = DerivativeLayout(
         project.bids_root,
-        pipeline=project.pipeline,
         task=project.task,
     )
     features_path = layout.behavior_trial_features()

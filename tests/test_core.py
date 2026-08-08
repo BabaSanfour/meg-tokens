@@ -69,7 +69,6 @@ def test_project_config_loads_relative_toml_paths(tmp_path):
 
     assert config.data_root == tmp_path / "meg-tokens"
     assert config.subjects_dir == tmp_path / "freesurfer"
-    assert config.pipeline == "meg-tokens"
     assert config.subject_exclusions == ("H01", "H02")
 
 

@@ -16,7 +16,7 @@ for random trials only; "Thomas" applies them to the runtime nProb
 (chosen-target) profile and overwrites every trial, per
 archive/replicated/DDM_scripts/scripts_new/Modify_df_preproc.ipynb.
 
-    python scripts/qc/trial_class_frames.py /home/karim/Data/meg-tokens/tdms
+    python scripts/qc/trial_class_frames.py <tdms-root>
 """
 
 import argparse
@@ -93,8 +93,7 @@ def main():
     token_split = {}
 
     for subject_dir in sorted(p for p in args.tdms_root.iterdir() if p.is_dir()):
-        # H01's TDMS directory is named "H1".
-        subject = "H01" if subject_dir.name == "H1" else subject_dir.name
+        subject = subject_dir.name
         runs = load_subject(subject_dir)
 
         started = [

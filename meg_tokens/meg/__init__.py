@@ -35,12 +35,15 @@ _EXPORTS = {
     "discover_noise_session": ("meg_tokens.meg.raw_staging", "discover_noise_session"),
     "discover_headshape": ("meg_tokens.meg.raw_staging", "discover_headshape"),
     "load_behavior_runs": ("meg_tokens.meg.raw_staging", "load_behavior_runs"),
-    "count_start_pulses": ("meg_tokens.meg.raw_staging", "count_start_pulses"),
+    "read_start_pulse_times": ("meg_tokens.meg.raw_staging", "read_start_pulse_times"),
+    "fingerprint_candidates": ("meg_tokens.meg.raw_staging", "fingerprint_candidates"),
+    "resolve_by_fingerprint": ("meg_tokens.meg.raw_staging", "resolve_by_fingerprint"),
     "match_subject": ("meg_tokens.meg.raw_staging", "match_subject"),
-    "match_media_to_behavior": ("meg_tokens.meg.raw_staging", "match_media_to_behavior"),
-    "media_subject_prefix": ("meg_tokens.meg.raw_staging", "media_subject_prefix"),
-    "write_meg_bids": ("meg_tokens.meg.bids_raw", "write_meg_bids"),
-    "write_emptyroom_bids": ("meg_tokens.meg.bids_raw", "write_emptyroom_bids"),
+    "match_raw_to_behavior": ("meg_tokens.meg.raw_staging", "match_raw_to_behavior"),
+    "write_meg_bids": ("meg_tokens.meg.meg_bids", "write_meg_bids"),
+    "write_emptyroom_bids": ("meg_tokens.meg.meg_bids", "write_emptyroom_bids"),
+    "write_anat_bids": ("meg_tokens.meg.anat_bids", "write_anat_bids"),
+    "discover_anat": ("meg_tokens.meg.anat_bids", "discover_anat"),
 }
 
 __all__ = sorted(_EXPORTS)

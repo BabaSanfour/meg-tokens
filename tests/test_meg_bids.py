@@ -3,7 +3,7 @@ import os
 import pandas as pd
 import pytest
 
-from meg_tokens.meg.bids_raw import _combined_event_id, write_emptyroom_bids, write_meg_bids
+from meg_tokens.meg.meg_bids import _combined_event_id, write_emptyroom_bids, write_meg_bids
 
 
 def test_combined_event_id_covers_all_alignments():
@@ -25,17 +25,19 @@ def test_combined_event_id_respects_subject_overrides():
 
 
 @pytest.fixture()
-def real_media_root():
-    root = os.environ.get("MEG_TOKENS_MEDIA_ROOT", "/media/karim/Hamza/DDM-tthiery")
+def real_raw_root():
+    root = os.environ.get("MEG_TOKENS_RAW_ROOT")
+    if not root:
+        pytest.skip("Set MEG_TOKENS_RAW_ROOT to the raw CTF session root to run this test.")
     session = os.path.join(root, "H02_DDM-tthiery_20180213_03.ds")
     noise = os.path.join(root, "NOISE_noise_20180213_01.ds")
     if not (os.path.exists(session) and os.path.exists(noise)):
-        pytest.skip(f"Real raw MEG media not available under {root}")
+        pytest.skip(f"Real raw MEG sessions not available under {root}")
     return root, session, noise
 
 
-def test_write_meg_bids_and_write_emptyroom_bids_real_media_integration(tmp_path, real_media_root):
-    _, session, noise = real_media_root
+def test_write_meg_bids_and_write_emptyroom_bids_real_media_integration(tmp_path, real_raw_root):
+    _, session, noise = real_raw_root
     bids_root = tmp_path / "BIDS"
 
     er_path = write_emptyroom_bids(noise, date="20180213", bids_root=bids_root)
@@ -54,7 +56,7 @@ def test_write_meg_bids_and_write_emptyroom_bids_real_media_integration(tmp_path
     assert raw.n_times == 378000
     assert raw.info["sfreq"] == 1200.0
 
-    # A real copy, not a symlink or reference back to the media.
+    # A real copy, not a reference back to the media.
     ds_dir = bids_path.fpath
     assert ds_dir.is_dir() and not ds_dir.is_symlink()
     res4_files = list(ds_dir.glob("*.res4"))

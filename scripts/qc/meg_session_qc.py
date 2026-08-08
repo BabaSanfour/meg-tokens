@@ -11,7 +11,7 @@ Reads only the tiny .hist/.res4 metadata, never the .meg4 sample data, so a
 full pass over ~530 sessions takes a couple of minutes and leaves the raw
 data untouched.
 
-    python scripts/qc/meg_session_qc.py /media/karim/Hamza/DDM-tthiery
+    python scripts/qc/meg_session_qc.py <raw-root>
 """
 
 import argparse
@@ -34,12 +34,10 @@ def read_session_metadata(ds_dir):
         match = re.search(pattern, text)
         return cast(match.group(1).strip()) if match else None
 
-    subject_match = re.match(r"^(H\d+|Pilot\d+)_", ds_dir.name)
+    subject_match = re.match(r"^H(\d+)_", ds_dir.name)
     if subject_match is None:
         return None
-    raw_subject = subject_match.group(1)
-    # H01 was acquired under the "Pilot01" name.
-    subject = "H01" if raw_subject.startswith("Pilot") else f"H{int(raw_subject[1:]):02d}"
+    subject = f"H{int(subject_match.group(1)):02d}"
 
     return {
         "subject": subject,

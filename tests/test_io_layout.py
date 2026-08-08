@@ -8,7 +8,7 @@ from meg_tokens.workflows.power import power_derivative_path
 
 def test_layout_builds_core_stage_paths():
     layout = DerivativeLayout("/analysis")
-    prefix = "/analysis/derivatives/meg-tokens/sub-H01"
+    prefix = "/analysis/derivatives/sub-H01"
 
     assert layout.behavior(subject="H1", run="Slow1", condition="Slow").as_posix() == (
         f"{prefix}/beh/sub-H01_task-tokens_run-1_desc-slow_beh.tsv"

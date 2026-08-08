@@ -77,9 +77,9 @@ def test_write_beh_bids_rejects_non_standard_filename(tmp_path):
 
 
 def test_write_beh_bids_real_tdms_file_integration():
-    real_root = os.environ.get(
-        "MEG_TOKENS_TDMS_ROOT", "/home/karim/Data/meg-tokens/tdms"
-    )
+    real_root = os.environ.get("MEG_TOKENS_TDMS_ROOT")
+    if not real_root:
+        pytest.skip("Set MEG_TOKENS_TDMS_ROOT to the behavioral log root to run this test.")
     real_path = os.path.join(real_root, "H02", "H02Slow1_180213.tdms")
     if not os.path.exists(real_path):
         pytest.skip(f"Real TDMS data not available at {real_path}")

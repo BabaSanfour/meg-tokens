@@ -7,7 +7,6 @@ def test_find_raw_files_prefers_derivative_contract(tmp_path):
     raw_dir = (
         tmp_path
         / "derivatives"
-        / "meg-tokens"
         / "sub-H01"
         / "meg"
     )

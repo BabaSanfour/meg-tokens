@@ -16,7 +16,7 @@ Two independent measures per subject, on Slow/Fast runs only:
 Both read a bounded window per run rather than whole recordings, which is
 what the doc's "60-120 s windows" limitation refers to.
 
-    python scripts/qc/meg_emg_qc.py /media/karim/Hamza/DDM-tthiery
+    python scripts/qc/meg_emg_qc.py <raw-root>
 """
 
 import argparse
@@ -35,9 +35,8 @@ WINDOW_SECONDS = 60.0
 
 def slowfast_runs(data_root, subject, limit=None):
     """Slow/Fast .ds directories for one subject, oldest first."""
-    prefix = "Pilot01" if subject == "H01" else subject
     runs = []
-    for ds_dir in sorted(data_root.glob(f"{prefix}_*.ds")):
+    for ds_dir in sorted(data_root.glob(f"{subject}_*.ds")):
         hist_files = list(ds_dir.glob("*.hist"))
         if not hist_files:
             continue

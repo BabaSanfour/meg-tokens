@@ -30,7 +30,6 @@ class ProjectConfig:
     trans_dir: Optional[Path] = None
     noise_dir: Optional[Path] = None
     task: str = "tokens"
-    pipeline: str = "meg-tokens"
     behavior_ignore_files: tuple[str, ...] = ()
     subject_exclusions: tuple[str, ...] = ()
     # Classify random ('x') trials from the correct-target design profile.
@@ -54,8 +53,6 @@ class ProjectConfig:
                 object.__setattr__(self, field_name, Path(value).expanduser())
         if not self.task.strip():
             raise ValueError("task must not be empty")
-        if not self.pipeline.strip():
-            raise ValueError("pipeline must not be empty")
 
     @property
     def raw_meg_root(self) -> Path:

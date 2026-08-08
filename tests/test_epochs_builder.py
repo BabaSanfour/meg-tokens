@@ -150,7 +150,7 @@ def test_save_epochs_and_events_bids(sample_meg_data):
         )
         
         # Verify folder structure and paths
-        expected_meg_dir = os.path.join(tmp_dir, 'derivatives', 'meg-tokens', 'sub-H01', 'meg')
+        expected_meg_dir = os.path.join(tmp_dir, 'derivatives', 'sub-H01', 'meg')
         assert os.path.exists(expected_meg_dir)
         
         assert os.path.exists(paths['epochs'])
@@ -325,7 +325,6 @@ def test_find_and_read_behavior_table(tmp_path, sample_meg_data):
     beh_path = (
         tmp_path
         / "derivatives"
-        / "meg-tokens"
         / "sub-H01"
         / "beh"
         / "sub-H01_task-tokens_run-1_desc-slow_beh.tsv"

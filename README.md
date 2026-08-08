@@ -28,7 +28,8 @@ The analysis pipeline is designed to be executed sequentially from raw data inge
 
 | Step | Stage | Module | Purpose |
 | :--- | :--- | :--- | :--- |
-| **0** | **Raw BIDSification** | [`raw_staging.py`](meg_tokens/meg/raw_staging.py), [`bids_raw.py`](meg_tokens/meg/bids_raw.py), [`tdms_bids.py`](meg_tokens/behavior/tdms_bids.py) | Matches raw CTF media sessions to behavior runs and copies `BIDS/sub-*/meg` + writes `BIDS/sub-*/beh` (a minimally-parsed behavior export); originals on media/`tdms/` stay untouched. |
+| **0** | **Raw BIDSification** | [`raw_staging.py`](meg_tokens/meg/raw_staging.py), [`meg_bids.py`](meg_tokens/meg/meg_bids.py), [`tdms_bids.py`](meg_tokens/behavior/tdms_bids.py) | Matches raw CTF media sessions to behavior runs and copies `BIDS/sub-*/meg` + writes `BIDS/sub-*/beh`. |
+| **0b** | **Anatomical BIDSification** | [`anat_bids.py`](meg_tokens/meg/anat_bids.py) | Copies each subject's FreeSurfer T1 into `BIDS/sub-*/anat`. |
 | **1** | **Behavioral Log Parsing** | [`tdms.py`](meg_tokens/behavior/tdms.py), [`schema.py`](meg_tokens/behavior/schema.py), [`behavior_ingest.py`](meg_tokens/workflows/behavior_ingest.py) | Parses raw LabVIEW `.tdms` logs, validates the behavioral contract, and writes behavior derivatives. |
 | **2** | **Behavioral Metrics Extraction** | [`features.py`](meg_tokens/behavior/features.py) and [`performance.py`](meg_tokens/behavior/analyses/performance.py) | Computes choice RTs, accuracy, difficulty levels, and behavioral summaries. |
 | **3** | **Behavioral Reporting** | [`behavior.py`](meg_tokens/reports/behavior.py) | Renders performance diagnostics and RT distributions. |
@@ -47,14 +48,16 @@ The analysis pipeline is designed to be executed sequentially from raw data inge
 
 All project data lives under one convention data root, `meg-tokens`:
 
-*   **`raw/`** — Raw CTF MEG acquisition media (`.ds` folders, `NOISE_noise_*.ds` empty-room
+*   **`raw/`** — Raw CTF MEG acquisition sessions (`.ds` folders, `NOISE_noise_*.ds` empty-room
     recordings, digitized head shapes, and fiducial photos), read by `meg-tokens meg stage-raw`.
-    Not project-managed: point this at wherever the acquisition media is mounted, or pass
-    `--media-root` explicitly on each `stage-raw` call instead.
+    Read-only to this project: nothing here is ever modified, only copied into `BIDS/`.
 *   **`tdms/`** — Raw behavioral logs (TDMS).
     *   Contains LabVIEW behavioral event logs for all 32 subjects (`H1` to `H32`).
 *   **`BIDS/`** — Both the BIDS-raw layer Stage 0 writes (`sub-*/meg`, `sub-*/beh`,
-    `sub-emptyroom`) and parsed/derived outputs under `BIDS/derivatives/meg-tokens/`.
+    `sub-*/anat`, `sub-emptyroom`) and parsed/derived outputs under `BIDS/derivatives/`.
+*   **`IRM/`** — FreeSurfer `recon-all` output, one subject directory per reconstructed
+    subject (30/32; H07 and H10 have none). Set as `subjects_dir` in the project TOML, read
+    directly by the BEM/source-space stages, and staged into `BIDS/sub-*/anat` by Stage 0.
 
 Set `data_root` once in a TOML file based on 
 [`config/tokens.toml.template`](config/tokens.toml.template) and `raw_meg_root`, `behavior_root`,
@@ -72,18 +75,25 @@ The installed `meg-tokens` command is the supported execution API. All stages
 also have callable workflow functions under `meg_tokens.workflows`.
 
 ### Stage 0: Raw BIDSification
-Matches raw CTF media sessions to raw TDMS behavior runs (reads `tdms/` directly -- no
-dependency on Stage 1 or any other stage having run first) and writes a reviewable manifest.
-Never touches `BIDS/` by itself:
+Plans the entire raw layer for a subject -- MEG runs, empty-room, head shape and anatomical --
+and writes a reviewable manifest. Reads `raw/`, `tdms/` and `subjects_dir` directly, with no
+dependency on Stage 1 or any other stage having run first, and never touches `BIDS/` by itself:
 ```bash
-meg-tokens --config tokens.toml meg stage-raw --subjects H01 H02 --media-root /path/to/raw-media
+meg-tokens --config tokens.toml meg stage-raw --subjects H01 H02
 ```
-Every flagged (`review`) row's `note` lists the real candidate session(s) and their actual
-MEG trigger-pulse counts as evidence; nothing is auto-picked among them. To resolve one, open
-the manifest TSV, set that row's `media_path` to the correct session and `action` to `stage`,
-save, and re-run `apply-raw-staging` -- it applies the manifest exactly as saved, so a re-plan
-never overwrites your edit. Then copy the reviewed rows into `BIDS/sub-*/meg`, `BIDS/sub-*/beh`,
-and `BIDS/sub-emptyroom` (the originals on the media and in `tdms/` are never modified):
+Each run is identified by its **inter-trial-interval fingerprint**: the logged per-trial
+`nInitialTime` gaps and the real MEG trial-start pulse gaps are the same physical intervals on
+two unrelated clocks, so the correct session reproduces them to well under a millisecond while
+any other is off by hundreds. A match is accepted only when it clears both an absolute error
+threshold and a margin over the runner-up, and when no other run claims the same session --
+otherwise the run is flagged `review` rather than matched to a best-available guess.
+
+Every flagged row's `note` carries its evidence: the candidate sessions, their real trigger-pulse
+counts, and the best fingerprint score. To resolve one, open the manifest TSV, set that row's
+`source_path` to the correct session and `action` to `stage`, save, and re-run
+`apply-raw-staging` -- it applies the manifest exactly as saved, so a re-plan never overwrites
+your edit. Applying copies the staged rows into `BIDS/sub-*/{meg,beh,anat}` and
+`BIDS/sub-emptyroom`; the originals under `raw/`, `tdms/` and `IRM/` are never modified:
 ```bash
 meg-tokens --config tokens.toml meg apply-raw-staging --subjects H01 H02
 ```
@@ -465,7 +475,7 @@ comparison fails.
 ```bash
 meg-tokens --config tokens.toml validate golden \
   --comparison-config /path/to/golden_validation.json \
-  --out-tsv /path/to/tokens-bids/derivatives/meg-tokens/sub-group/meg/sub-group_task-tokens_desc-golden-validation_validation.tsv
+  --out-tsv /path/to/tokens-bids/derivatives/sub-group/meg/sub-group_task-tokens_desc-golden-validation_validation.tsv
 ```
 
 ## Workflow Orchestration

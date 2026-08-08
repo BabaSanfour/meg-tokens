@@ -21,7 +21,7 @@ def test_find_noise_file_rejects_missing(tmp_path):
 
 
 def test_find_epoch_file_matches_stage2_contract(tmp_path):
-    epoch_dir = tmp_path / "derivatives" / "meg-tokens" / "sub-H01" / "meg"
+    epoch_dir = tmp_path / "derivatives" / "sub-H01" / "meg"
     os.makedirs(epoch_dir)
     epoch_file = epoch_dir / "sub-H01_task-tokens_run-1_desc-slow-go_epo.fif"
     epoch_file.write_text("")

@@ -29,18 +29,15 @@ class DerivativeLayout:
     """Build exact MEG Tokens derivative paths from canonical entities."""
 
     root: Path
-    pipeline: str = "meg-tokens"
     task: str = "tokens"
 
     def __init__(
         self,
         root: str | Path,
         *,
-        pipeline: str = "meg-tokens",
         task: str = "tokens",
     ) -> None:
         object.__setattr__(self, "root", Path(root))
-        object.__setattr__(self, "pipeline", pipeline)
         object.__setattr__(self, "task", task)
 
     def path(
@@ -57,7 +54,6 @@ class DerivativeLayout:
     ) -> Path:
         return derivative_path(
             self.root,
-            pipeline=self.pipeline,
             subject=normalize_subject_id(subject) if subject.lower() != "group" else "group",
             suffix=suffix,
             extension=extension,
@@ -91,7 +87,7 @@ class DerivativeLayout:
         subject = normalize_subject_id(subject)
         run_number, inferred = parse_run_label(run)
         condition = condition or inferred
-        directory = self.root / "derivatives" / self.pipeline / f"sub-{subject}" / "beh"
+        directory = self.root / "derivatives" / f"sub-{subject}" / "beh"
         if condition:
             candidates = [self.behavior(subject=subject, run=run_number, condition=condition)]
         else:
@@ -131,7 +127,7 @@ class DerivativeLayout:
             else None
         )
         pattern = (
-            f"derivatives/{self.pipeline}/sub-*/beh/"
+            f"derivatives/sub-*/beh/"
             f"sub-*_task-{self.task}_run-*_desc-*_beh.tsv"
         )
         selected = []
@@ -228,7 +224,6 @@ class DerivativeLayout:
             (
                 self.root
                 / "derivatives"
-                / self.pipeline
                 / f"sub-{subject}"
                 / "meg"
                 / "*_raw.fif"
