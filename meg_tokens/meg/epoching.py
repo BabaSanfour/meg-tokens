@@ -75,7 +75,7 @@ def mismatch_policy(subject: str, condition: Optional[str], run: str) -> str:
     trial-start->go-cue latency on the aligned (non-boundary)
     portion matches TDMS tGO to within 1.6-4.25ms across all of them, zero
     exceptions -- confirming the alignment is correct, not coincidental.
-    Full per-run evidence is in docs/behavior_qc_report.md. `truncate`
+    Full per-run evidence is in docs/meg.md. `truncate`
     (drop the extra tail from whichever side is longer) is safe for all of
     them because the discrepancy is confirmed to sit only at the trailing
     boundary, never scattered through the run and never at the front.
@@ -106,7 +106,7 @@ def mismatch_policy(subject: str, condition: Optional[str], run: str) -> str:
 # remaining 57 trials match MEG's 57 go events exactly, no truncation
 # needed (the run's other artifact, one trailing extra trial-start pulse
 # with no go-cue, is already invisible to go-alignment since it's never a
-# candidate "Go" event). See docs/behavior_qc_report.md.
+# candidate "Go" event). See docs/meg.md.
 KNOWN_UNRECOVERABLE_TRIALS = {
     ('H12', 'Slow', '2'): {2},
 }
@@ -138,7 +138,7 @@ def exclude_unrecoverable_trials(
 # matches TDMS tGO to ~2-4ms (measured at 3.20 +/- 1.19ms over 2230 real
 # trials) -- the same calibration reconstruct_missing_go_events uses to fill
 # the gap. Reproduce with scripts/qc/meg_trial_pulse_qc.py; see also
-# docs/behavior_qc_report.md.
+# docs/meg.md.
 #
 # on_mismatch="truncate" would also "fix" a final-trial dropout, by dropping
 # that trial. Reconstruction is preferred because it keeps it: the trial's
@@ -178,7 +178,7 @@ def reconstruct_missing_go_events(
     original position to keep that correspondence correct for every trial
     after it. OUTCOME_NEVER_STARTED trials never get a synthetic go-cue
     (they structurally have none by design, confirmed on all 229 real
-    occurrences -- see docs/behavior_qc_report.md) but their trial-start
+    occurrences -- see docs/meg.md) but their trial-start
     pulse still counts for positional indexing. This positional pairing is
     valid for the runs this is meant for, where trial-start pulses have
     already been confirmed (see KNOWN_GO_RECONSTRUCTION_RUNS) to align with
@@ -191,7 +191,7 @@ def reconstruct_missing_go_events(
     The go-cue lag (go pulse time - (trial-start time + tGO)) is calibrated
     from this run's own trials that do have a real go-cue -- a small, highly
     consistent hardware delay (~2-4ms across every subject checked; see
-    docs/behavior_qc_report.md). Falls back to DEFAULT_GO_LAG_S only when a
+    docs/meg.md). Falls back to DEFAULT_GO_LAG_S only when a
     run has zero real go-cues to calibrate from (H02RT1).
     """
     starts = np.sort(events[events[:, 2] == start_code][:, 0])
@@ -278,7 +278,7 @@ def synchronize_events_and_behavior(
     no MEG event to align to. They are excluded from the count/alignment
     here (not dropped from the Stage 1 behavior TSV itself), otherwise every
     run containing one would show a spurious trial-count mismatch. Confirmed
-    on all 229 occurrences in the real dataset; see docs/behavior_qc_report.md.
+    on all 229 occurrences in the real dataset; see docs/meg.md.
     """
     matching_codes = list(event_ids.values())
     matched_events = events[np.isin(events[:, 2], matching_codes)]

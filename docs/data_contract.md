@@ -220,11 +220,11 @@ Columns: `subject`, `condition`, `run`, `source_file`, `nTrialIndex`,
 | `sTrialClass`, `trial_class_source`, `trial_class_rule` | added here (`behavior/classification.py`); rest transcribed |
 | `sTrialClassRaw` | unmodified LabVIEW label |
 | `sTrialClass` | recorded label; inferred from `sp_design_correct` only for raw `'x'` |
-| `infer_random_classes=false` | `'x'` left unclassified, `trial_class_rule="inference_disabled"` (`docs/behavioral_pipeline.md`, Findings) |
+| `infer_random_classes=false` | `'x'` left unclassified, `trial_class_rule="inference_disabled"` (`docs/behavior.md`, Findings) |
 | `sp_design_correct` | absent when LabVIEW records no correct target |
 | `sTokenDirs` vs `nTokenDir` | designed sequence vs runtime-recorded |
 | `sp_design_correct`, `nTokenNum`, `nTokenDir`, `tTime`, `nProb` | deserialized to numeric sequences on load; empty token logs -> empty sequences |
-| `tEnterCenter`/`tExitCenter` | center-hold timestamps; `tEnterTarget - tExitCenter` is the only recorded movement duration, ~0 on most trials (`docs/behavior_qc_report.md` §1) |
+| `tEnterCenter`/`tExitCenter` | center-hold timestamps; `tEnterTarget - tExitCenter` is the only recorded movement duration, ~0 on most trials (`docs/meg.md`, Alignment QC) |
 | `nOutcome == 7003` | never-started; requires `tGO==0`, `nChoiceMade==0` |
 
 Validation: sequential `nTrialIndex`; `tGO <= tExitCenter <= tEnterTarget <=
@@ -320,12 +320,13 @@ summary.
 **Stage 2b reads Stage 2's trial-feature and subject-summary tables**, not
 the raw Stage 1 layer, and requires Stage 2 to have run first --
 `analyze_behavior_characterization` raises `FileNotFoundError` naming
-`behavior analyze` otherwise. It runs the fixed battery of analyses from
-`docs/behavior_analysis_roadmap.md` -- distributions, condition x class and
-session-order effects, lapses, continuous evidence, criterion decline and
-urgency, psychophysical reverse correlation, conditional accuracy, choice
-history and post-error slowing, individual differences, and cross-species
-comparison -- implemented under `behavior/analyses/` and orchestrated by
+`behavior analyze` otherwise. It runs the fixed battery of analyses
+described in `docs/behavior.md` ("Analyses") -- distributions, condition x
+class and session-order effects, lapses, continuous evidence, criterion
+decline and urgency, psychophysical reverse correlation, conditional
+accuracy, choice history and post-error slowing, sequential-sampling model
+fits, individual differences, and cross-species comparison -- implemented
+under `behavior/analyses/` and orchestrated by
 `workflows/behavior_characterization.py`.
 
 Each analysis writes its own derivative and, where it has one, a matching
@@ -337,16 +338,78 @@ derivatives/sub-group/beh/sub-group_task-tokens_desc-conditionclass_beh.tsv
 derivatives/sub-group/beh/sub-group_task-tokens_desc-conditionclassstats_beh.tsv
 ```
 
-`ROADMAP_ITEMS` in `workflows/behavior_characterization.py` is the single
-source mapping each derivative's `desc` name to its roadmap item code (e.g.
-`conditionclass` -> "A3 condition x class breakdown"). That code, plus the
-analysis name, the subjects included and excluded, and both source table
-paths, are recorded in every derivative's JSON sidecar, so a derivative
-states its own provenance back to the planning document without a second
-lookup; results on the current dataset are tracked separately in
-`docs/behavior_roadmap_results.md`. Inference throughout is "per-subject fit
-followed by a group test on the fitted values" (two-stage summary
-statistics), also recorded in the sidecar.
+The analysis name, the subjects included and excluded, and both source table
+paths are recorded in every derivative's JSON sidecar, so a derivative states
+its own provenance without a second lookup. Inference throughout is
+"per-subject fit followed by a group test on the fitted values" (two-stage
+summary statistics), also recorded in the sidecar.
+
+The two sequential-sampling derivatives are the exception to that two-stage
+note. `ssmcomparison` holds one maximum-likelihood fit per subject,
+condition, and model family (`ddm`, the bounded integrator, and `urgency`,
+the urgency-gating model) with log-likelihood, AIC, BIC, the criterion
+difference against the integrator fit, the trial count, and
+`n_token_sequences`, the number of distinct token sequences in the cell.
+Both models are driven by the trial's own token-by-token evidence
+trajectory, derived from `token_directions` and `nCorrectChoice`, so the
+fit needs both columns present. `ssmcomparisonstats` carries two analyses,
+distinguished by its `analysis` column: `ssm_model_comparison`, the
+per-condition group test of the criterion difference, and
+`ssm_urgency_condition_contrast`, the paired Fast-minus-Slow contrast on
+every fitted urgency-model parameter. `ssmpopulation` holds the
+subject-level parameters pooled under a normal population model, with
+`ssmpopulationstats` carrying the population mean and between-subject
+spread. The two models do not share a parameter set: `ddm` carries
+`drift_scale`, `bound`, `nondecision_s`, and `urgency` carries
+`drift_scale`, `urgency_scale`, `urgency_onset_s`, `nondecision_s`, with
+every column present in the table and missing where a model does not use it.
+Both need the optional `pyddm` dependency
+(`pip install meg-tokens[modeling]`).
+
+**The fits are a separate step.** They dominate the Stage 2b runtime, so
+`behavior ssm-fit --subjects <ids> --n-jobs <n>` computes them and writes one
+table per subject at the subject-level path:
+
+```text
+derivatives/sub-H01/beh/sub-H01_task-tokens_desc-ssmcomparison_beh.tsv
+```
+
+Those tables carry the same columns as the group `ssmcomparison`, restricted
+to one subject. `ssm-fit` writes two further per-subject tables from the same
+fitted models, because refitting to draw a curve costs half an hour:
+
+- `ssmtimecourse` -- one row per subject, condition, model, trial class and
+  time point (20 ms grid), holding `criterion`, `mean_decision_variable`, and
+  `predicted_density_correct`/`_error` beside
+  `observed_density_correct`/`_error`. The criterion does not depend on the
+  trial class and the observed densities do not depend on the model; both
+  repeat, so one row is a complete plotting record. The mean decision variable
+  is the noise-free trajectory of the *unabsorbed* process, so it can pass the
+  criterion rather than stopping at it.
+- `ssmtrialpredictions` -- one row per trial and model, keyed by `trial_id`,
+  holding `criterion_at_decision`, `decision_variable_at_decision` and
+  `predicted_accuracy`. This is the model-derived regressor Tier C5 joins to
+  source-space features.
+
+`ssmcomparison` carries `t_dur_s`, the integration horizon each cell was
+fitted with, so a fitted model is exactly reconstructible from its row:
+`_build_model(model, t_dur_s, {parameter: value, ...})`.
+
+`behavior characterization` fits nothing: it concatenates
+whichever per-subject tables exist, and names any subject still missing one in
+`sequential_sampling_subjects_missing`. When none exists, the `ssm*`
+derivatives are omitted and the rest of the battery is written as usual.
+`behavior subjects` prints the subject list the two steps agree on. A
+subject-condition cell with fewer
+than 50 scorable trials is written with `converged=false` and missing
+estimates rather than fitted; anticipations (non-positive `dt_ms`) are the
+one place in the pipeline a trial is dropped instead of flagged -- a
+first-passage density has no support before the process starts.
+
+`speciescomparison` gains three rows from `ssmcomparison` when it is
+supplied: `urgency_minus_integrator_bic`, `urgency_growth_rate_per_s`, and
+`urgency_growth_rate_fast_minus_slow`. They share the row shape of the rest
+of that table -- one one-sample test against zero.
 
 `individual_profile` -- the source of the `individualprofile` and
 `individualcorrelations` derivatives -- optionally joins a subject-level MEG

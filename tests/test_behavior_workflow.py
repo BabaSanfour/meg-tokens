@@ -9,8 +9,8 @@ from meg_tokens.core import ProjectConfig
 from meg_tokens.io import DerivativeLayout, save_table, sidecar_path
 from meg_tokens.workflows import analyze_behavior, ingest_behavior
 from meg_tokens.workflows.behavior_characterization import (
-    ROADMAP_ITEMS,
     analyze_behavior_characterization,
+    fit_subject_sequential_sampling,
 )
 
 from tests.behavior.factories import stage_behavior, stage_raw_behavior
@@ -336,7 +336,7 @@ def test_unified_validation_help_is_available(capsys):
 # --- Stage 2b: behavioral characterization analyses ---------------------------
 
 
-def test_analyze_behavior_characterization_writes_every_roadmap_table(tmp_path):
+def test_analyze_behavior_characterization_writes_every_analysis_table(tmp_path):
     project = ProjectConfig(data_root=tmp_path)
     stage_behavior(project.bids_root)
     analyze_behavior(project)
@@ -346,15 +346,121 @@ def test_analyze_behavior_characterization_writes_every_roadmap_table(tmp_path):
     assert result.stage == "behavior_characterization_analysis"
     assert result.settings["n_subjects"] == 3
     layout = DerivativeLayout(project.bids_root)
-    for name in ROADMAP_ITEMS:
+    # The sequential-sampling derivatives are written by 'behavior ssm-fit';
+    # this step only pools them, and none has been fitted here.
+    for name in (
+        "spdcumulative",
+        "dtdistribution",
+        "conditionclass",
+        "choiceside",
+        "timeontask",
+        "conditionorder",
+        "lapses",
+        "extremedt",
+        "criteriondecline",
+        "reversecorrelation",
+        "conditionalaccuracy",
+        "continuousevidence",
+        "posterror",
+        "choicehistory",
+        "individualprofile",
+        "individualcorrelations",
+        "urgency",
+        "speciescomparison",
+    ):
         assert layout.behavior_analysis(name) in result.outputs
     for path in result.outputs:
         assert path.is_file()
+    assert result.settings["sequential_sampling_subjects_missing"] == [
+        "H01",
+        "H02",
+        "H03",
+    ]
 
     cells = pd.read_csv(layout.behavior_analysis("conditionclass"), sep="\t")
     assert set(cells["subject"]) == {"H01", "H02", "H03"}
     criterion = pd.read_csv(layout.behavior_analysis("criteriondecline"), sep="\t")
     assert set(criterion["response"]) == {"logged_spd", "logged_spd_log_odds"}
+
+
+def test_sequential_sampling_fits_are_written_one_table_per_subject(tmp_path):
+    """The fixture's cells are far below the trials an accumulator needs, so the
+    fits are reported as unfitted -- the tables, columns, and sidecars are not."""
+    project = ProjectConfig(data_root=tmp_path)
+    stage_behavior(project.bids_root)
+    analyze_behavior(project)
+
+    result = fit_subject_sequential_sampling(project)
+
+    layout = DerivativeLayout(project.bids_root)
+    for subject in ("H01", "H02", "H03"):
+        path = layout.behavior_subject_analysis(subject, "ssmcomparison")
+        assert path in result.outputs
+        fits = pd.read_csv(path, sep="\t")
+        assert set(fits["subject"]) == {subject}
+        assert set(fits["model"]) == {"ddm", "urgency"}
+        assert not fits["converged"].any()
+        assert {"log_likelihood", "aic", "bic", "delta_bic"} <= set(fits.columns)
+
+
+def test_a_subject_can_be_fitted_on_its_own(tmp_path):
+    """One array-job task writes its own subject's table and nothing else."""
+    project = ProjectConfig(data_root=tmp_path)
+    stage_behavior(project.bids_root)
+    analyze_behavior(project)
+
+    result = fit_subject_sequential_sampling(project, subjects=["H02"])
+
+    layout = DerivativeLayout(project.bids_root)
+    assert result.outputs == (
+        layout.behavior_subject_analysis("H02", "ssmcomparison"),
+    )
+    assert not layout.behavior_subject_analysis("H01", "ssmcomparison").is_file()
+
+
+def test_characterization_pools_the_per_subject_fits(tmp_path):
+    project = ProjectConfig(data_root=tmp_path)
+    stage_behavior(project.bids_root)
+    analyze_behavior(project)
+    fit_subject_sequential_sampling(project)
+
+    result = analyze_behavior_characterization(project)
+
+    layout = DerivativeLayout(project.bids_root)
+    assert result.settings["sequential_sampling_subjects_missing"] == []
+    fits = pd.read_csv(layout.behavior_analysis("ssmcomparison"), sep="\t")
+    assert set(fits["subject"]) == {"H01", "H02", "H03"}
+
+    population = pd.read_csv(layout.behavior_analysis("ssmpopulationstats"), sep="\t")
+    assert set(population["parameter"]) == {
+        "drift_scale",
+        "bound",
+        "nondecision_s",
+        "urgency_scale",
+        "urgency_onset_s",
+    }
+    assert (population["n_subjects"] == 0).all()
+
+    sidecar = json.loads(
+        sidecar_path(layout.behavior_analysis("ssmcomparisonstats")).read_text(
+            encoding="utf-8"
+        )
+    )["metadata"]
+    assert sidecar["subjects"] == ["H01", "H02", "H03"]
+
+
+def test_characterization_pools_only_the_subjects_already_fitted(tmp_path):
+    project = ProjectConfig(data_root=tmp_path)
+    stage_behavior(project.bids_root)
+    analyze_behavior(project)
+    fit_subject_sequential_sampling(project, subjects=["H01"])
+
+    result = analyze_behavior_characterization(project)
+
+    layout = DerivativeLayout(project.bids_root)
+    assert result.settings["sequential_sampling_subjects_missing"] == ["H02", "H03"]
+    fits = pd.read_csv(layout.behavior_analysis("ssmcomparison"), sep="\t")
+    assert set(fits["subject"]) == {"H01"}
 
 
 def test_analyze_behavior_characterization_requires_staged_trial_features(tmp_path):

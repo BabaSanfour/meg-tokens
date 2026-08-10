@@ -283,6 +283,7 @@ def comparison_statistics(
     subject_summary: pd.DataFrame,
     *,
     criterion: pd.DataFrame | None = None,
+    sequential_sampling: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Summarize human measures that have cross-species counterparts.
 
@@ -296,21 +297,25 @@ def comparison_statistics(
         Optional multi-response criterion-fit table. When supplied, the pooled
         slope fitted on ``logged_spd_log_odds`` is summarized because that scale
         corresponds to cumulative log-likelihood evidence at commitment.
+    sequential_sampling
+        Optional accumulator-fit table from
+        :func:`~meg_tokens.behavior.analyses.sequential_sampling.fit_sequential_sampling_models`.
+        When supplied, the urgency-gating model's advantage over bounded
+        integration and its fitted urgency growth are summarized, because those
+        are the quantities the monkey work reports for the same task.
 
     Returns
     -------
     pandas.DataFrame
-        One row per human measure. Each row contains the descriptive and
-        one-sample fields returned by
-        :func:`~meg_tokens.behavior.math.inference.one_sample_statistics` and a
-        ``comparable_to`` label identifying the related published analysis.
+        One row per human measure, with the descriptive and one-sample
+        fields returned by
+        :func:`~meg_tokens.behavior.math.inference.one_sample_statistics`.
 
     Notes
     -----
     This function does not load monkey data, calculate a human-versus-monkey
-    effect, or reproduce values from a publication. The literature references
-    are semantic labels for aligned measures only. One-sample tests are against
-    zero and no multiplicity correction is applied.
+    effect, or reproduce values from a publication. One-sample tests are
+    against zero and no multiplicity correction is applied.
     """
     required = ["subject"]
     required.extend(f"mean_{name}_dt_ms" for name in CLASS_NAMES.values())
@@ -325,7 +330,6 @@ def comparison_statistics(
             {
                 "analysis": "cross_species_comparison",
                 "measure": f"decision_time_{name}_ms",
-                "comparable_to": "DT by trial class (Cisek et al. 2009, Fig. 4)",
                 **one_sample_statistics(subject_summary[column]),
             }
         )
@@ -334,7 +338,6 @@ def comparison_statistics(
             {
                 "analysis": "cross_species_comparison",
                 "measure": f"success_probability_at_decision_{name}",
-                "comparable_to": "SP at decision by class (Thura et al. 2012, Fig. 3)",
                 **one_sample_statistics(subject_summary[spd_column]),
             }
         )
@@ -348,8 +351,47 @@ def comparison_statistics(
             {
                 "analysis": "cross_species_comparison",
                 "measure": "criterion_slope_log_odds_per_token",
-                "comparable_to": "decline of evidence at commitment (Thura et al. 2012, Fig. 5)",
                 **one_sample_statistics(overall["slope"]),
+            }
+        )
+    if sequential_sampling is not None and len(sequential_sampling):
+        require_columns(
+            sequential_sampling,
+            ["subject", "condition", "model", "delta_bic", "urgency_scale"],
+        )
+        urgency = sequential_sampling.loc[
+            sequential_sampling["model"] == "urgency"
+        ].set_index("subject")
+        pooled = urgency.loc[urgency["condition"] == "all"]
+        fast = urgency.loc[urgency["condition"] == "fast"]
+        slow = urgency.loc[urgency["condition"] == "slow"]
+        paired = fast.index.intersection(slow.index)
+        rows.append(
+            {
+                "analysis": "cross_species_comparison",
+                "measure": "urgency_minus_integrator_bic",
+                **one_sample_statistics(pooled["delta_bic"]),
+            }
+        )
+        rows.append(
+            {
+                "analysis": "cross_species_comparison",
+                "measure": "urgency_scale_criterion_seconds",
+                **one_sample_statistics(pooled["urgency_scale"]),
+            }
+        )
+        # urgency_scale is threshold / urgency slope, so smaller is faster-rising;
+        # a negative Fast-minus-Slow difference is more urgency under time
+        # pressure. Entered as a per-subject difference so this row stays a
+        # one-sample test against zero, like the rest of the table.
+        rows.append(
+            {
+                "analysis": "cross_species_comparison",
+                "measure": "urgency_scale_fast_minus_slow",
+                **one_sample_statistics(
+                    fast.loc[paired, "urgency_scale"].to_numpy(dtype=float)
+                    - slow.loc[paired, "urgency_scale"].to_numpy(dtype=float)
+                ),
             }
         )
     return pd.DataFrame(rows)

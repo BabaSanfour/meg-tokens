@@ -29,7 +29,7 @@ Module map, in pipeline order. Stage numbers live only under [Running the Pipeli
 | **Raw BIDSification** | [`raw_staging.py`](meg_tokens/meg/raw_staging.py), [`meg_bids.py`](meg_tokens/meg/meg_bids.py), [`anat_bids.py`](meg_tokens/meg/anat_bids.py), [`tdms_bids.py`](meg_tokens/behavior/tdms_bids.py) | Identifies which raw session is which run, then stages the whole raw layer: `BIDS/sub-*/{meg,beh,anat}` and `sub-emptyroom`. |
 | **Behavioral Log Parsing** | [`classification.py`](meg_tokens/behavior/classification.py), [`schema.py`](meg_tokens/behavior/schema.py), [`behavior_ingest.py`](meg_tokens/workflows/behavior_ingest.py) | Reads the staged raw behavior, infers trial classes, validates the Stage 1 contract, and writes behavior derivatives. |
 | **Behavioral Metrics Extraction** | [`features.py`](meg_tokens/behavior/features.py) and [`performance.py`](meg_tokens/behavior/analyses/performance.py) | Computes choice RTs, accuracy, difficulty levels, and behavioral summaries. |
-| **Behavioral Characterization Analyses** | [`behavior_characterization.py`](meg_tokens/workflows/behavior_characterization.py) and [`behavior/analyses/`](meg_tokens/behavior/analyses) | Runs the full `docs/behavior_analysis_roadmap.md` battery over the trial-feature table: distributions, design/session effects, evidence, criterion decline, individual differences, and more. |
+| **Behavioral Characterization Analyses** | [`behavior_characterization.py`](meg_tokens/workflows/behavior_characterization.py) and [`behavior/analyses/`](meg_tokens/behavior/analyses) | Runs the full analysis battery described in `docs/behavior.md` over the trial-feature table: distributions, design/session effects, evidence, criterion decline, individual differences, and more. |
 | **Behavioral Reporting** | [`behavior.py`](meg_tokens/reports/behavior.py) | Renders performance diagnostics and RT distributions. |
 | **MEG Preprocessing & Filtering** | [`preprocessing.py`](meg_tokens/meg/preprocessing.py) | Loads raw CTF MEG, applies filters, performs ICA decomposition, and coregisters head points. |
 | **Epoch Extraction & Event Alignment** | [`epoching.py`](meg_tokens/meg/epoching.py) | Segments MEG data into trial epochs aligned to triggers and behavior. |
@@ -102,7 +102,7 @@ meg-tokens --config tokens.toml behavior analyze
 ```
 
 ### Stage 2b: Behavioral Characterization Analyses
-Runs the full battery of behavioral analyses from `docs/behavior_analysis_roadmap.md`
+Runs the full battery of behavioral analyses described in `docs/behavior.md`
 over Stage 2's trial-feature table — distributions, condition × class effects, session
 drift, lapses, continuous evidence, criterion decline and urgency, reverse
 correlation, conditional accuracy, trial history, and individual differences.

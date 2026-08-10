@@ -1,7 +1,7 @@
 """Head motion and truncation QC from CTF acquisition metadata.
 
 Reproduces the movement and truncation columns in
-docs/meg_t0_6_subject_exclusion_qc.md ("MEG-signal evidence"):
+docs/meg.md ("MEG-signal evidence"):
 
   - per-subject head-motion z-scores over Slow/Fast runs (H10 z=+3.50)
   - the single truncated recording in the dataset

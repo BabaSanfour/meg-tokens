@@ -22,7 +22,7 @@ The parser transcribes only what LabVIEW wrote, so this layer carries
 ``RAW_TRIAL_COLUMNS``: no ``sTrialClass``, no ``trial_class_source``, no
 ``trial_class_rule``. Those record which class a trial logged as ``'x'``
 belongs to, which is inferred rather than observed (see
-``docs/behavioral_pipeline.md``, Findings: trial-classification reference
+``docs/behavior.md``, Findings: trial-classification reference
 frame) and so is not something a raw file is entitled to assert -- not even
 as a placeholder saying it declined to.
 

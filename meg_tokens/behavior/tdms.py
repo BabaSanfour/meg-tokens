@@ -205,7 +205,7 @@ def parse_single_trial(events_str: str) -> dict:
     # it is legitimately absent (not corrupted) on a skipped trial. The same
     # holds for the center-hold timestamps. tExitCenter is retained because it
     # is the only field that could carry a movement duration
-    # (tEnterTarget - tExitCenter); see docs/behavior_qc_report.md for what it
+    # (tEnterTarget - tExitCenter); see docs/meg.md for what it
     # actually contains in this dataset.
     t_enter_center = int(meta.get('tEnterCenter', 0))
     t_exit_center = int(meta.get('tExitCenter', 0))

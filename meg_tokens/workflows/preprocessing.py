@@ -137,7 +137,7 @@ def epoch_subjects(
                     f"{run.subject} {run.condition}{run.run}: reconstructing "
                     "missing go-cue event(s) from trial-start pulses + tGO "
                     "(confirmed trigger dropout -- see "
-                    "docs/behavior_qc_report.md)"
+                    "docs/meg.md)"
                 )
                 events = reconstruct_missing_go_events(
                     events,
@@ -155,7 +155,7 @@ def epoch_subjects(
                     f"{run.subject} {run.condition}{run.run}: excluding "
                     f"{before_exclusion - len(behavior)} trial(s) with no "
                     "MEG event at all for this run (confirmed unrecoverable "
-                    "-- see docs/behavior_qc_report.md)"
+                    "-- see docs/meg.md)"
                 )
             policy = mismatch_policy(run.subject, run.condition, run.run)
             if policy == "truncate":
@@ -163,7 +163,7 @@ def epoch_subjects(
                     f"{run.subject} {run.condition}{run.run}: applying known "
                     "trailing-trial truncation (aborted final trial, "
                     "confirmed via MEG timing cross-check -- see "
-                    "docs/behavior_qc_report.md)"
+                    "docs/meg.md)"
                 )
             epochs = build_epochs_with_metadata(
                 raw=raw,

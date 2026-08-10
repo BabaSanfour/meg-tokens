@@ -54,8 +54,8 @@ def build_parser() -> argparse.ArgumentParser:
     characterization = behavior_commands.add_parser(
         "characterization",
         help=(
-            "Stage 2b: run the docs/behavior_analysis_roadmap.md analyses "
-            "over the staged trial-feature table."
+            "Stage 2b: run the behavioral characterization analyses over the "
+            "staged trial-feature table."
         ),
     )
     characterization.add_argument("--subjects", nargs="+")
@@ -65,6 +65,36 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "Optional subject-level MEG metrics table (TSV or CSV with a "
             "'subject' column) to join into the individual-difference profile."
+        ),
+    )
+
+    ssm_fit = behavior_commands.add_parser(
+        "ssm-fit",
+        help=(
+            "Stage 2b, sequential-sampling fit only: fit the models and "
+            "write one table per subject. Split out because it is the whole "
+            "runtime of the stage; 'behavior characterization' pools the "
+            "tables it writes."
+        ),
+    )
+    ssm_fit.add_argument("--subjects", nargs="+")
+    ssm_fit.add_argument(
+        "--n-jobs",
+        dest="n_jobs",
+        type=int,
+        default=1,
+        help=(
+            "Worker processes. Negative uses every CPU. Each subject is six "
+            "independent fits, so pass a batch of subjects to fill a node "
+            "with more cores than that."
+        ),
+    )
+
+    behavior_commands.add_parser(
+        "subjects",
+        help=(
+            "Print the Stage 2b subject list, one per line, in the order an "
+            "array job should batch it."
         ),
     )
 
@@ -464,6 +494,24 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 subjects=args.subjects,
                 neural_metrics_path=args.neural_metrics,
             )
+        elif args.domain == "behavior" and args.behavior_command == "ssm-fit":
+            from meg_tokens.workflows.behavior_characterization import (
+                fit_subject_sequential_sampling,
+            )
+
+            result = fit_subject_sequential_sampling(
+                project,
+                subjects=args.subjects,
+                n_jobs=args.n_jobs,
+            )
+        elif args.domain == "behavior" and args.behavior_command == "subjects":
+            from meg_tokens.workflows.behavior_characterization import (
+                characterization_subjects,
+            )
+
+            for subject in characterization_subjects(project):
+                print(subject)
+            return 0
         elif args.domain == "behavior" and args.behavior_command == "qc":
             from meg_tokens.validation import run_spd_validation
 

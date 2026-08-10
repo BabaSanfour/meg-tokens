@@ -1,6 +1,6 @@
 """Trial-class reference frames: ours vs Thomas's, on the real TDMS data.
 
-Reproduces every number in docs/behavioral_pipeline.md's Findings section
+Reproduces every number in docs/behavior.md's Findings section
 (trial-classification reference frame):
 
   1. group DT statistics under three classification choices, showing that the

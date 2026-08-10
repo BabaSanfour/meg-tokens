@@ -298,7 +298,7 @@ def test_measures_absent_from_the_profile_are_skipped():
 # --- cross-species comparison -------------------------------------------------
 
 
-def test_every_class_measure_is_summarized_with_its_published_counterpart():
+def test_every_class_measure_is_summarized():
     statistics = comparison_statistics(_subject_summary())
 
     assert set(statistics["measure"]) == {
@@ -309,7 +309,6 @@ def test_every_class_measure_is_summarized_with_its_published_counterpart():
         "success_probability_at_decision_ambiguous",
         "success_probability_at_decision_misleading",
     }
-    assert statistics["comparable_to"].notna().all()
     assert (statistics["analysis"] == "cross_species_comparison").all()
 
 
@@ -350,6 +349,53 @@ def test_the_criterion_row_is_absent_when_no_fit_is_supplied():
     statistics = comparison_statistics(_subject_summary())
 
     assert "criterion_slope_log_odds_per_token" not in set(statistics["measure"])
+
+
+def _sequential_sampling_fits() -> pd.DataFrame:
+    """Accumulator fits for four subjects in the pooled and both block conditions."""
+    rows = []
+    for index, subject in enumerate(["H01", "H02", "H03", "H04"]):
+        for condition, rate in (("all", 0.8), ("fast", 1.0), ("slow", 0.6)):
+            rows.append(
+                {
+                    "subject": subject,
+                    "condition": condition,
+                    "model": "urgency",
+                    "delta_bic": -10.0 - index,
+                    "urgency_scale": rate + 0.1 * index,
+                }
+            )
+            rows.append(
+                {
+                    "subject": subject,
+                    "condition": condition,
+                    "model": "ddm",
+                    "delta_bic": 0.0,
+                    "urgency_scale": np.nan,
+                }
+            )
+    return pd.DataFrame(rows)
+
+
+def test_the_urgency_gating_rows_are_computed_from_the_fits():
+    statistics = comparison_statistics(
+        _subject_summary(), sequential_sampling=_sequential_sampling_fits()
+    ).set_index("measure")
+
+    assert statistics.loc["urgency_minus_integrator_bic", "mean"] == pytest.approx(
+        np.mean([-10.0, -11.0, -12.0, -13.0])
+    )
+    assert statistics.loc["urgency_scale_criterion_seconds", "n_subjects"] == 4
+    # Fast minus Slow, per subject, so the row stays a one-sample test.
+    assert statistics.loc[
+        "urgency_scale_fast_minus_slow", "mean"
+    ] == pytest.approx(0.4)
+
+
+def test_the_urgency_gating_rows_are_absent_when_no_fit_is_supplied():
+    statistics = comparison_statistics(_subject_summary())
+
+    assert "urgency_minus_integrator_bic" not in set(statistics["measure"])
 
 
 def test_a_summary_without_a_class_measure_is_refused():

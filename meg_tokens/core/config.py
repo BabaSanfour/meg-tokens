@@ -34,7 +34,7 @@ class ProjectConfig:
     subject_exclusions: tuple[str, ...] = ()
     # Classify random ('x') trials from the correct-target design profile.
     # Set False to use recorded 'e'/'a'/'m' labels only; see
-    # docs/behavioral_pipeline.md, Findings: trial-classification reference frame.
+    # docs/behavior.md, Findings: trial-classification reference frame.
     infer_random_classes: bool = True
 
     def __post_init__(self) -> None:

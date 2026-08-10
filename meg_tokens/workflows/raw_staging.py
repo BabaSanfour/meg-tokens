@@ -73,7 +73,7 @@ def _notable_message(result: MatchResult) -> Optional[str]:
     if result.count_agreement == "mismatch" and result.action == "stage":
         return (
             "staging despite a Start-pulse-count mismatch -- documented "
-            "KNOWN_TRAILING_TRIAL_MISMATCHES case (see docs/behavior_qc_report.md "
+            "KNOWN_TRAILING_TRIAL_MISMATCHES case (see docs/meg.md "
             "section 3)"
         )
     return None

@@ -1,19 +1,32 @@
 # Behavioral Roadmap Results
 
-Measured results for the analyses in `docs/behavior_analysis_roadmap.md`,
-produced by:
+Measured results for the analyses described in `docs/behavior.md`
+("Analyses"), produced by:
 
 ```bash
 meg-tokens --config tokens.toml behavior ingest
 meg-tokens --config tokens.toml behavior analyze
+meg-tokens --config tokens.toml behavior ssm-fit --n-jobs 4
 meg-tokens --config tokens.toml behavior characterization
 ```
 
+Pending merge into `docs/behavior.md` once the full analysis battery
+(including the C1/C2 sequential-sampling refit) has been run to completion
+on all 32 subjects; kept separate for now since these numbers are still
+partial.
+
 All values below are **N = 32 with no subject exclusions applied**
 (`subject_exclusions = []`), covering 16,324 started-and-chosen task trials.
-T0-6 has not been populated, so these are not the N = 28 preprint-comparison
-numbers; every table regenerates under an exclusion list without code changes.
+Subject exclusions are not yet populated (`docs/meg.md`, Subject Exclusion),
+so these are not the N = 28 preprint-comparison numbers; every table
+regenerates under an exclusion list without code changes.
 Group tests are two-stage: one fit per subject, then a test across subjects.
+C2 is the exception: its group step is a normal population model over the
+subject-level fits. The C1–C2 sequential-sampling fits need the optional
+`pyddm` dependency (`pip install -e .[modeling]`); they are the runtime of
+Stage 2b and are a separate command, `behavior ssm-fit`, which the
+characterization pools. `scripts/ssm_fit_array.sh` runs them as a cluster
+array job, one subject per task on four CPUs.
 
 Each section names the derivative that holds the full table
 (`sub-group/beh/sub-group_task-tokens_desc-<name>_beh.tsv`).
@@ -55,8 +68,8 @@ What the means hide:
 - **Ambiguous versus misleading separates only in the fast half.** q10
   `t=5.39, p=7e-6` and q50 `t=4.37, p=1e-4`, but q90 `t=0.42, p=0.68`. The
   positive ambiguous-vs-misleading mean difference discussed in
-  `docs/behavior_metrics_readiness.md` comes entirely from the leading edge of
-  the distribution.
+  `docs/behavior.md` ("Preprint Replication") comes entirely from the
+  leading edge of the distribution.
 - Fast/Slow is also a pure shift: q10, q50, q90 all differ (`p<2e-4`), while
   skewness (`p=0.53`) and τ (`p=0.97`) do not. The speed instruction moves the
   body of the distribution and leaves its shape alone.
@@ -117,7 +130,7 @@ Slow block, and the Fast/Slow adjustment does not differ between those groups
 (105 vs 147 ms, Welch `t=-1.00, p=0.33`).
 
 Block order is derived from the LabVIEW session clock (`nInitialTime`); see
-`docs/behavior_qc_report.md` for why no other field can do it.
+`docs/meg.md` for why no other field can do it.
 
 ## A6 — Lapses and extreme DTs (`lapses`, `extremedt`, `extremedttrials`)
 
@@ -256,9 +269,9 @@ Not implemented: the logs record no movement duration. Movement time
 (`tEnterTarget - tExitCenter`) is 0 ms on 18,833 of 18,846 chosen trials
 because LabVIEW writes both timestamps from the same event, and
 `tTrialEnd - tEnterTarget` is the post-choice token replay rather than a
-movement (r = -0.98 with DT within condition). See
-`docs/behavior_qc_report.md` §1, "Movement time is not recorded" for the
-evidence; nothing in the package computes it.
+movement (r = -0.98 with DT within condition). See `docs/behavior.md`,
+Known Issues (Stage 1), "Movement time not recorded" for the evidence;
+nothing in the package computes it.
 
 
 ## B9 — Individual differences (`individualprofile`, `individualcorrelations`)
@@ -281,13 +294,58 @@ predictors are near-redundant, as expected — decision time and tokens observed
 are nearly the same clock. The Fast/Slow adjustment itself is not related to
 any other behavioral measure, so it is an independent trait in this cohort.
 
+## C1 — Urgency gating versus bounded integration (`ssmcomparison`, `ssmcomparisonstats`)
+
+**The previously published numbers here are withdrawn.** They came from a
+collapsing-bound drift-diffusion model driven by one scalar per trial, which
+is not the urgency-gating model and, with within-trial evidence held constant,
+is algebraically equivalent to the integrator it was compared against. See the
+module docstring of `meg_tokens/behavior/analyses/sequential_sampling.py` for
+the model specification.
+
+The corrected fit is pending: it is far more expensive per cell than the
+withdrawn one, because each likelihood evaluation solves the diffusion once
+per distinct token sequence in the cell (~76) rather than once per evidence
+level (4). Measured on one core for H01 Fast (293 trials, 76 sequences): 172 s
+for the integrator and 1,700 s for the urgency model, so the 192 fits are
+about 50 core-hours — a cluster job, run with `--n-jobs`.
+
+Two things to check once it lands:
+
+- **B2's positive accuracy-criterion slope already disagrees with the
+  urgency-gating prediction of a declining criterion** (see B1–B2 above), but
+  that measure has a known discretization confound. If this fit says urgency
+  gating wins decisively, that tension is the thing to explain, and the
+  model-derived criterion here is the tool for it, since it is not subject to
+  the same confound.
+- `tau` (the low-pass filter time constant) is fixed at 200 ms, Cisek et al.
+  2009's value for this task, not fitted. A sensitivity refit at the other
+  published values, 100 ms (Thura 2012) and 250 ms (Carland 2015), is a
+  one-constant change worth doing once the main run exists.
+
+## C2 — Population parameters (`ssmpopulation`, `ssmpopulationstats`)
+
+Pending with C1, and withdrawn on the same grounds. The fitted quantities
+change with the model: the urgency fit now reports `drift_scale`,
+`urgency_scale` (threshold over urgency slope, criterion-seconds -- smaller
+means urgency rises faster), `urgency_onset_s`, and `nondecision_s`; the
+integrator reports `drift_scale`, `bound`, and `nondecision_s`.
+
 ## C6 — Comparison-ready statistics (`speciescomparison`)
+
+The `speciescomparison` table itself carries no citation column — each row
+is only `measure` plus the descriptive/one-sample statistics. This table is
+the canonical mapping from `measure` to the published analysis it aligns
+with.
 
 | Measure | Value | Comparable published measure |
 |---|---|---|
 | DT easy / ambiguous / misleading | 1033 / 1433 / 1357 ms | DT by class (Cisek et al. 2009) |
 | SP at decision, easy / ambiguous / misleading | 0.791 / 0.663 / 0.650 | SP at decision by class (Thura et al. 2012) |
 | Criterion slope | +0.100 log odds per token | evidence at commitment (Thura et al. 2012) |
+| `urgency_minus_integrator_bic` | pending with C1 | urgency gating preferred over integration (Cisek et al. 2009, Fig. 7; Thura et al. 2012, Figs. 10-11) |
+| `urgency_scale_criterion_seconds` | pending with C1 | linear urgency signal fitted to monkey tokens-task behavior (Thura and Cisek 2014; Carland et al. 2019) |
+| `urgency_scale_fast_minus_slow` | pending with C1 | urgency time-course differs between fast and slow blocks (Cisek et al. 2009, Fig. 8C-D) |
 
 Values from the monkey papers are not reproduced here; the table exists so
 that our side is reported in the same statistics. The movement-duration and
@@ -296,9 +354,6 @@ logs do not record movement (B8).
 
 ## What is not implemented
 
-- **Tier C1–C2**: urgency-gating versus drift-diffusion model comparison, and
-  hierarchical sequential-sampling fits. Both need a model-fitting dependency
-  (HSSM or `pyddm`) that this package does not carry.
 - **Tier C5 join**: the trial-level regressors exist and carry the MEG join
   key; the source-space features they join to do not exist yet.
 - **Tier B8**: dropped. Not implementable from these logs, as above.

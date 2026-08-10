@@ -183,7 +183,7 @@ def test_parse_run_label():
 
 
 def test_mismatch_policy_truncates_only_known_trailing_trial_runs():
-    """Confirmed via MEG timing cross-check (docs/behavior_qc_report.md):
+    """Confirmed via MEG timing cross-check (docs/meg.md):
     a real, trailing boundary discrepancy (extra or missing pulse), not
     scattered/interior data loss. H08RT1 is included here: once
     synchronize_events_and_behavior excludes its OUTCOME_NEVER_STARTED

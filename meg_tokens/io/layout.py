@@ -198,6 +198,25 @@ class DerivativeLayout:
             extension=".tsv",
         )
 
+    def behavior_subject_analysis(self, subject: str, name: str) -> Path:
+        """Return one subject's own table for a named behavior analysis.
+
+        The counterpart of :meth:`behavior_analysis` for analyses expensive
+        enough to be computed one subject at a time and pooled afterwards.
+        """
+        if not name or not name.isalnum():
+            raise ValueError(
+                "Behavior analysis names must be non-empty and alphanumeric "
+                f"so that they stay valid BIDS description entities: {name!r}"
+            )
+        return self.path(
+            subject=subject,
+            datatype="beh",
+            description=name,
+            suffix="beh",
+            extension=".tsv",
+        )
+
     def preprocessed_raw(
         self,
         *,

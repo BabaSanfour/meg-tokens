@@ -1,6 +1,6 @@
 """Myographic (EMG) artifact screening across subjects.
 
-Reproduces the EMG columns in docs/meg_t0_6_subject_exclusion_qc.md
+Reproduces the EMG columns in docs/meg.md
 ("MEG-signal evidence"): the broadband power ratio z-scores and the ICA
 muscle-component ranking that together identify H04 -- which is *not* one of
 the four excluded subjects -- as the strongest EMG outlier in the cohort,
