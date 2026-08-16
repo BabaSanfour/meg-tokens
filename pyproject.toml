@@ -31,7 +31,7 @@ dependencies = [
     "nptdms>=1.3.0",
     "scikit-learn>=1.0.0",
     "mne-connectivity>=0.5.0",
-    "specparam>=2.0.0",
+    "specparam>=2.0.0rc0",
     "xarray>=2023.1.0",
     "tomli>=2.0.0; python_version<'3.11'"
 ]

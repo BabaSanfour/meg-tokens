@@ -33,7 +33,6 @@ _EXPORTS = {
     "decision_time_distribution_statistics": ("meg_tokens.behavior.analyses.distributions", "decision_time_distribution_statistics"),
     "distribution_summary": ("meg_tokens.behavior.analyses.distributions", "distribution_summary"),
     "evidence_after_tokens": ("meg_tokens.behavior.math.evidence", "evidence_after_tokens"),
-    "ex_gaussian_parameters": ("meg_tokens.behavior.analyses.distributions", "ex_gaussian_parameters"),
     "extreme_decision_times": ("meg_tokens.behavior.analyses.design_effects", "extreme_decision_times"),
     "individual_correlations": ("meg_tokens.behavior.analyses.individual", "individual_correlations"),
     "individual_profile": ("meg_tokens.behavior.analyses.individual", "individual_profile"),

@@ -40,8 +40,7 @@ def calculate_motor_baseline(rt_dfs: list[pd.DataFrame]) -> float:
     Returns
     -------
     float
-        Arithmetic mean of every finite ``rawRT`` value across the supplied
-        runs, in milliseconds.
+        Mean of each run's own mean finite ``rawRT``, in milliseconds.
 
     Raises
     ------
@@ -52,16 +51,25 @@ def calculate_motor_baseline(rt_dfs: list[pd.DataFrame]) -> float:
 
     Notes
     -----
-    Runs and trials contribute equally at the trial level. The function does
-    not estimate missing responses or apply outlier rejection.
+    Runs, not trials, contribute equally: each run is reduced to its own mean
+    before those means are averaged, so a run with more usable responses does
+    not pull the baseline toward itself.  This matches the preprint's
+    estimator (``00_44_Behavior_Trial_Types.ipynb`` averages per-run means),
+    and it differs from a trial-level pooled mean whenever the RT runs hold
+    unequal numbers of responses.  Runs with no usable response contribute
+    nothing.  The function does not estimate missing responses or apply
+    outlier rejection.
     """
-    rt_values = []
+    run_means = []
     for table in rt_dfs:
-        if not table.empty:
-            rt_values.extend(pd.to_numeric(table["rawRT"]).dropna().values)
-    if not rt_values:
+        if table.empty:
+            continue
+        values = pd.to_numeric(table["rawRT"]).dropna()
+        if not values.empty:
+            run_means.append(float(values.mean()))
+    if not run_means:
         raise ValueError("No valid RT trials are available for the motor baseline")
-    return float(np.mean(rt_values))
+    return float(np.mean(run_means))
 
 
 def calculate_decision_times(

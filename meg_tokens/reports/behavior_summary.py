@@ -1,24 +1,93 @@
+"""Orchestrate the behavioral figure battery.
+
+Reads Stage 2/2b **group** derivatives (via `BehaviorTableSet`). A missing
+derivative raises `FileNotFoundError` naming the path and the command that
+writes it (`meg-tokens behavior characterization`, or `meg-tokens behavior
+ssm-fit` for any `ssm*` table), unless `skip_missing=True`.
 """
-Report generation for behavioral distributions and
-Stage 8 Brain-Behavior Correlations (e.g. Success Probability & Latencies).
-"""
+
+from __future__ import annotations
 
 from pathlib import Path
+from typing import Sequence
 
-import pandas as pd
+import matplotlib
+
+matplotlib.use("Agg", force=True)
+
 import matplotlib.pyplot as plt
-import numpy as np
-from meg_tokens.behavior.tables import read_behavior_table
-from meg_tokens.behavior.trials import started_trials
-from meg_tokens.io import DerivativeLayout, require_file, save_sidecar
-from meg_tokens.reports.behavior import plot_fast_slow_distributions
-from meg_tokens.reports.meg import plot_correlation
+
+from meg_tokens.io import DerivativeLayout, save_sidecar
+from meg_tokens.reports import style
+from meg_tokens.reports.annotations import SIGNIFICANCE_CONVENTION
+from meg_tokens.reports.behavior import (
+    FigureSpec,
+    REGISTRY,
+    list_behavior_figures,
+    resolve_figure_keys,
+)
+from meg_tokens.reports.behavior._tables import BehaviorTableSet
+
+__all__ = ["list_behavior_figures", "run_behavior_plotting"]
+
+_REGISTRY_BY_KEY = {spec.key: spec for spec in REGISTRY}
 
 
-def _behavior_entities(path: Path) -> tuple[str, str]:
-    subject = path.name.split("_", 1)[0].replace("sub-", "")
-    condition = path.stem.split("_desc-", 1)[1].rsplit("_beh", 1)[0]
-    return subject, condition
+def _render_one(
+    spec: FigureSpec,
+    tables: BehaviorTableSet,
+    output_layout: DerivativeLayout,
+    formats: Sequence[str],
+) -> Path:
+    figure, extra_metadata = spec.builder(tables)
+    try:
+        base_path = output_layout.path(
+            subject="group",
+            datatype="fig",
+            description=f"{spec.analysis}-{spec.view}",
+            suffix="behavior",
+            extension=formats[0],
+        )
+        base_path.parent.mkdir(parents=True, exist_ok=True)
+        written: list[Path] = []
+        for extension in formats:
+            figure_path = base_path.with_suffix(extension)
+            # apply_publication_style()'s rc_context has already exited by
+            # the time this runs (the builder returns the figure, it doesn't
+            # save it), so savefig.dpi=400 from that context is gone -- pass
+            # it explicitly or every raster figure silently saves at
+            # matplotlib's 100 dpi default.
+            figure.savefig(figure_path, dpi=style.SAVEFIG_DPI)
+            written.append(figure_path)
+
+        # tables is shared across every figure in this run (for caching), so
+        # tables.sources accumulates across figures -- it is NOT a per-figure
+        # source list. Each builder's own columns_read names exactly what it
+        # read, so use that to select this figure's own sources.
+        read_names = extra_metadata.get("columns_read", {}).keys()
+        source_derivatives = [
+            tables.sources[name] for name in read_names if name in tables.sources
+        ]
+
+        metadata = {
+            "stage": "behavior_report",
+            "figure": spec.key,
+            "analysis": spec.analysis,
+            "view": spec.view,
+            "significance_convention": SIGNIFICANCE_CONVENTION,
+            "multiplicity_correction": "none",
+            "caveat": spec.caveat,
+            "formats": list(formats),
+            "dpi": 400,
+            "source_derivatives": source_derivatives,
+            **extra_metadata,
+        }
+        # io.sidecar_path collapses every format of the same figure onto one
+        # .json (Path.with_suffix); write it once, after all formats.
+        save_sidecar(written[0], metadata)
+        return written[0]
+    finally:
+        plt.close(figure)
 
 
 def run_behavior_plotting(
@@ -26,105 +95,28 @@ def run_behavior_plotting(
     output_figures_dir: str,
     subjects_list: list[str] | None = None,
     neural_metrics_csv: str | None = None,
+    *,
+    figures: Sequence[str] = ("all",),
+    formats: Sequence[str] = (".pdf", ".png"),
+    skip_missing: bool = False,
 ) -> list[Path]:
-    """Plot real staged behavior and optional subject-level neural correlation."""
+    """Render the selected behavioral figures and return every file written."""
     input_layout = DerivativeLayout(behavior_dir)
     output_layout = DerivativeLayout(output_figures_dir)
-    tables = input_layout.behavior_tables(
-        subjects=subjects_list,
-        conditions=("Fast", "Slow"),
+    tables = BehaviorTableSet(
+        layout=input_layout,
+        subjects=tuple(subjects_list) if subjects_list else None,
+        neural_metrics_path=neural_metrics_csv,
     )
-    values_by_condition = {"fast": [], "slow": []}
-    values_by_subject: dict[str, list[float]] = {}
-    for path in tables:
-        subject, condition = _behavior_entities(path)
-        table = read_behavior_table(path)
-        if "rawRT" not in table.columns:
-            raise ValueError(f"Behavior derivative {path} is missing canonical rawRT")
-        table = started_trials(table)
-        values = pd.to_numeric(table["rawRT"], errors="coerce").dropna().to_numpy()
-        key = condition.lower()
-        if key in values_by_condition:
-            values_by_condition[key].extend(values)
-        values_by_subject.setdefault(subject, []).extend(values)
 
-    if not values_by_condition["fast"] or not values_by_condition["slow"]:
-        raise ValueError("Fast and Slow behavior derivatives must both contain finite rawRT values")
-
-    figure_path = output_layout.path(
-        subject="group",
-        datatype="fig",
-        description="fast-vs-slow",
-        suffix="behavior",
-        extension=".png",
-    )
-    figure_path.parent.mkdir(parents=True, exist_ok=True)
-    figure = plot_fast_slow_distributions(
-        dt_fast=np.asarray(values_by_condition["fast"]),
-        dt_slow=np.asarray(values_by_condition["slow"]),
-        title="Raw Response Time Distribution: Fast vs Slow",
-        save_path=str(figure_path),
-    )
-    plt.close(figure)
-    save_sidecar(
-        figure_path,
-        {
-            "stage": "behavior_report",
-            "kind": "raw_response_time_distribution",
-            "conditions": ["Fast", "Slow"],
-            "metric": "rawRT",
-            "inputs": [str(path) for path in tables],
-        },
-    )
-    outputs = [figure_path]
-
-    if neural_metrics_csv:
-        metrics = pd.read_csv(require_file(neural_metrics_csv, purpose="neural metrics for behavior correlation"))
-        required = {"subject", "neural_peak_ms"}
-        missing = required - set(metrics.columns)
-        if missing:
-            raise ValueError(f"Neural metrics table is missing columns: {sorted(missing)}")
-
-        mean_subject_rts = []
-        neural_peaks = []
-        for subject, values in sorted(values_by_subject.items()):
-            metric_rows = metrics.loc[metrics["subject"] == subject, "neural_peak_ms"]
-            if values and not metric_rows.empty:
-                mean_subject_rts.append(float(np.mean(values)))
-                neural_peaks.append(float(metric_rows.iloc[0]))
-
-        if len(mean_subject_rts) < 3:
-            raise ValueError("At least three subjects with behavior and neural metrics are required for correlation")
-
-        fig, ax = plt.subplots(figsize=(8, 8))
-        plot_correlation(
-            x_data=np.asarray(mean_subject_rts),
-            y_data=np.asarray(neural_peaks),
-            x_label='Mean raw response time (ms)',
-            y_label='Neural Peak Commitment (ms)',
-            title='Correlation: Behavior vs. Neural Peak',
-            ax=ax
-        )
-        correlation_path = output_layout.path(
-            subject="group",
-            datatype="fig",
-            description="behavior-neural",
-            suffix="correlation",
-            extension=".png",
-        )
-        correlation_path.parent.mkdir(parents=True, exist_ok=True)
-        fig.savefig(correlation_path, dpi=300)
-        plt.close(fig)
-        save_sidecar(
-            correlation_path,
-            {
-                "stage": "behavior_report",
-                "kind": "behavior_neural_correlation",
-                "behavior_metric": "rawRT",
-                "neural_metric": "neural_peak_ms",
-                "neural_metrics_table": str(neural_metrics_csv),
-                "inputs": [str(path) for path in tables],
-            },
-        )
-        outputs.append(correlation_path)
+    keys = resolve_figure_keys(tuple(figures))
+    outputs: list[Path] = []
+    for key in keys:
+        spec = _REGISTRY_BY_KEY[key]
+        try:
+            outputs.append(_render_one(spec, tables, output_layout, tuple(formats)))
+        except FileNotFoundError:
+            if skip_missing:
+                continue
+            raise
     return outputs

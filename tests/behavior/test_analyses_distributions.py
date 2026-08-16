@@ -10,7 +10,6 @@ from meg_tokens.behavior.analyses.distributions import (
     decision_time_distribution_statistics,
     decision_time_distributions,
     distribution_summary,
-    ex_gaussian_parameters,
     spd_cumulative_distributions,
 )
 
@@ -75,37 +74,6 @@ def test_an_empty_sample_reports_missing_statistics_not_zeros():
     )
 
 
-# --- ex-Gaussian decomposition ------------------------------------------------
-
-
-def test_the_ex_gaussian_fit_separates_the_body_from_the_tail():
-    """``tau`` is the exponential tail a mean cannot distinguish from a shift
-    in the body of the distribution."""
-    generator = np.random.default_rng(0)
-    values = generator.normal(800.0, 50.0, 400) + generator.exponential(200.0, 400)
-
-    parameters = ex_gaussian_parameters(values)
-
-    assert parameters["exgaussian_fitted"]
-    assert parameters["exgaussian_mu"] == pytest.approx(800.0, abs=40.0)
-    assert parameters["exgaussian_sigma"] == pytest.approx(50.0, abs=25.0)
-    assert parameters["exgaussian_tau"] == pytest.approx(200.0, abs=50.0)
-
-
-def test_the_fit_is_skipped_rather_than_forced_on_too_few_trials():
-    parameters = ex_gaussian_parameters([900.0, 1000.0, 1100.0])
-
-    assert not parameters["exgaussian_fitted"]
-    assert np.isnan(parameters["exgaussian_tau"])
-
-
-def test_the_fit_is_skipped_on_a_sample_without_variance():
-    parameters = ex_gaussian_parameters([900.0] * (MIN_TRIALS_FOR_SHAPE + 5))
-
-    assert not parameters["exgaussian_fitted"]
-    assert np.isnan(parameters["exgaussian_mu"])
-
-
 # --- decision-time distributions ----------------------------------------------
 
 
@@ -144,9 +112,7 @@ def test_distributions_are_reported_for_every_declared_stratum():
 
 
 def test_each_stratum_summarizes_only_its_own_trials():
-    distributions = decision_time_distributions(
-        _distribution_session(), fit_ex_gaussian=False
-    ).set_index("stratum")
+    distributions = decision_time_distributions(_distribution_session()).set_index("stratum")
 
     assert distributions.loc["all_task_trials", "n_trials"] == 12
     assert distributions.loc["fast", "mean"] == pytest.approx(1083.3333333333333)
@@ -166,25 +132,13 @@ def test_an_empty_declared_cell_is_kept_with_no_statistics():
     assert np.isnan(distributions.loc["slow_misleading", "mean"])
 
 
-def test_the_ex_gaussian_columns_are_absent_when_the_fit_is_not_requested():
-    with_fit = decision_time_distributions(_distribution_session())
-    without_fit = decision_time_distributions(
-        _distribution_session(), fit_ex_gaussian=False
-    )
-
-    assert "exgaussian_tau" in with_fit.columns
-    assert "exgaussian_tau" not in without_fit.columns
-
-
 def test_distributions_are_computed_within_each_subject():
     features = pd.concat(
         [_distribution_session("H01"), _distribution_session("H02", shift=500.0)],
         ignore_index=True,
     )
 
-    distributions = decision_time_distributions(
-        features, fit_ex_gaussian=False
-    ).set_index(["subject", "stratum"])
+    distributions = decision_time_distributions(features).set_index(["subject", "stratum"])
 
     assert distributions.loc[("H02", "fast"), "mean"] == pytest.approx(
         distributions.loc[("H01", "fast"), "mean"] + 500.0
@@ -196,7 +150,6 @@ def test_distribution_statistics_run_the_declared_paired_contrasts():
         [
             decision_time_distributions(
                 _distribution_session(f"H{index:02d}", shift=50.0 * index),
-                fit_ex_gaussian=False,
             )
             for index in range(1, 5)
         ],
@@ -235,7 +188,7 @@ def _subject_distributions(n_subjects=3, **kwargs):
 
 
 def test_a_contrast_whose_stratum_is_missing_is_omitted_not_invented():
-    distributions = _subject_distributions(fit_ex_gaussian=False)
+    distributions = _subject_distributions()
     distributions = distributions.loc[distributions["stratum"] != "misleading"]
 
     statistics = decision_time_distribution_statistics(
@@ -246,29 +199,29 @@ def test_a_contrast_whose_stratum_is_missing_is_omitted_not_invented():
 
 
 def test_a_metric_the_distributions_do_not_carry_is_skipped():
-    """``exgaussian_tau`` is absent whenever the caller declined the fit, so
-    asking for it must not take the other metrics down with it."""
-    distributions = _subject_distributions(fit_ex_gaussian=False)
+    """A caller may name a column the summary does not produce; that must not
+    take the other metrics down with it."""
+    distributions = _subject_distributions()
 
     statistics = decision_time_distribution_statistics(
-        distributions, metrics=("q50", "exgaussian_tau")
+        distributions, metrics=("q50", "not_a_column")
     )
 
     assert set(statistics["metric"]) == {"q50"}
 
 
 def test_no_available_metric_yields_an_empty_table():
-    distributions = _subject_distributions(fit_ex_gaussian=False)
+    distributions = _subject_distributions()
 
     assert decision_time_distribution_statistics(
-        distributions, metrics=("exgaussian_tau",)
+        distributions, metrics=("not_a_column",)
     ).empty
 
 
 def test_duplicate_subject_strata_are_refused_rather_than_averaged():
     distributions = pd.concat(
         [
-            decision_time_distributions(_distribution_session(), fit_ex_gaussian=False)
+            decision_time_distributions(_distribution_session())
         ] * 2,
         ignore_index=True,
     )

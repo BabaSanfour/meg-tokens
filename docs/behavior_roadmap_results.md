@@ -50,29 +50,13 @@ view is in the same table under `view = validated_15row`.
 
 Group means of the per-subject statistics (ms):
 
-| Stratum | Mean | q10 | q50 | q90 | Skew | ex-Gaussian μ | σ | τ |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|
-| Easy | 1033 | 606 | 968 | 1510 | 1.21 | 698 | 190 | 335 |
-| Ambiguous | 1433 | 920 | 1387 | 1971 | 0.73 | 1164 | 292 | 269 |
-| Misleading | 1357 | 813 | 1323 | 1958 | 0.46 | 1076 | 328 | 281 |
-| Fast | 1186 | 677 | 1127 | 1768 | 0.89 | 857 | 254 | 329 |
-| Slow | 1313 | 756 | 1255 | 1916 | 1.05 | 984 | 302 | 330 |
-
-The ex-Gaussian fit converged on all 384 subject × stratum cells.
-
-What the means hide:
-
-- The class effect is a **shift of the whole distribution**, not a tail
-  effect: easy is faster than ambiguous at q10 (`t=-9.11`), q50 (`t=-13.29`)
-  and q90 (`t=-12.88`).
-- **Ambiguous versus misleading separates only in the fast half.** q10
-  `t=5.39, p=7e-6` and q50 `t=4.37, p=1e-4`, but q90 `t=0.42, p=0.68`. The
-  positive ambiguous-vs-misleading mean difference discussed in
-  `docs/behavior.md` ("Preprint Replication") comes entirely from the
-  leading edge of the distribution.
-- Fast/Slow is also a pure shift: q10, q50, q90 all differ (`p<2e-4`), while
-  skewness (`p=0.53`) and τ (`p=0.97`) do not. The speed instruction moves the
-  body of the distribution and leaves its shape alone.
+| Stratum | Mean | q10 | q50 | q90 | Skew |
+|---|---:|---:|---:|---:|---:|
+| Easy | 1033 | 606 | 968 | 1510 | 1.21 |
+| Ambiguous | 1433 | 920 | 1387 | 1971 | 0.73 |
+| Misleading | 1357 | 813 | 1323 | 1958 | 0.46 |
+| Fast | 1186 | 677 | 1127 | 1768 | 0.89 |
+| Slow | 1313 | 756 | 1255 | 1916 | 1.05 |
 
 ## A3 — Condition × class (`conditionclass`, `conditionclassstats`)
 

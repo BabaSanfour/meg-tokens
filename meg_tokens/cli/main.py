@@ -353,11 +353,41 @@ def build_parser() -> argparse.ArgumentParser:
     report = domains.add_parser("report", help="Generate figures and summary tables.")
     report_commands = report.add_subparsers(dest="report_command", required=True)
 
-    behavior_report = report_commands.add_parser("behavior", help="Plot staged behavioral results.")
+    behavior_report = report_commands.add_parser(
+        "behavior", help="Render the behavioral figure battery."
+    )
     behavior_report.add_argument("--subjects", nargs="+")
     behavior_report.add_argument("--behavior-root")
     behavior_report.add_argument("--output-root")
     behavior_report.add_argument("--neural-metrics")
+    behavior_report.add_argument(
+        "--figures",
+        nargs="+",
+        default=["all"],
+        help=(
+            "Figure keys and/or group names to render (default: all). "
+            "Groups: headline, core, distributions, design, evidence, sequential, "
+            "modeling, individual, qc. Use --list-figures to see every key."
+        ),
+    )
+    behavior_report.add_argument(
+        "--formats",
+        nargs="+",
+        default=[".pdf", ".png"],
+        choices=[".pdf", ".png", ".svg"],
+    )
+    behavior_report.add_argument(
+        "--list-figures",
+        dest="list_figures",
+        action="store_true",
+        help="Print the figure registry (key, source derivatives, title) and exit.",
+    )
+    behavior_report.add_argument(
+        "--skip-missing",
+        dest="skip_missing",
+        action="store_true",
+        help="Skip figures whose source derivative is absent instead of raising.",
+    )
 
     statistics_report = report_commands.add_parser("statistics", help="Plot group statistics.")
     statistics_report.add_argument("--conditions", nargs=2, default=["Fast", "Slow"])
@@ -843,14 +873,27 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 output_root=args.output_root,
             )
         elif args.domain == "report" and args.report_command == "behavior":
-            from meg_tokens.reports.behavior_summary import run_behavior_plotting
-
-            result = run_behavior_plotting(
-                str(args.behavior_root or project.bids_root),
-                str(args.output_root or project.bids_root),
-                subjects_list=args.subjects,
-                neural_metrics_csv=args.neural_metrics,
+            from meg_tokens.reports.behavior_summary import (
+                list_behavior_figures,
+                run_behavior_plotting,
             )
+
+            if args.list_figures:
+                result = [
+                    f"{spec.key}  [{', '.join(spec.groups)}]  "
+                    f"requires: {', '.join(spec.requires)}  -- {spec.title}"
+                    for spec in list_behavior_figures()
+                ]
+            else:
+                result = run_behavior_plotting(
+                    str(args.behavior_root or project.bids_root),
+                    str(args.output_root or project.bids_root),
+                    subjects_list=args.subjects,
+                    neural_metrics_csv=args.neural_metrics,
+                    figures=tuple(args.figures),
+                    formats=tuple(args.formats),
+                    skip_missing=args.skip_missing,
+                )
         elif args.domain == "report" and args.report_command == "statistics":
             from meg_tokens.reports.statistics import run_group_statistics_plotting
 

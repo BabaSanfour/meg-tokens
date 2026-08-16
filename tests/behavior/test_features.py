@@ -22,12 +22,20 @@ from tests.behavior.factories import GO_CUE_MS, stage1_run
 # --- motor baseline -----------------------------------------------------------
 
 
-def test_motor_baseline_is_the_trial_level_mean_across_rt_runs():
+def test_motor_baseline_is_the_mean_of_each_run_mean():
     first = stage1_run(condition="RT", raw_rts=[300.0, 400.0, 350.0])
     second = stage1_run(condition="RT", run=2, raw_rts=[320.0, 430.0])
 
-    # Trials, not runs, are weighted equally: mean of all five values.
-    assert calculate_motor_baseline([first, second]) == pytest.approx(360.0)
+    # Runs, not trials, are weighted equally: mean(350, 375), not mean of all
+    # five values (360.0), which is what unequal run sizes would give.
+    assert calculate_motor_baseline([first, second]) == pytest.approx(362.5)
+
+
+def test_motor_baseline_ignores_runs_without_any_response():
+    run = stage1_run(condition="RT", raw_rts=[300.0, 400.0])
+    unusable = stage1_run(condition="RT", run=2, raw_rts=[None, None])
+
+    assert calculate_motor_baseline([run, unusable]) == pytest.approx(350.0)
 
 
 def test_motor_baseline_ignores_trials_without_a_response():

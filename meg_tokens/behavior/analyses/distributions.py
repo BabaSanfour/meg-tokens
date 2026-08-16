@@ -1,9 +1,9 @@
 """Distributional analyses of decision time and success probability.
 
 Means alone hide the right tail that distinguishes a threshold change from a
-drift change, so these helpers report subject-level quantiles, skewness, and
-optional ex-Gaussian parameters for decision time, and cumulative
-distributions for logged success probability at decision.
+drift change, so these helpers report subject-level quantiles and skewness for
+decision time, and cumulative distributions for logged success probability at
+decision.
 """
 
 from __future__ import annotations
@@ -32,9 +32,8 @@ SPD_VIEWS: Final[dict[str, str]] = {
     "validated_15row": "logged_spd_validated_15row",
 }
 
-# Fewer trials than this cannot support a stable third or fourth moment, let
-# alone a three-parameter ex-Gaussian fit; those statistics are reported as
-# NaN rather than as noise with a number attached.
+# Fewer trials than this cannot support a stable third or fourth moment; those
+# statistics are reported as NaN rather than as noise with a number attached.
 MIN_TRIALS_FOR_SHAPE: Final[int] = 20
 
 
@@ -96,63 +95,6 @@ def distribution_summary(
     return summary
 
 
-def ex_gaussian_parameters(values: Sequence[float]) -> dict[str, float]:
-    """Fit the ex-Gaussian ``mu``, ``sigma``, ``tau`` decomposition.
-
-    The ex-Gaussian is the convolution of a Gaussian (``mu``, ``sigma``) with
-    an exponential (``tau``); ``tau`` isolates the right tail that a mean
-    cannot separate from a shift in the body of the distribution. Fitting uses
-    ``scipy.stats.exponnorm``, whose shape ``K`` equals ``tau / sigma``.
-
-    Parameters
-    ----------
-    values
-        Numeric observations in the unit of the desired parameters.  For
-        decision times, ``mu``, ``sigma``, and ``tau`` are therefore all in
-        milliseconds.  Non-finite observations are discarded.
-
-    Returns
-    -------
-    dict[str, float]
-        Maximum-likelihood estimates named ``exgaussian_mu``,
-        ``exgaussian_sigma``, and ``exgaussian_tau``, plus the Boolean
-        ``exgaussian_fitted`` flag.  Failed or intentionally skipped fits
-        contain ``NaN`` parameters and ``False``.
-
-    Notes
-    -----
-    The fit is skipped when fewer than :data:`MIN_TRIALS_FOR_SHAPE` finite
-    observations remain or when their standard deviation is zero.  The trial
-    cutoff is an explicit stability policy, not a fitted or preprint-derived
-    threshold.  SciPy performs the optimization directly; this function does
-    not implement a custom estimator or silently substitute another model.
-    """
-    array = np.asarray(list(values), dtype=float)
-    array = array[np.isfinite(array)]
-    if array.size < MIN_TRIALS_FOR_SHAPE or float(np.std(array)) <= 0:
-        return {
-            "exgaussian_mu": float("nan"),
-            "exgaussian_sigma": float("nan"),
-            "exgaussian_tau": float("nan"),
-            "exgaussian_fitted": False,
-        }
-    try:
-        shape, location, scale = stats.exponnorm.fit(array)
-    except Exception:  # pragma: no cover - scipy raises several optimizer errors
-        return {
-            "exgaussian_mu": float("nan"),
-            "exgaussian_sigma": float("nan"),
-            "exgaussian_tau": float("nan"),
-            "exgaussian_fitted": False,
-        }
-    return {
-        "exgaussian_mu": float(location),
-        "exgaussian_sigma": float(scale),
-        "exgaussian_tau": float(shape * scale),
-        "exgaussian_fitted": True,
-    }
-
-
 def _strata(trials: pd.DataFrame) -> list[tuple[str, str, pd.Series]]:
     """Build the fixed masks used for decision-time summaries.
 
@@ -199,7 +141,6 @@ def decision_time_distributions(
     features: pd.DataFrame,
     *,
     quantiles: Sequence[float] = DEFAULT_QUANTILES,
-    fit_ex_gaussian: bool = True,
 ) -> pd.DataFrame:
     """Compute subject-level decision-time distributions by task stratum.
 
@@ -216,47 +157,49 @@ def decision_time_distributions(
     quantiles
         Quantile probabilities forwarded unchanged to
         :func:`distribution_summary`.
-    fit_ex_gaussian
-        Whether to append ex-Gaussian parameters for each subject and
-        stratum.  When ``False``, the ex-Gaussian columns are absent rather
-        than filled with ``NaN``.
 
     Returns
     -------
     pandas.DataFrame
         One row per subject and fixed stratum.  Identifier columns are
         ``subject``, ``stratum_type``, and ``stratum``; remaining columns are
-        the outputs of :func:`distribution_summary` and, when requested,
-        :func:`ex_gaussian_parameters`.  Decision-time values and fitted
-        parameters are in milliseconds.
+        the outputs of :func:`distribution_summary`.  Decision-time values are
+        in milliseconds.
 
     Notes
     -----
     Non-task rows are removed by :func:`task_trials`.  Empty declared cells
     are retained with ``n_trials == 0`` and ``NaN`` statistics.  No trial is
     reassigned, imputed, winsorized, or pooled across subjects.
+
+    Distribution shape is described by quantiles and skewness only.  A
+    parametric ex-Gaussian decomposition was fitted here previously and has
+    been removed: at this cohort's per-stratum trial counts (54-128) the
+    three-parameter fit is not identifiable -- subject-level mu/tau and
+    sigma/tau correlations ran -0.5 to -0.65 for every stratum except the
+    individual trial classes, and published recovery studies put sigma's 95%
+    interval at [0, 141] for a true sigma of 100 at n = 50.  Quantile
+    contrasts answer the same shape questions without the identifiability
+    problem, and are what the tokens-task literature reports.
     """
     trials = task_trials(features)
     rows = []
     for subject, subject_trials in trials.groupby("subject", sort=True):
         for stratum_type, stratum, selection in _strata(subject_trials):
             values = finite_values(subject_trials.loc[selection, "dt_ms"])
-            row = {
+            rows.append({
                 "subject": subject,
                 "stratum_type": stratum_type,
                 "stratum": stratum,
                 **distribution_summary(values, quantiles=quantiles),
-            }
-            if fit_ex_gaussian:
-                row.update(ex_gaussian_parameters(values))
-            rows.append(row)
+            })
     return pd.DataFrame(rows)
 
 
 def decision_time_distribution_statistics(
     subject_distributions: pd.DataFrame,
     *,
-    metrics: Sequence[str] = ("q10", "q50", "q90", "skewness", "exgaussian_tau"),
+    metrics: Sequence[str] = ("q10", "q50", "q90", "skewness"),
 ) -> pd.DataFrame:
     """Run fixed paired contrasts on subject-level distribution metrics.
 
@@ -267,10 +210,8 @@ def decision_time_distribution_statistics(
         ``subject`` and ``stratum`` and columns for every requested metric.
     metrics
         Distribution-summary columns to test.  The defaults compare the 10th,
-        50th, and 90th percentiles, skewness, and ex-Gaussian ``tau``.
-        Requested metrics absent from ``subject_distributions`` are skipped,
-        because ``exgaussian_tau`` exists only when the caller asked
-        :func:`decision_time_distributions` to fit it.
+        50th, and 90th percentiles and skewness.  Requested metrics absent
+        from ``subject_distributions`` are skipped.
 
     Returns
     -------
