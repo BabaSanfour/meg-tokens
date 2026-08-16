@@ -7,6 +7,8 @@ from importlib import import_module
 
 _EXPORTS = {
     "calculate_motor_baseline": ("meg_tokens.behavior.features", "calculate_motor_baseline"),
+    "calculate_motor_baseline_by_side": (
+        "meg_tokens.behavior.features", "calculate_motor_baseline_by_side"),
     "classify_design_profile": ("meg_tokens.behavior.math.probability", "classify_design_profile"),
     "calculate_decision_times": ("meg_tokens.behavior.features", "calculate_decision_times"),
     "compare_fast_slow": ("meg_tokens.behavior.analyses.performance", "compare_fast_slow"),

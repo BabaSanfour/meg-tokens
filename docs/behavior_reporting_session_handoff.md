@@ -446,8 +446,13 @@ rediscovered from scratch.
 | **F05** | `dtdistribution-class` | done | **audited & rewritten** — shape change, not a shift |
 | **F06** | `spdcumulative-class` | done, one panel/view | **audited & rewritten** — equivalence bound |
 | F07 | — | **removed** | figure, analysis layer, tests and plan section all deleted |
-| F08 | `conditionclass-anova` | not reviewed | **not audited** |
-| F09–F26 | see `docs/behavior_reporting_plan.md` | not reviewed | **not audited** |
+| **F08** | `conditionclass-anova` | done (CI95 bands, no traces) | **audited & rewritten** — log-scale interaction; separability |
+| **F09** | `choiceside-asymmetry` | done (3 difference panels, was 3x3) | **audited** — no side bias; 23 ms left-hand speed advantage |
+| F12 | see `docs/behavior_reporting_plan.md` | not reviewed | **not audited** |
+| **F10** | `timeontask-drift` | done (CI bands, within-block deciles) | **audited & rewritten** — drift bounded; class-scheduling confound |
+| **F11** | `conditionorder-balance` | done (widened, compact stats) | **audited & rewritten** — within-group tests; null bounded |
+| **F13** | `summary-cohort` | done (4 panels, shared subject axis) | **audited** — cohort composition |
+| F14–F26 | see `docs/behavior_reporting_plan.md` | not reviewed | **not audited** |
 
 Registry is 25 figures after F07's removal (`--list-figures` to confirm).
 

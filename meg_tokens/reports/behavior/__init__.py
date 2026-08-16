@@ -118,7 +118,7 @@ REGISTRY: tuple[FigureSpec, ...] = (
         key="timeontask-drift", analysis="timeontask", view="drift",
         title="Session and within-block drift",
         kind="trend_and_coefficient", groups=("design",),
-        requires=("timeontask", "timeontaskstats"),
+        requires=("timeontaskstats",),
         builder=design.build_timeontask_drift,
     ),
     FigureSpec(

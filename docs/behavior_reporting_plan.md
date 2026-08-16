@@ -254,114 +254,6 @@ alone, zoomed to 500-2000 ms.
 
 ### 3.3 Design effects (`behavior/analyses/design_effects.py`)
 
-#### F08 `conditionclass-anova` — condition × class
-
-*Reads*
-- `conditionclass`: `subject`, `condition`, `trial_class`, `trial_class_name`,
-  `n_trials`, `mean_dt_ms`, `accuracy`.
-- `conditionclassstats`: `measure in {mean_dt_ms, accuracy}`,
-  `effect in {condition, trial_class, condition_x_trial_class}`; `F`,
-  `df_effect`, `df_error`, `p`, `partial_eta_squared`, `n_subjects`.
-
-*Layout* — two panels (DT, accuracy). Each: x = trial class in fixed order,
-y = the measure, two lines coloured by condition, group means with
-within-subject 95 % CI, faint per-subject lines behind at low alpha. The
-accuracy panel carries a dashed chance line at 0.5.
-
-*Chart-type justification.* The scientific claim is the **absence** of an
-interaction on both measures. Parallelism is directly readable in an
-interaction line plot and effectively invisible in grouped bars; this is the
-canonical form for a factorial repeated-measures result. The chance line
-matters because misleading-trial accuracy (0.36–0.39) is below chance by
-design, and a bar chart starting at zero makes that look like poor
-performance rather than the class definition working.
-
-*Annotation.* A three-line ANOVA block per panel, rendered from the stats
-rows: `condition: F(1, 31) = 31.45, p < .001, ηp² = .50` /
-`class: F(2, 62) = 184.45, p < .001, ηp² = .86` /
-`condition × class: F(2, 62) = 1.19, p = .31, ηp² = .04`.
-
-#### F09 `choiceside-asymmetry` — left/right bias
-
-*Reads*
-- `choiceside`: `subject`, `condition`, `n_trials`,
-  `proportion_left_choices`, `proportion_left_correct_side`,
-  `mean_left_dt_ms`, `accuracy_left`, and the four `*_right` counterparts.
-- `choicesidestats`: `measure in {choice_proportion, decision_time,
-  accuracy}` × `condition in {all, fast, slow}`, `test == "paired_t_test"`.
-
-*Layout* — a 3 × 3 grid of compact paired slope panels: columns = measure
-(choice proportion, DT, accuracy), rows = condition (all, fast, slow). Left vs.
-right on the x-axis of each cell. Reference line at 0.5 on the proportion
-column. To keep the grid readable, only the `all` row carries a difference
-axis; `fast`/`slow` rows carry the slope plot plus a text stat.
-
-*Chart-type justification.* Nine small paired panels beat three grouped bar
-charts because the interesting result (left 22.8 ms faster, carried by Slow at
-−31.9 ms) is a condition-dependent within-subject effect, and the
-non-results (proportion p = .26, accuracy p = .88) need to be visibly null
-rather than absent.
-
-*Annotation.* Per-cell `Δ, t(df), p, dz` from the matching stats row, plus a
-caption note that the asymmetry is small relative to the 127 ms Fast/Slow
-effect but should be carried into MEG choice-cell contrasts.
-
-#### F10 `timeontask-drift` — session and within-block drift
-
-*Reads*
-- `trialfeatures`: `subject`, `condition`, `block_index`, `run_trial_index`,
-  `initial_time_ms`, `dt_ms`, `primary_analysis_eligible` — for the observed
-  layer. Session block order is recovered by ranking each subject's distinct
-  `(condition, block_index)` pairs by their minimum `initial_time_ms`, which
-  reproduces the ordering the analysis used (`nTrialIndex` cannot do it; see
-  `docs/behavior.md`, Known Issues).
-- `timeontask`: `subject`, `condition`, `n_trials`, `n_blocks`,
-  `dt_per_block_ms`, `dt_per_within_block_trial_ms`, `converged`.
-- `timeontaskstats`: `term in {dt_per_block_ms,
-  dt_per_within_block_trial_ms}` × `condition in {all, fast, slow,
-  fast_vs_slow}`.
-
-*Layout* — 2 × 2.
-
-- **A.** Observed mean `dt_ms` by session block order (1…8): faint per-subject
-  lines, group mean ± within-subject 95 % CI.
-- **B.** Observed mean `dt_ms` by within-block trial position, binned into
-  deciles of `run_trial_index`; same construction.
-- **C.** Fitted `dt_per_block_ms` per subject: strip plot against a zero
-  reference at three x positions (all, fast, slow) with Fast/Slow subject
-  connectors; group mean ± 95 % CI.
-- **D.** Same for `dt_per_within_block_trial_ms`.
-
-*Chart-type justification.* Show the data before the coefficient. The two
-effects run in opposite directions (−36 ms per block, +3 ms per within-block
-trial) and are individually small; a coefficient strip alone is unfalsifiable
-by eye, and an observed-trend panel alone hides the between-subject spread the
-test is run over.
-
-*Annotation.* Panels C/D: one-sample vs. zero for `condition == "all"`
-(−35.9 ms, t = −4.14, p = 2.5e-4; +3.1 ms, t = 8.00, p = 5.0e-9) and the
-`fast_vs_slow` nulls (p = .24, p = .74).
-
-#### F11 `conditionorder-balance` — first-block counterbalancing (supplementary)
-
-*Reads* `conditionorder`: `subject`, `first_condition`, `mean_fast_dt_ms`,
-`mean_slow_dt_ms`, `slow_minus_fast_dt_ms`; `conditionorderstats`:
-`measure == "slow_minus_fast_dt_ms"`, `test == "welch_t_test"`, columns `n_a`,
-`n_b`, `mean_a`, `mean_b`, `mean_difference`, `t`, `p`, `df`.
-
-*Layout* — one small panel: two-group strip plot of `slow_minus_fast_dt_ms`
-split by `first_condition` (15 Fast-first vs. 17 Slow-first), group means with
-95 % CI, zero reference.
-
-*Chart-type justification.* This is a **between**-subject comparison — the one
-place in the battery where a paired plot would be wrong. Unconnected strips
-with group summaries are correct. Kept as its own small supplementary figure
-rather than a fifth panel on F10 so that F10 stays a within-subject figure
-throughout.
-
-*Annotation.* `105 vs 147 ms, Welch t(df) = −1.00, p = .33 (n = 15 vs 17)`,
-with an explicit "design-balance check, not a result" line.
-
 #### F12 `lapses-quality` — lapses and extreme decision times (supplementary/QC)
 
 *Reads*
@@ -396,30 +288,6 @@ the point of the "flag, never remove" policy.
 *Annotation.* Panel A: `13 lapse trials / 16,337 started (0.08 %), 7 Fast /
 6 Slow, p = .96`. Panel C: `56 / 16,324 (0.34 %) at 5 MAD, in 14 of 32
 subjects; nothing removed`.
-
-#### F13 `summary-cohort` — dataset overview (supplementary)
-
-*Reads* `summary`: `subject`, `motor_baseline_ms`, `n_fast_trials`,
-`n_slow_trials`, `n_fast_dt_trials`, `n_slow_dt_trials`, `n_never_started_trials`,
-`n_easy_trials`, `n_ambiguous_trials`, `n_misleading_trials`,
-`percent_correct`.
-
-*Layout* — three panels: (A) per-subject trial counts by condition (grouped
-horizontal bars, `n_fast_trials`/`n_slow_trials`, with
-`n_*_dt_trials` shown as an inner darker segment so the difference between the
-two denominators is visible — `docs/data_contract.md` warns they are
-deliberately not the same); (B) per-subject counts by trial class;
-(C) `motor_baseline_ms` and `percent_correct` as two aligned strips.
-
-*Chart-type justification.* Counts per subject are magnitudes with a
-meaningful zero, so bars are correct here — this is one of the few figures in
-the set where they are. It exists because reviewers ask for per-cell N and
-because the two trial-count denominators are a documented trap.
-
-*Annotation.* None inferential; a text line with the cohort totals
-(32 subjects, 16,324 started-and-chosen task trials).
-
-### 3.4 Evidence and criterion (`behavior/analyses/evidence.py`)
 
 #### F14 `criteriondecline-tokens` — evidence at decision vs. tokens observed
 
@@ -552,8 +420,7 @@ group mean. Row 2: the fitted coefficients — (C) `dt_slope_ms_per_unit` and
 (D) `accuracy_log_odds_per_unit` as strips vs. zero at three x positions with
 Fast/Slow connectors.
 
-*Chart-type justification.* Same "data then coefficient" principle as F10 and
-F14. The scientific value of this analysis is that it agrees with the
+*Chart-type justification.* Same "data then coefficient" principle as F14. The scientific value of this analysis is that it agrees with the
 three-class reduction over *all* trials including the 43 % unclassified, so
 the observed panels must be drawn over every task trial — state that
 explicitly in the panel subtitle, since it is the one place in the figure set
@@ -785,12 +652,10 @@ Revisit once the Tier C5 join lands and a derivative owns the statistic.
 | :--- | :--- |
 | `trialfeatures` | Not a result. It is the trial-level layer behind F04, F05, F10, F14, F15, F18. |
 | `groupstats` | Not a figure of its own; its rows are the annotations on F04, F05, F06. Drawing a table as a chart adds nothing. |
-| `summary` | Only F13 (cohort overview). Every other column is consumed by a family-specific figure. |
 | `extremedttrials` | Folded into F12 panel C; a 56-row table needs no second figure. |
 | `ssmtrialpredictions` | **No figure.** It is the trial-level model-derived regressor for the Tier C5 MEG join (`criterion_at_decision`, `decision_variable_at_decision`, `predicted_accuracy`), not a behavioural result. Revisit when the source-space features it joins to exist. |
 | `ssmhierarchical`, `ssmhierarchicalstats` | **No figure.** These files exist in the data root but are *not* written by the current workflow (`workflows/behavior_characterization.py` writes `ssmpopulation`/`ssmpopulationstats`). They are stale outputs of a previous name. Do not build a figure against them; flag them for deletion from the data root as a separate cleanup, not from the plotting code. |
 | Response vigor (Tier B8) | Dropped upstream — movement time is not recorded (`docs/behavior.md`, Known Issues). Nothing to plot, and nothing must be plotted against the null field. |
-| `conditionclass` per-cell trial counts | Reported in the F08 sidecar rather than drawn; the cell counts are balanced by design and a count panel would compete with the interaction plot. |
 
 ---
 
@@ -1066,8 +931,8 @@ between-subject SEM plots an error term that the test does not use, so a
 reliable effect with dz = 0.45 (F02) looks like overlap. A slope plot shows
 the quantity the test operates on — the per-subject difference — and the
 estimation-plot difference axis shows its magnitude and uncertainty on their
-own scale. Grouped bars survive in exactly one figure in this set (F13,
-counts with a meaningful zero).
+own scale. Bars survive only where counts have a meaningful zero (F13,
+where they are stacked per subject).
 
 ### 4.4 `reports/annotations.py`
 
@@ -1117,13 +982,15 @@ def annotate_contrast(
     """Significance bracket between two x positions: marker plus optional stat text."""
 
 def annotate_stat_block(
-    ax, *, lines: Sequence[str], loc: str = "upper left"
+    ax, *, lines: Sequence[str], loc: str = "upper left", y: float | None = None
 ) -> None:
-    """Multi-line stat text in ink (never a series colour), in axes coordinates."""
+    """Multi-line stat text in ink (never a series colour), in axes coordinates.
+    `y` overrides the corner's vertical position for occupied corners."""
 
-def annotate_anova(ax, rows: pd.DataFrame, *, loc: str = "upper left") -> None:
-    """Render conditionclassstats rows as
-    'condition: F(1, 31) = 31.45, p < .001, ηp² = .50' lines."""
+def annotate_anova(
+    ax, rows: pd.DataFrame, *, loc: str = "upper left", y: float | None = None
+) -> None:
+    """Render ANOVA rows as compact 'condition ηp² = .51 ***' lines."""
 
 SIGNIFICANCE_CONVENTION: Final[str] = "*** p<.001, ** p<.01, * p<.05, n.s. otherwise"
 ```
@@ -1135,9 +1002,11 @@ Conventions, enforced by these helpers rather than by discipline:
 - A non-finite `p` yields no marker and no test text — the descriptive part is
   still drawn. Nothing prints `p = nan`.
 - Text always uses ink tokens, never a series colour.
-- `n.s.` is rendered with its actual `t` and `p` wherever a null is part of the
-  claim (F03, F08 interaction, F09, F10, F16, F18, F19) — an absent
-  annotation and a tested null must not look the same.
+- `n.s.` is rendered explicitly wherever a null is part of the claim (F03,
+  F16, F18, F19) — an absent annotation and a tested null must not
+  look the same. It carries an effect size, not spelled-out `t`/`p`: full
+  stat text collapses `constrained_layout` on anything narrower than a
+  double-width panel, and the exact values stay in the sidecar.
 - Effect sizes (`cohens_dz`, `partial_eta_squared`) are included by default;
   a p-value alone is not sufficient for publication.
 

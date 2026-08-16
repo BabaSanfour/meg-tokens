@@ -154,16 +154,22 @@ def annotate_contrast(
 
 
 def annotate_stat_block(
-    ax: Axes, *, lines: Sequence[str], loc: str = "upper left"
+    ax: Axes, *, lines: Sequence[str], loc: str = "upper left", y: float | None = None
 ) -> None:
-    """Multi-line stat text in ink (never a series colour), in axes coordinates."""
+    """Multi-line stat text in ink (never a series colour), in axes coordinates.
+
+    `y` overrides the corner's vertical position (axes fraction), keeping its
+    horizontal alignment -- for panels whose corner is already occupied by
+    another annotation.
+    """
     positions = {
         "upper left": (0.02, 0.98, "left", "top"),
         "upper right": (0.98, 0.98, "right", "top"),
         "lower left": (0.02, 0.02, "left", "bottom"),
         "lower right": (0.98, 0.02, "right", "bottom"),
     }
-    x, y, ha, va = positions.get(loc, positions["upper left"])
+    x, default_y, ha, va = positions.get(loc, positions["upper left"])
+    y = default_y if y is None else y
     ax.text(
         x,
         y,
@@ -177,23 +183,36 @@ def annotate_stat_block(
     )
 
 
-def annotate_anova(ax: Axes, rows: pd.DataFrame, *, loc: str = "upper left") -> None:
-    """Render conditionclassstats rows as
-    'condition: F(1, 31) = 31.45, p < .001, ηp² = .50' lines."""
+# Raw factor names are column identifiers, not display text -- same reason
+# 'dt_ms' is scrubbed from axis labels.
+_EFFECT_LABELS = {
+    "condition": "condition",
+    "trial_class": "difficulty",
+    "condition_x_trial_class": "interaction",
+}
+
+
+def annotate_anova(
+    ax: Axes, rows: pd.DataFrame, *, loc: str = "upper left", y: float | None = None
+) -> None:
+    """Render conditionclassstats rows as compact 'condition ηp² = .50 ***' lines.
+
+    Effect size plus a significance marker, matching the figure-wide
+    'Δ = value marker' convention: spelled-out 'F(2, 62) = 1.19, p = .310'
+    text is wide enough to collapse constrained_layout's axes on a
+    half-width panel. F, df and p stay in the derivative and the JSON
+    sidecar, which is where anyone quoting them should read them.
+    """
     lines = []
     for _, row in rows.iterrows():
-        effect = row.get("effect", "")
-        f_value = _finite_or_none(row.get("F"))
-        df_effect = _finite_or_none(row.get("df_effect"))
-        df_error = _finite_or_none(row.get("df_error"))
+        effect = str(row.get("effect", ""))
         eta = _finite_or_none(row.get("partial_eta_squared"))
         p_value = _finite_or_none(row.get("p"))
-        pieces = [str(effect) + ":"]
-        if f_value is not None and df_effect is not None and df_error is not None:
-            pieces.append(f"F({df_effect:.0f}, {df_error:.0f}) = {f_value:.2f},")
-        pieces.append(format_p(p_value) + ("," if eta is not None else ""))
+        pieces = [_EFFECT_LABELS.get(effect, effect)]
         if eta is not None:
             eta_text = f"{eta:.2f}".lstrip("0") if eta < 1 else f"{eta:.2f}"
             pieces.append(f"ηp² = {eta_text}")
+        marker = significance_marker(p_value) if p_value is not None else ""
+        pieces.append(marker or "n.s.")
         lines.append(" ".join(pieces))
-    annotate_stat_block(ax, lines=lines, loc=loc)
+    annotate_stat_block(ax, lines=lines, loc=loc, y=y)

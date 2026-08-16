@@ -58,64 +58,6 @@ Group means of the per-subject statistics (ms):
 | Fast | 1186 | 677 | 1127 | 1768 | 0.89 |
 | Slow | 1313 | 756 | 1255 | 1916 | 1.05 |
 
-## A3 — Condition × class (`conditionclass`, `conditionclassstats`)
-
-Group mean DT (ms) and accuracy per cell:
-
-| Condition | Easy | Ambiguous | Misleading |
-|---|---|---|---|
-| Fast | 981 / 0.992 | 1367 / 0.767 | 1303 / 0.390 |
-| Slow | 1094 / 0.983 | 1517 / 0.779 | 1426 / 0.359 |
-
-Within-subject 2 × 3 ANOVA:
-
-| Measure | Effect | F | df | p | ηp² |
-|---|---|---:|---|---:|---:|
-| DT | condition | 31.45 | 1, 31 | 3.8e-6 | 0.50 |
-| DT | class | 184.45 | 2, 62 | 7.9e-27 | 0.86 |
-| DT | condition × class | 1.19 | 2, 62 | 0.31 | 0.04 |
-| Accuracy | condition | 1.32 | 1, 31 | 0.26 | 0.04 |
-| Accuracy | class | 602.41 | 2, 62 | 2.4e-41 | 0.95 |
-| Accuracy | condition × class | 1.94 | 2, 62 | 0.15 | 0.06 |
-
-**No interaction on either measure.** The Fast/Slow instruction adds a roughly
-constant amount of decision time to every class, and does not change accuracy
-at all. Misleading-trial accuracy is 0.36–0.39, well below chance, which is
-what the class definition demands: the early evidence points at the wrong
-target.
-
-## A4 — Choice-side bias (`choiceside`, `choicesidestats`)
-
-Left/right choice proportions are balanced (0.508 vs 0.492, `t=1.14, p=0.26`),
-and accuracy does not differ by side (`p=0.88`). Left-hand choices are
-**22.8 ms faster** than right (`t=-2.39, p=0.023`), carried by the Slow
-condition (−31.9 ms, `p=0.050`) rather than Fast (−13.3 ms, `p=0.19`). The
-asymmetry is small relative to the 127 ms Fast/Slow effect but should be
-carried into any MEG choice-cell contrast.
-
-## A5 — Time on task (`timeontask`, `conditionorder`)
-
-Fitted per subject with block order, within-block position, and a Fast/Slow
-indicator in one model:
-
-| Term | Mean | t (df=31) | p |
-|---|---:|---:|---:|
-| DT per block | −35.9 ms | −4.14 | 2.5e-4 |
-| DT per within-block trial | +3.1 ms | 8.00 | 5.0e-9 |
-
-Subjects get **faster across the session** (about 36 ms per block, roughly
-290 ms over eight task blocks) and **slower within each block** (about 3 ms
-per trial, roughly 180 ms across a 60-trial block). Neither slope differs
-between Fast and Slow (`p=0.24`, `p=0.74`). This reads as practice between
-blocks against fatigue or disengagement within them.
-
-Condition order is balanced: 15 subjects began with a Fast block and 17 with a
-Slow block, and the Fast/Slow adjustment does not differ between those groups
-(105 vs 147 ms, Welch `t=-1.00, p=0.33`).
-
-Block order is derived from the LabVIEW session clock (`nInitialTime`); see
-`docs/meg.md` for why no other field can do it.
-
 ## A6 — Lapses and extreme DTs (`lapses`, `extremedt`, `extremedttrials`)
 
 Only **13 lapse trials** in the whole dataset (started task trials with a go

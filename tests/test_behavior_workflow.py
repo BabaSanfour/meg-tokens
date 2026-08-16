@@ -151,7 +151,10 @@ def test_analyze_behavior_excludes_never_started_trials_but_preserves_input(tmp_
     summary = pd.read_csv(result.outputs[0], sep="\t").iloc[0]
     assert summary["n_fast_trials"] == 1
     assert summary["n_never_started_trials"] == 1
-    assert summary["mean_fast_dt_ms"] == pytest.approx(750.0)
+    # The surviving Fast trial is a right-hand response (rawRT 1100), and the
+    # RT run gives left 300 / right 400, so it loses the right hand's own
+    # latency rather than the 350 ms pooled over both hands.
+    assert summary["mean_fast_dt_ms"] == pytest.approx(700.0)
     features = pd.read_csv(result.outputs[2], sep="\t")
     never_started = features.loc[features["nOutcome"] == OUTCOME_NEVER_STARTED].iloc[0]
     assert not bool(never_started["is_started"])

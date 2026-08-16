@@ -8,6 +8,7 @@ from meg_tokens.behavior.features import (
     build_trial_features,
     calculate_decision_times,
     calculate_motor_baseline,
+    calculate_motor_baseline_by_side,
     logged_spd_at_decision,
 )
 from meg_tokens.behavior.schema import (
@@ -59,6 +60,46 @@ def test_motor_baseline_skips_empty_run_tables():
 def test_motor_baseline_refuses_to_invent_a_value(tables):
     with pytest.raises(ValueError, match="No valid RT trials"):
         calculate_motor_baseline(tables)
+
+
+def test_motor_baseline_by_side_separates_the_two_hands():
+    run = stage1_run(
+        condition="RT",
+        raw_rts=[300.0, 500.0, 320.0, 520.0],
+        choices=[1, 2, 1, 2],
+    )
+
+    baselines = calculate_motor_baseline_by_side([run])
+
+    assert baselines == {1: pytest.approx(310.0), 2: pytest.approx(510.0)}
+    # The pooled estimator averages over both hands and so hides the split.
+    assert calculate_motor_baseline([run]) == pytest.approx(410.0)
+
+
+def test_motor_baseline_by_side_weights_runs_equally_like_the_pooled_form():
+    first = stage1_run(condition="RT", raw_rts=[300.0, 400.0], choices=[1, 1])
+    second = stage1_run(condition="RT", run=2, raw_rts=[380.0], choices=[1])
+
+    # mean(350, 380), not the trial-pooled mean(300, 400, 380) = 360.
+    assert calculate_motor_baseline_by_side([first, second])[1] == pytest.approx(365.0)
+
+
+def test_motor_baseline_by_side_omits_a_hand_with_no_response():
+    run = stage1_run(condition="RT", raw_rts=[300.0, 400.0], choices=[1, 1])
+
+    # Callers fall back to the pooled baseline for the missing hand rather
+    # than receiving an invented value for it.
+    assert set(calculate_motor_baseline_by_side([run])) == {1}
+
+
+@pytest.mark.parametrize(
+    "tables",
+    [[], [stage1_run(condition="RT", raw_rts=[None, None])]],
+    ids=["no_runs", "no_responses"],
+)
+def test_motor_baseline_by_side_refuses_to_invent_a_value(tables):
+    with pytest.raises(ValueError, match="No valid RT trials"):
+        calculate_motor_baseline_by_side(tables)
 
 
 # --- decision times -----------------------------------------------------------
@@ -145,6 +186,40 @@ def _built(**run_kwargs):
     run = stage1_run(**run_kwargs)
     subject = str(run["subject"].iloc[0])
     return build_trial_features({subject: [run]}, {subject: BASELINE})
+
+
+def test_per_hand_baselines_are_applied_to_the_hand_that_answered():
+    run = stage1_run(
+        condition="Fast",
+        raw_rts=[900.0, 900.0],
+        choices=[1, 2],
+    )
+    subject = str(run["subject"].iloc[0])
+
+    pooled = build_trial_features({subject: [run]}, {subject: 350.0})
+    per_hand = build_trial_features(
+        {subject: [run]}, {subject: 350.0}, {subject: {1: 300.0, 2: 400.0}}
+    )
+
+    # Pooled: both hands lose the same constant, so the identical rawRTs give
+    # identical decision times and any hand difference survives into dt_ms.
+    assert pooled["dt_ms"].tolist() == pytest.approx([550.0, 550.0])
+    # Per hand: each trial loses its own hand's latency.
+    assert per_hand["dt_ms"].tolist() == pytest.approx([600.0, 500.0])
+    assert per_hand["motor_baseline_ms"].tolist() == pytest.approx([300.0, 400.0])
+
+
+def test_per_hand_baselines_fall_back_to_pooled_for_a_missing_hand():
+    run = stage1_run(condition="Fast", raw_rts=[900.0, 900.0], choices=[1, 2])
+    subject = str(run["subject"].iloc[0])
+
+    # Only the left hand has an RT-run estimate; the right must not be dropped
+    # or invented, it falls back to the pooled baseline.
+    features = build_trial_features(
+        {subject: [run]}, {subject: 350.0}, {subject: {1: 300.0}}
+    )
+
+    assert features["motor_baseline_ms"].tolist() == pytest.approx([300.0, 350.0])
 
 
 def test_build_trial_features_emits_the_declared_schema():

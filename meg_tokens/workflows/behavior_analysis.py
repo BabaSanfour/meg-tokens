@@ -12,6 +12,7 @@ from meg_tokens.behavior.analyses.summary import summarize_behavior
 from meg_tokens.behavior.features import (
     build_trial_features,
     calculate_motor_baseline,
+    calculate_motor_baseline_by_side,
 )
 from meg_tokens.behavior.tables import read_behavior_table
 from meg_tokens.behavior.trials import started_trials
@@ -65,11 +66,16 @@ def analyze_behavior(
     if not by_subject:
         raise ValueError("Behavior derivatives do not contain any trials")
 
-    motor_baselines = {
-        subject: calculate_motor_baseline(_started_condition_runs(tables, "RT"))
-        for subject, tables in sorted(by_subject.items())
-    }
-    trial_features = build_trial_features(by_subject, motor_baselines)
+    motor_baselines, motor_baselines_by_side = {}, {}
+    for subject, tables in sorted(by_subject.items()):
+        rt_runs = _started_condition_runs(tables, "RT")
+        motor_baselines[subject] = calculate_motor_baseline(rt_runs)
+        # Per-hand baselines: the RT runs show a reliable left/right motor
+        # difference, and a pooled baseline leaves it inside dt_ms.
+        motor_baselines_by_side[subject] = calculate_motor_baseline_by_side(rt_runs)
+    trial_features = build_trial_features(
+        by_subject, motor_baselines, motor_baselines_by_side
+    )
 
     subject_summary = summarize_behavior(trial_features)
     output_path = layout.behavior_summary()

@@ -115,10 +115,10 @@ def condition_class_statistics(cells: pd.DataFrame) -> pd.DataFrame:
     Returns
     -------
     pandas.DataFrame
-        Three repeated-measures ANOVA effects for decision time and three for
-        accuracy, when all six columns exist. Rows report complete-subject
-        count, degrees of freedom, F statistic, p-value, and partial eta
-        squared.
+        Three repeated-measures ANOVA effects for each of decision time,
+        log decision time, and accuracy, when all six columns exist. Rows
+        report complete-subject count, degrees of freedom, F statistic,
+        p-value, and partial eta squared.
 
     Notes
     -----
@@ -126,6 +126,14 @@ def condition_class_statistics(cells: pd.DataFrame) -> pd.DataFrame:
     condition. Subjects missing any cell for a measure are removed by
     ``repeated_measures_anova``. No sphericity or multiplicity correction is
     applied here.
+
+    ``mean_dt_ms`` and ``log_mean_dt_ms`` test the same cells on different
+    scales and answer different questions. The raw interaction asks whether
+    Fast/Slow shifts every class by the same number of milliseconds; the log
+    interaction asks whether it scales every class by the same factor. The
+    condition effect is multiplicative, so only the second is the question
+    worth asking -- reported together so the contrast is visible rather than
+    a silent modelling choice.
     """
     factor_names = {
         "factor1": "condition",
@@ -133,13 +141,22 @@ def condition_class_statistics(cells: pd.DataFrame) -> pd.DataFrame:
         "factor1xfactor2": "condition_x_trial_class",
     }
     rows = []
-    for measure in ("mean_dt_ms", "accuracy"):
+    for measure in ("mean_dt_ms", "log_mean_dt_ms", "accuracy"):
+        source = "mean_dt_ms" if measure == "log_mean_dt_ms" else measure
         wide = cells.pivot_table(
             index="subject",
             columns=["condition", "trial_class"],
-            values=measure,
+            values=source,
             sort=True,
         )
+        if measure == "log_mean_dt_ms":
+            # Tested on the log scale, where an interaction asks whether the
+            # Fast/Slow *ratio* differs by class. The additive interaction
+            # answers a question the condition effect is not: that effect is
+            # multiplicative (docs/behavior.md, "Fast vs. Slow stretches
+            # decision time proportionally"), so a constant ratio shows up as
+            # leftover structure when the test is run on raw milliseconds.
+            wide = np.log(wide.where(wide > 0))
         ordered = [
             (name.lower(), code)
             for name in TASK_CONDITIONS

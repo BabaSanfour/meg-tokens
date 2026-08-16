@@ -72,6 +72,58 @@ def calculate_motor_baseline(rt_dfs: list[pd.DataFrame]) -> float:
     return float(np.mean(run_means))
 
 
+def calculate_motor_baseline_by_side(rt_dfs: list[pd.DataFrame]) -> dict[int, float]:
+    """Calculate one subject's motor baseline separately for each response side.
+
+    Parameters
+    ----------
+    rt_dfs
+        Canonical Stage 1 tables for the subject's RT runs, containing
+        ``rawRT`` in milliseconds and ``nChoiceMade`` as the response side.
+
+    Returns
+    -------
+    dict
+        Response side (1 = left, 2 = right) to that side's baseline in
+        milliseconds, averaged over runs exactly as
+        :func:`calculate_motor_baseline` does. A side with no usable response
+        in any run is absent from the mapping; callers fall back to the
+        pooled baseline for it.
+
+    Raises
+    ------
+    ValueError
+        If no valid RT response exists across the supplied tables.
+
+    Notes
+    -----
+    The two hands are not equally fast. Across this cohort the RT runs give
+    left 442.1 ms and right 456.0 ms, a 13.9 ms difference (t(31) = -3.29,
+    p = .003) in a task with no deliberation in it -- so it is motor, and a
+    single pooled baseline leaves it inside ``dt``. Subtracting the matching
+    hand's baseline removes it: the left-minus-right asymmetry in decision
+    time falls from -22.8 ms (p = .023) to -8.9 ms (p = .39) while the
+    Fast/Slow effect is unchanged at +127.1 ms (was +127.4).
+
+    This departs from the preprint, which pools both hands; recorded in
+    ``docs/behavior.md`` under "Deliberate deviations from the preprint's
+    analysis".
+    """
+    per_side: dict[int, list[float]] = {}
+    for table in rt_dfs:
+        if table.empty:
+            continue
+        sides = pd.to_numeric(table["nChoiceMade"], errors="coerce")
+        values = pd.to_numeric(table["rawRT"], errors="coerce")
+        for side in (1, 2):
+            usable = values.loc[(sides == side) & values.notna()]
+            if not usable.empty:
+                per_side.setdefault(side, []).append(float(usable.mean()))
+    if not per_side:
+        raise ValueError("No valid RT trials are available for the motor baseline")
+    return {side: float(np.mean(means)) for side, means in per_side.items()}
+
+
 def calculate_decision_times(
     table: pd.DataFrame,
     motor_baseline: float,
@@ -204,6 +256,7 @@ def _design_evidence(
 def build_trial_features(
     by_subject: dict[str, list[pd.DataFrame]],
     motor_baselines: dict[str, float],
+    motor_baselines_by_side: dict[str, dict[int, float]] | None = None,
 ) -> pd.DataFrame:
     """Build one canonical feature row for every staged behavioral trial.
 
@@ -214,7 +267,17 @@ def build_trial_features(
         run tables. Tables must already carry run metadata and pass the Stage 1
         schema.
     motor_baselines
-        Motor latency in milliseconds for every subject in ``by_subject``.
+        Pooled motor latency in milliseconds for every subject in
+        ``by_subject``. Used as the fallback when a subject has no usable RT
+        response on the hand a task trial was answered with.
+    motor_baselines_by_side
+        Optional per-hand motor latency, from
+        :func:`calculate_motor_baseline_by_side`. When supplied, each trial is
+        corrected with the baseline for the hand that answered it, which
+        removes the motor speed difference between hands from ``dt_ms`` and
+        from the commitment time that ``logged_spd`` is read at. Omitted, the
+        pooled baseline is used for every trial, reproducing the previous
+        behaviour.
 
     Returns
     -------
@@ -246,7 +309,8 @@ def build_trial_features(
         3: "misleading",
     }
     for subject, tables in sorted(by_subject.items()):
-        motor_baseline = motor_baselines[subject]
+        pooled_baseline = motor_baselines[subject]
+        side_baselines = (motor_baselines_by_side or {}).get(subject, {})
         for table in tables:
             condition = str(table["condition"].iloc[0])
             run = int(table["run"].iloc[0])
@@ -264,6 +328,10 @@ def build_trial_features(
                 ).iloc[0]
                 has_choice = bool(pd.notna(raw_rt))
                 is_task = condition.lower() in {"fast", "slow"}
+                # The hand that answered this trial, so its own motor latency
+                # is removed rather than the average of both hands'.
+                trial_side = int(trial["nChoiceMade"])
+                motor_baseline = side_baselines.get(trial_side, pooled_baseline)
                 dt = (
                     float(raw_rt) - motor_baseline
                     if is_task and has_choice

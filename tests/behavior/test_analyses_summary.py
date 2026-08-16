@@ -52,11 +52,36 @@ def test_the_summary_reports_the_subjects_motor_baseline():
     assert summary["motor_baseline_ms"] == pytest.approx(350.0)
 
 
-def test_a_subject_must_have_exactly_one_finite_motor_baseline():
+def test_a_subject_may_carry_one_motor_baseline_per_response_side():
     features = _session()
-    features.loc[0, "motor_baseline_ms"] = 400.0
+    # Per-hand baselines are the intended shape: two values, but each one
+    # constant within its own response side.
+    left = features["choice_side"] == 1
+    features.loc[left, "motor_baseline_ms"] = 300.0
+    features.loc[~left, "motor_baseline_ms"] = 400.0
 
-    with pytest.raises(ValueError, match="exactly one finite motor baseline"):
+    summary = summarize_behavior(features).iloc[0]
+
+    # Reported as the mean over trials -- the latency actually removed.
+    expected = features["motor_baseline_ms"].mean()
+    assert summary["motor_baseline_ms"] == pytest.approx(expected)
+
+
+def test_a_subject_must_not_have_two_motor_baselines_on_one_side():
+    features = _session()
+    same_side = features.index[features["choice_side"] == features.loc[0, "choice_side"]]
+    features.loc[same_side[0], "motor_baseline_ms"] = 400.0
+    features.loc[same_side[1], "motor_baseline_ms"] = 500.0
+
+    with pytest.raises(ValueError, match="more than one motor baseline"):
+        summarize_behavior(features)
+
+
+def test_a_subject_must_have_a_finite_motor_baseline_on_every_trial():
+    features = _session()
+    features.loc[0, "motor_baseline_ms"] = float("nan")
+
+    with pytest.raises(ValueError, match="finite motor baseline"):
         summarize_behavior(features)
 
 

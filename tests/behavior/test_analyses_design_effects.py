@@ -17,6 +17,7 @@ from meg_tokens.behavior.analyses.design_effects import (
     time_on_task,
     time_on_task_statistics,
 )
+from meg_tokens.behavior.trials import CLASS_NAMES
 
 from tests.behavior.factories import trial_features
 
@@ -88,16 +89,63 @@ def test_condition_class_cells_reject_a_noncanonical_correctness_value():
         condition_class_cells(features)
 
 
-def test_the_cells_feed_a_condition_by_class_anova_for_both_measures():
+def test_the_cells_feed_a_condition_by_class_anova_for_every_measure():
     cells = condition_class_cells(_factorial_session(n_subjects=4))
 
     statistics = condition_class_statistics(cells)
 
-    assert set(statistics["measure"]) == {"mean_dt_ms", "accuracy"}
+    assert set(statistics["measure"]) == {"mean_dt_ms", "log_mean_dt_ms", "accuracy"}
     assert set(statistics["effect"]) == {
         "condition", "trial_class", "condition_x_trial_class",
     }
     assert (statistics["n_subjects"] == 4).all()
+
+
+def test_a_purely_multiplicative_condition_effect_interacts_on_ms_but_not_on_log():
+    """The reason ``log_mean_dt_ms`` is reported alongside ``mean_dt_ms``.
+
+    Build Slow as exactly 1.2x Fast in every class. That is a constant *ratio*
+    with no interaction to find, but because the classes sit at different
+    baselines it shows up as a condition-by-class interaction when the test is
+    run on raw milliseconds -- the scale the effect is not on.
+    """
+    rng = np.random.default_rng(0)
+    baselines = {1: 800.0, 2: 1400.0, 3: 1200.0}
+    rows = []
+    for subject in range(20):
+        # Per-subject speed and per-cell noise are multiplicative, so the log
+        # scale is additive by construction and the interaction there is pure
+        # error. Additive noise would leave the ms interaction with no error
+        # variance at all and the F undefined.
+        subject_scale = float(np.exp(rng.normal(0.0, 0.15)))
+        for condition, factor in (("fast", 1.0), ("slow", 1.2)):
+            for code, class_name in CLASS_NAMES.items():
+                rows.append(
+                    {
+                        "subject": f"H{subject:02d}",
+                        "condition": condition,
+                        "trial_class": code,
+                        "trial_class_name": class_name,
+                        "n_trials": 50,
+                        "mean_dt_ms": (
+                            baselines[code] * subject_scale * factor
+                            * float(np.exp(rng.normal(0.0, 0.04)))
+                        ),
+                        "accuracy": 0.8,
+                    }
+                )
+
+    statistics = condition_class_statistics(pd.DataFrame(rows))
+    interaction = statistics.loc[
+        statistics["effect"] == "condition_x_trial_class"
+    ].set_index("measure")
+
+    assert interaction.loc["mean_dt_ms", "p"] < 0.05
+    assert interaction.loc["log_mean_dt_ms", "p"] > 0.05
+    assert (
+        interaction.loc["log_mean_dt_ms", "partial_eta_squared"]
+        < interaction.loc["mean_dt_ms", "partial_eta_squared"] / 3
+    )
 
 
 def test_the_anova_is_skipped_when_a_cell_is_missing_for_everyone():

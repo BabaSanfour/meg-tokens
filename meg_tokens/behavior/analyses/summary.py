@@ -89,7 +89,8 @@ def summarize_behavior(features: pd.DataFrame) -> pd.DataFrame:
         Complete canonical trial-feature table produced by
         :func:`~meg_tokens.behavior.features.build_trial_features`. It may
         contain multiple subjects, conditions, and runs, but must contain at
-        least one row and exactly one finite motor baseline per subject.
+        least one row and a finite motor baseline, constant within each
+        response side, per subject.
 
     Returns
     -------
@@ -151,10 +152,24 @@ def summarize_behavior(features: pd.DataFrame) -> pd.DataFrame:
         baseline = pd.to_numeric(
             subject_features["motor_baseline_ms"], errors="raise"
         ).to_numpy(dtype=float)
-        if not np.isfinite(baseline).all() or np.unique(baseline).size != 1:
+        # One baseline per response side, so at most two distinct values per
+        # subject (one if a hand had no RT-run estimate and fell back to the
+        # pooled one). It must still be constant *within* a side: anything
+        # else means the correction was applied inconsistently.
+        if not np.isfinite(baseline).all():
             raise ValueError(
-                f"subject {subject!r} must have exactly one finite motor baseline"
+                f"subject {subject!r} must have a finite motor baseline on every trial"
             )
+        sides = pd.to_numeric(subject_features["choice_side"], errors="coerce")
+        for side, side_baselines in pd.Series(baseline).groupby(sides.to_numpy()):
+            if side_baselines.nunique() != 1:
+                raise ValueError(
+                    f"subject {subject!r} has more than one motor baseline for "
+                    f"response side {int(side)!r}"
+                )
+        # Reported as the mean over trials, which is the effective latency
+        # removed from this subject's decision times.
+        reported_baseline = float(np.mean(baseline))
 
         speed = compare_fast_slow(subject_features)
         accuracy = compare_correct_error(subject_features)
@@ -168,7 +183,7 @@ def summarize_behavior(features: pd.DataFrame) -> pd.DataFrame:
 
         rows.append({
             "subject": subject,
-            "motor_baseline_ms": float(baseline[0]),
+            "motor_baseline_ms": reported_baseline,
             "n_rt_trials": len(rt_trials),
             "n_rt_baseline_trials": len(finite_values(rt_trials["rawRT"])),
             "n_fast_trials": len(fast_trials),

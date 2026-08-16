@@ -97,22 +97,71 @@ def test_ssmpopulation_shrinkage(modeling_tables):
 
 def test_conditionclass_anova(design_tables):
     figure, metadata = design.build_conditionclass_anova(design_tables)
-    _assert_basic_figure(figure, metadata, min_axes=2)
+    # F08 annotates effect size plus a significance marker rather than
+    # spelled-out 'p = ...' text, so the shared p-value check does not apply.
+    _assert_basic_figure(figure, metadata, min_axes=2, require_stat_text=False)
+
+    all_text = " ".join(t.get_text() for ax in figure.axes for t in ax.texts)
+    assert "ηp²" in all_text, "no effect size reached the figure"
+    assert "interaction" in all_text
+    assert "p =" not in all_text and "p <" not in all_text, (
+        "spelled-out p-values are what collapsed this figure's axes"
+    )
+    # The per-class stretch factors are the figure's positive claim.
+    assert "Slow ÷ Fast" in all_text
+    assert set(metadata["stretch_factors"]) == {"easy", "ambiguous", "misleading"}
 
 
 def test_choiceside_asymmetry(design_tables):
     figure, metadata = design.build_choiceside_asymmetry(design_tables)
-    _assert_basic_figure(figure, metadata, min_axes=9)
+    # Three difference panels, not a 3x3 left-vs-right grid: left and right
+    # choice proportions are complements, so plotting both drew one number
+    # twice. Markers rather than spelled-out stat text.
+    _assert_basic_figure(figure, metadata, min_axes=3, require_stat_text=False)
+    assert len(figure.axes) == 3
+
+    all_text = " ".join(text.get_text() for ax in figure.axes for text in ax.texts)
+    assert "p =" not in all_text and "t(" not in all_text
+    # Every panel states the quantity as a difference.
+    assert all(ax.get_ylabel().startswith("Δ") for ax in figure.axes)
 
 
 def test_timeontask_drift(design_tables):
     figure, metadata = design.build_timeontask_drift(design_tables)
-    _assert_basic_figure(figure, metadata, min_axes=4)
+    # Two panels: the per-subject coefficient strips were folded into A and B
+    # as annotations, since their only content beyond those numbers was
+    # per-subject spread. Compact 'Δ = value marker', so no spelled-out p.
+    _assert_basic_figure(figure, metadata, min_axes=2, require_stat_text=False)
+    assert len(figure.axes) == 2, "coefficient strip panels should stay folded in"
+
+    all_text = " ".join(text.get_text() for ax in figure.axes for text in ax.texts)
+    # Both coefficients and both Fast/Slow contrasts must survive the fold-in.
+    assert "ms per block" in all_text, "session coefficient did not reach the figure"
+    assert "ms per trial" in all_text, "within-block coefficient did not reach the figure"
+    assert all_text.count("Fast − Slow") == 2, "a Fast/Slow contrast did not reach the figure"
+    assert "p =" not in all_text and "p <" not in all_text
+    # Raw column names must not surface as display labels.
+    labels = [ax.get_ylabel() + " " + ax.get_xlabel() for ax in figure.axes]
+    assert not any("dt_ms" in text or "dt_per" in text for text in labels)
 
 
 def test_conditionorder_balance(design_tables):
     figure, metadata = design.build_conditionorder_balance(design_tables)
-    _assert_basic_figure(figure, metadata, min_axes=1)
+    # Compact 'Δ = value marker' convention, so the shared p-value check does
+    # not apply: spelled-out Welch text is what collapsed this single-panel
+    # figure's axes to zero width.
+    _assert_basic_figure(figure, metadata, min_axes=1, require_stat_text=False)
+
+    all_text = " ".join(t.get_text() for ax in figure.axes for t in ax.texts)
+    assert "Δ =" in all_text, "no between-group contrast reached the figure"
+    assert "p =" not in all_text and "Welch" not in all_text
+
+    # The reframe: the claim rests on each group differing from zero, not on
+    # the underpowered between-group null.
+    assert set(metadata["within_group_vs_zero"]) == {"fast", "slow"}
+    for stats_for_group in metadata["within_group_vs_zero"].values():
+        assert stats_for_group["p"] < 0.05
+    assert "underpowered" in metadata["caveat"]
 
 
 def test_lapses_quality(design_tables):
