@@ -10,6 +10,7 @@ def test_every_ordered_entity_has_a_colour():
         (style.CLASS_ORDER, style.CLASS_COLORS),
         (style.CONDITION_ORDER, style.CONDITION_COLORS),
         (style.MODEL_ORDER, style.MODEL_COLORS),
+        (style.QC_ORDER, style.QC_COLORS),
     ):
         for key in order:
             assert key in colors

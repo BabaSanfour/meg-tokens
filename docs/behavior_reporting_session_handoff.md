@@ -1,13 +1,17 @@
 # Behavior Reporting — Session Handoff
 
-Notes for whoever (human or agent) picks this up next. Two sessions so far,
-iterating on the behavior figure battery (`meg_tokens/reports/behavior/`)
-figure by figure, on real data.
+Notes for whoever (human or agent) picks this up next. The work has proceeded
+figure by figure on the real data, with every completed panel checked both as
+a rendered image and as a scientific claim.
 
 - **Session 1** built and styled F04-F06 and wrote their findings.
 - **Session 2** removed F07, corrected the science in F04-F06 (two of the
   three findings were wrong as written), and brought the DT computation to
   preprint parity.
+- **Laptop continuation / Act 1 close** audited and rebuilt F08-F13, corrected
+  response-side DT for hand-specific motor baselines, removed F12 by folding
+  its quality census into F13 panel E, and closed the descriptive behavioral
+  foundation at eight surviving figures (F04-F06, F08-F11, F13).
 - **End of session 2 / machine handoff:** this work was developed on a
   desktop reachable only via remote desktop (AnyDesk) and had never been
   committed. Everything staged in `git status` at that point (see commit
@@ -34,10 +38,60 @@ figure by figure, on real data.
   this transfer.
 
 **Start here if you are picking this up:** read "The audit that has to
-happen next" below. F04-F06 have now been checked against the literature and
-against the data; F01-F03 and F08-F26 have not, and two of the three
-findings that *were* checked contained the same class of error. Do not treat
-the unreviewed write-ups as trustworthy.
+happen next" below. F04-F06 and F08-F13 have now been checked against the
+literature, the real derivatives, and their rendered figures. F01-F03 and
+F14-F26 have not. Two of the first three findings checked contained the same
+class of error, so do not treat the remaining unaudited write-ups as
+trustworthy.
+
+## Act 1 wrap-up — behavioral foundation closed
+
+Act 1 now has a coherent scientific chain rather than a collection of QC and
+distribution plots:
+
+1. **The cohort is usable without exclusions.** All 32 subjects contribute;
+   DT retention is 99.92%; lapses, anticipations, and robust-MAD extremes are
+   rare. H20 is influential for tail-sensitive work but is not an exclusion.
+2. **The principal condition contrast is not a design artefact.** Response
+   side is balanced after subtracting each hand's own motor baseline; session
+   learning and within-block slowing act on Fast and Slow alike; the effect
+   is present in both counterbalancing groups, although the between-group
+   order test is too weak to establish equivalence.
+3. **Difficulty is defined in the stimulus frame, not the response frame.**
+   Correct-target classification removes the circularity that reversed the
+   preprint's ambiguous-versus-misleading contrast.
+4. **Condition changes rate; evidence quality changes geometry.** Slow is an
+   approximately 1.12x stretch of Fast at every difficulty. Easy versus
+   misleading is also close to a stretch, whereas easy versus ambiguous is a
+   genuine shape change and ambiguous versus misleading converges in the
+   tail.
+5. **Decision time and confidence dissociate.** Easy trials end at higher
+   SPD, while ambiguous and misleading end at equivalent SPD despite their
+   different timing distributions.
+
+The final Act 1 figure set is F04-F06, F08-F11, and F13. F07 was removed as an
+unidentifiable ex-Gaussian detour; F12 was not merely hidden but merged into
+F13 panel E and removed from the registry. F13 now carries condition counts,
+class composition, motor baseline, accuracy, and the broken-axis QC census in
+one shared-subject composition.
+
+`docs/behavior.md` is the canonical results narrative and is current for Act
+1. Its order is deliberately scientific rather than numeric: cohort/QC →
+design-validity checks → classification reference frame → core condition and
+difficulty signatures → confidence at commitment. The figure-number order is
+therefore intentionally non-sequential. The stale 26-figure count and the
+remaining F12 references in the reporting plan were corrected at Act 1 close.
+
+The next real content remains **Act 5 / F14 `criteriondecline-tokens`**: the
+canonical urgency signature and the most important unaudited figure left in
+the behavioral report. F01-F03 remain separately deferred because their
+full SSM source fits were not transferred to the laptop.
+
+**Worktree at Act 1 close:** the F09 axis/motor-baseline work, F12→F13 merge,
+F13 QC palette and layout, documentation corrections, and their tests are
+still uncommitted in the working tree (most are staged; inspect `git status`
+before committing). `uv.lock` is also untracked; treat it as a separate
+dependency-lock decision rather than silently including or deleting it.
 
 ## Where session 1 started
 
@@ -302,7 +356,7 @@ them is quicker than hunting for them. If this audit becomes routine, the
 right move is to promote the KS ladder into `behavior/analyses/` as a real
 derivative rather than keep rewriting it.
 
-**Nothing in F01-F03 or F08-F26 has had this treatment.** Given the hit rate
+**Nothing in F01-F03 or F14-F26 has had this treatment.** Given the hit rate
 so far, assume those write-ups contain the same class of error until checked.
 
 ## Rejected: merging F04 and F05
@@ -447,25 +501,27 @@ rediscovered from scratch.
 | **F06** | `spdcumulative-class` | done, one panel/view | **audited & rewritten** — equivalence bound |
 | F07 | — | **removed** | figure, analysis layer, tests and plan section all deleted |
 | **F08** | `conditionclass-anova` | done (CI95 bands, no traces) | **audited & rewritten** — log-scale interaction; separability |
-| **F09** | `choiceside-asymmetry` | done (3 difference panels, was 3x3) | **audited** — no side bias; 23 ms left-hand speed advantage |
-| F12 | see `docs/behavior_reporting_plan.md` | not reviewed | **not audited** |
+| **F09** | `choiceside-asymmetry` | done (3 difference panels, was 3x3) | **audited & corrected** — no reliable side bias after hand-specific motor baselines |
+| ~~F12~~ | `lapses-quality` | **removed** | merged into F13 panel E; finding kept in `behavior.md` |
 | **F10** | `timeontask-drift` | done (CI bands, within-block deciles) | **audited & rewritten** — drift bounded; class-scheduling confound |
 | **F11** | `conditionorder-balance` | done (widened, compact stats) | **audited & rewritten** — within-group tests; null bounded |
-| **F13** | `summary-cohort` | done (4 panels, shared subject axis) | **audited** — cohort composition |
+| **F13** | `summary-cohort` | done (5 panels, shared subject axis; broken-axis QC in E) | **audited** — cohort composition + quality census |
 | F14–F26 | see `docs/behavior_reporting_plan.md` | not reviewed | **not audited** |
 
-Registry is 25 figures after F07's removal (`--list-figures` to confirm).
+Registry is 24 figures after F07's removal and F12's merge into F13
+(`--list-figures` to confirm).
 
 ## Practical pointers
 
-- Real data root: `tokens.toml` → `data_root = "/media/karim/Hamza/meg-tokens"`.
+- Laptop data root: `tokens.toml` →
+  `data_root = "/Users/hamzaabdelhedi/Projects/data/meg-tokens"`.
   Derivatives live under `<data_root>/BIDS/derivatives/sub-group/{beh,fig}/`.
 - Regenerate one figure: `uv run meg-tokens --config tokens.toml report behavior --figures <key>`.
 - Regenerate the distributional/design derivatives (not the expensive SSM
   fits, which are pooled from a prior `behavior ssm-fit` run, not
   recomputed): `uv run meg-tokens --config tokens.toml behavior characterization`.
 - List all figure keys/groups: `uv run meg-tokens --config tokens.toml report behavior --list-figures`.
-- Report test suite: `uv run pytest tests/reports/ -q` (58 passed, all
+- Report test suite: `uv run pytest tests/reports/ -q` (57 passed, all
   synthetic-fixture based).
 - Behavior analysis test suite: `uv run pytest tests/behavior/ -q`
   (422 passed, 5 skipped).

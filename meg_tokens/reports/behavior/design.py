@@ -9,6 +9,7 @@ import pandas as pd
 from scipy.stats import ttest_1samp
 from matplotlib.figure import Figure
 from matplotlib.ticker import MaxNLocator
+from matplotlib.transforms import ScaledTranslation
 
 from meg_tokens.behavior.analyses.design_effects import _session_block_order
 from meg_tokens.reports import style
@@ -173,14 +174,17 @@ def build_choiceside_asymmetry(tables: BehaviorTableSet) -> tuple[Figure, dict[s
     summary = tables.analysis("choiceside")
     stats_table = tables.analysis("choicesidestats")
 
-    # Fixed limits per measure, with the ticks the panel should carry. A
-    # handful of subjects fall outside; they are drawn as open circles on the
-    # limit line rather than silently dropped (4 of 96 points).
+    # Fixed limits, chosen to frame the bulk of the distribution rather than
+    # to contain every point: letting the axes stretch to the extremes leaves
+    # most of each panel empty. Two subjects fall outside (one in A, one in
+    # B) and are drawn as open circles on the limit with their value, so
+    # nothing is silently dropped. C's ceiling clears its top tick, which
+    # would otherwise sit under the panel letter.
     measures = (
         ("choice_proportion", "proportion_left_choices", "proportion_right_choices",
          "Δ choice proportion", (-0.15, 0.25), [-0.1, 0.0, 0.1, 0.2], 2, ""),
         ("decision_time", "mean_left_dt_ms", "mean_right_dt_ms",
-         "Δ decision time (ms)", (-212.0, 122.0), [-200, -100, 0, 100], 1, " ms"),
+         "Δ decision time (ms)", (-200.0, 140.0), [-200, -100, 0, 100], 1, " ms"),
         ("accuracy", "accuracy_left", "accuracy_right",
          "Δ accuracy", (-0.15, 0.165), [-0.15, -0.05, 0.05, 0.15], 2, ""),
     )
@@ -227,10 +231,13 @@ def build_choiceside_asymmetry(tables: BehaviorTableSet) -> tuple[Figure, dict[s
                         clip_on=False, zorder=5,
                     )
                     # An out-of-range marker is only useful with its value.
+                    # Set to the left of the circle: to the right it pushed
+                    # into the next panel's margin. No explicit plus sign --
+                    # the sign is already obvious from which limit it sits on.
                     for offset, value in zip(offsets, np.sort(outside)):
                         ax.text(
-                            position + offset + 0.10, edge, f"{value:+.{precision}f}{unit}",
-                            ha="left", va="center", fontsize=9,
+                            position + offset - 0.10, edge, f"{value:.{precision}f}{unit}",
+                            ha="right", va="center", fontsize=8,
                             color=colours[condition], clip_on=False, zorder=5,
                         )
                 # Significance marker, inset from the top so it clears any
@@ -514,81 +521,17 @@ def build_conditionorder_balance(tables: BehaviorTableSet) -> tuple[Figure, dict
     return fig, metadata
 
 
-def build_lapses_quality(tables: BehaviorTableSet) -> tuple[Figure, dict[str, Any]]:
-    """F12: lapses and extreme decision times (supplementary/QC census)."""
-    lapses = tables.analysis("lapses")
-    extremedt = tables.analysis("extremedt")
-    extremedttrials = tables.analysis("extremedttrials")
-
-    pooled_lapses = lapses.loc[lapses["condition"] == "all"].sort_values("subject")
-    outcome_columns = [c for c in pooled_lapses.columns if c.startswith("n_outcome_")]
-
-    with style.apply_publication_style():
-        fig, axes = style.figure_grid(1, 3, width="double")
-        style.panel_label(axes[0, 0], "A")
-        style.panel_label(axes[0, 1], "B")
-        style.panel_label(axes[0, 2], "C")
-
-        ax_a = axes[0, 0]
-        y_positions = np.arange(len(pooled_lapses))
-        markers = ("o", "^")
-        for column, marker in zip(outcome_columns, markers):
-            ax_a.scatter(pooled_lapses[column], y_positions, marker=marker, color=style.INK, s=14, label=column.replace("n_outcome_", ""))
-        ax_a.set_yticks(y_positions)
-        ax_a.set_yticklabels(pooled_lapses["subject"], fontsize=5)
-        ax_a.set_xlabel("Lapse trials")
-        ax_a.legend(fontsize=5.5, loc="lower right")
-        total = int(pooled_lapses["n_lapse_trials"].sum())
-        total_started = int(pooled_lapses["n_started_trials"].sum())
-        ax_a.text(0.98, 0.02, f"{total}/{total_started} ({100*total/total_started:.2f}%)", transform=ax_a.transAxes, ha="right", va="bottom", fontsize=6)
-
-        ax_b = axes[0, 1]
-        extremedt_sorted = extremedt.sort_values("subject")
-        y_positions_b = np.arange(len(extremedt_sorted))
-        ax_b.scatter(extremedt_sorted["n_extreme_dt"], y_positions_b, color=style.INK, s=14, label="n_extreme_dt")
-        ax_b.scatter(extremedt_sorted["n_extreme_slow"], y_positions_b, color=style.CONDITION_COLORS["slow"], s=10, marker="s", label="n_extreme_slow")
-        ax_b.scatter(extremedt_sorted["n_extreme_fast"], y_positions_b, color=style.CONDITION_COLORS["fast"], s=10, marker="s", label="n_extreme_fast")
-        ax_b.scatter(extremedt_sorted["n_negative_dt"], y_positions_b, color="none", edgecolor=style.INK, s=30, marker="D", label="n_negative_dt")
-        ax_b.set_yticks(y_positions_b)
-        ax_b.set_yticklabels(extremedt_sorted["subject"], fontsize=5)
-        ax_b.set_xlabel("Trial count")
-        ax_b.legend(fontsize=5, loc="lower right")
-
-        ax_c = axes[0, 2]
-        subjects_c = sorted(extremedttrials["subject"].unique())
-        subject_index = {subject: index for index, subject in enumerate(subjects_c)}
-        y_c = extremedttrials["subject"].map(subject_index)
-        is_negative = extremedttrials["dt_ms"] < 0
-        ax_c.scatter(extremedttrials.loc[~is_negative, "robust_z"], y_c.loc[~is_negative], color=style.INK, s=10, alpha=0.7)
-        ax_c.scatter(extremedttrials.loc[is_negative, "robust_z"], y_c.loc[is_negative], color=style.CONDITION_COLORS["fast"], s=14, marker="x", label="anticipation (dt < 0)")
-        ax_c.axvline(5, color=style.INK_MUTED, linewidth=0.6, linestyle="--")
-        ax_c.axvline(-5, color=style.INK_MUTED, linewidth=0.6, linestyle="--")
-        ax_c.set_yticks(range(len(subjects_c)))
-        ax_c.set_yticklabels(subjects_c, fontsize=5)
-        ax_c.set_xlabel("Robust z")
-        ax_c.legend(fontsize=5.5, loc="lower right")
-        ax_c.text(0.02, 0.02, f"{len(extremedttrials)}/{int(extremedt['n_dt_trials'].sum())} at 5 MAD; nothing removed", transform=ax_c.transAxes, fontsize=5.5, color=style.INK_SECONDARY)
-
-        fig.suptitle("Lapses and extreme decision times (QC census)")
-
-    metadata = {
-        "kind": "qc_census",
-        "title": "Lapses and extreme decision times",
-        "columns_read": {
-            "lapses": ["subject", "condition", "n_started_trials", "n_lapse_trials", "lapse_rate", *outcome_columns],
-            "extremedt": ["subject", "n_dt_trials", "n_extreme_dt", "n_extreme_slow", "n_extreme_fast", "n_negative_dt"],
-            "extremedttrials": ["subject", "trial_id", "condition", "run", "dt_ms", "robust_z", "nOutcome"],
-        },
-        "statistics_source": "none (descriptive census)",
-    }
-    return fig, metadata
-
-
 def build_summary_cohort(tables: BehaviorTableSet) -> tuple[Figure, dict[str, Any]]:
-    """F13: dataset overview (supplementary). Counts have a meaningful zero,
-    so bars are correct here -- one of the few figures in the set where they are.
+    """F13: cohort composition and data quality (supplementary). Counts have a
+    meaningful zero, so bars are correct here -- one of the few figures in the
+    set where they are.
 
-    Four panels sharing one subject axis, labelled once on the left. The
+    Five panels sharing one subject axis, labelled once on the left. Panel E
+    absorbs what used to be a separate QC figure: it asked the same question
+    of the same rows (how much of each subject\'s data is suspect), and its
+    own content was thin -- 22 of 32 subjects have at most one flagged trial.
+    Merging it removes a figure and puts the quality counts beside the trial
+    counts they should be judged against. The
     earlier version drew the subject list three times at fontsize 5, plotted
     each condition's total and its DT-usable subset as overlapping bars (they
     differ by 13 trials in 16,337, so the overlap conveyed nothing), and put
@@ -596,13 +539,16 @@ def build_summary_cohort(tables: BehaviorTableSet) -> tuple[Figure, dict[str, An
     scopes' colours.
     """
     summary = tables.summary()
+    lapses = tables.analysis("lapses")
+    extremedt = tables.analysis("extremedt")
 
     with style.apply_publication_style():
         fig, axes = style.figure_grid(
-            1, 4, width="double", panel_height_in=5.4, width_ratios=[1.2, 1.2, 1.0, 1.0]
+            1, 6, width="double", panel_height_in=5.4,
+            width_ratios=[1.05, 1.05, 0.85, 0.85, 0.85, 0.30],
         )
-        for index in range(4):
-            style.panel_label(axes[0, index], "ABCD"[index])
+        for index in range(5):
+            style.panel_label(axes[0, index], "ABCDE"[index])
 
         subjects = summary.sort_values("subject")["subject"].tolist()
         y_positions = np.arange(len(subjects))
@@ -646,7 +592,7 @@ def build_summary_cohort(tables: BehaviorTableSet) -> tuple[Figure, dict[str, An
         # and borrowed the model palette for an accuracy series.
         for index, (column, label, precision) in enumerate(
             (
-                ("motor_baseline_ms", "Motor baseline (ms)", 0),
+                ("motor_baseline_ms", "Baseline (ms)", 0),
                 ("percent_correct", "Accuracy (%)", 1),
             ),
             start=2,
@@ -666,33 +612,111 @@ def build_summary_cohort(tables: BehaviorTableSet) -> tuple[Figure, dict[str, An
             )
             ax.axvline(centre, color=style.INK, linewidth=0.8)
             ax.text(
-                centre, 1.0, f" mean {centre:.{precision}f}", transform=ax.get_xaxis_transform(),
-                ha="left", va="bottom", fontsize=9, color=style.INK_SECONDARY,
+                centre, 1.0, f"mean {centre:.{precision}f}", transform=ax.get_xaxis_transform(),
+                ha="center", va="bottom", fontsize=9, color=style.INK_SECONDARY,
             )
             # Smaller than the rc default: at this panel width the two labels
             # run into each other at 16pt.
             ax.set_xlabel(label, fontsize=12)
-            ax.xaxis.set_major_locator(MaxNLocator(nbins=3))
+            if column == "motor_baseline_ms":
+                # Two well-separated anchors; the automatic 400/480/560
+                # sequence merged into what looked like one long number.
+                ax.set_xticks([400, 550])
+            else:
+                ax.xaxis.set_major_locator(MaxNLocator(nbins=3))
 
-        for index in range(4):
-            ax = axes[0, index]
+        # E -- flagged trials, on a broken x-axis. One subject contributes 27
+        # of the 59 extremes; on a single 0-27 scale every other subject's
+        # one-to-three trials collapse against the axis. The break sits at
+        # 11/25 rather than 5/20 because the second-largest total is 10, and
+        # a 5-20 break would have stranded it in the gap.
+        flags = (
+            lapses.loc[lapses["condition"] == "all"]
+            .set_index("subject")
+            .reindex(subjects)
+        )
+        extreme = extremedt.set_index("subject").reindex(subjects)
+        # The two halves are their own grid columns rather than a subgridspec
+        # carved out of one: adding axes after the fact leaves
+        # constrained_layout unaware of them and it collapses the legend into
+        # the panels.
+        ax_lo, ax_hi = axes[0, 4], axes[0, 5]
+
+        series = (
+            (extreme["n_extreme_dt"], style.QC_LABELS["extreme_dt"],
+             dict(color=style.QC_COLORS["extreme_dt"])),
+            (flags["n_lapse_trials"], style.QC_LABELS["lapse"],
+             dict(color=style.QC_COLORS["lapse"])),
+            (extreme["n_negative_dt"], style.QC_LABELS["anticipation"],
+             dict(color=style.QC_COLORS["anticipation"])),
+        )
+        for ax in (ax_lo, ax_hi):
+            left = np.zeros(len(subjects))
+            for values, label, kwargs in series:
+                counts = values.to_numpy(dtype=float)
+                bars = ax.barh(y_positions, counts, left=left, height=0.72,
+                               label=label if ax is ax_lo else None, **kwargs)
+                # A zero-width bar still draws its edge, which put a black
+                # tick at the end of every lapse segment for the 28 subjects
+                # with no anticipation -- a mark for a count of nothing.
+                for patch, count in zip(bars.patches, counts):
+                    if count == 0:
+                        patch.set_linewidth(0)
+                left += counts
+        ax_lo.set_xlim(0, 11)
+        ax_lo.set_xticks([0, 5, 10])
+        ax_hi.set_xlim(25, float(left.max()) + 1)
+        ax_hi.set_xticks([27])
+        ax_lo.spines["right"].set_visible(False)
+        ax_hi.spines["left"].set_visible(False)
+        ax_hi.tick_params(left=False)
+        ax_lo.set_xlabel("Flagged", fontsize=12, loc="left")
+
+        # Break marks straddling the two facing spines. A fixed-size marker
+        # keeps their physical angle identical even though the two axes have
+        # very different widths; line segments in transAxes coordinates made
+        # the mark on the narrow right half visibly steeper.
+        break_marker = [(-1, -0.45), (1, 0.45)]
+        # Pull the two marks four points into the inter-axis gap and keep them
+        # compact, leaving only the smallest clean separation between them.
+        for ax, x, shift_pt in ((ax_lo, 1.0, 4.0), (ax_hi, 0.0, -4.0)):
+            break_transform = ax.transAxes + ScaledTranslation(
+                shift_pt / 72.0, 0.0, fig.dpi_scale_trans
+            )
+            ax.plot(
+                [x], [0.0], marker=break_marker, markersize=10,
+                linestyle="none", transform=break_transform,
+                color=style.INK, markeredgewidth=1.0,
+                clip_on=False, zorder=5,
+            )
+
+        for index, ax in enumerate(
+            [axes[0, 0], axes[0, 1], axes[0, 2], axes[0, 3], ax_lo, ax_hi]
+        ):
             ax.set_ylim(-0.8, len(subjects) - 0.2)
             ax.set_yticks(y_positions)
             # Subject labels once, on the leftmost panel only.
             ax.set_yticklabels(subjects if index == 0 else [], fontsize=7)
-        # One figure-level legend in a single row, below everything. Per-axes
-        # legends sat beside the "Trials" labels and crowded them; "outside
-        # lower center" makes constrained_layout reserve its own strip under
-        # the x-axis labels instead.
-        handles, labels = [], []
-        for ax in (axes[0, 0], axes[0, 1]):
-            ax_handles, ax_labels = ax.get_legend_handles_labels()
-            handles.extend(ax_handles)
-            labels.extend(ax_labels)
+        # One figure-level key in five columns and exactly two rows. Matplotlib
+        # fills down columns, which gives the requested vertical pairs:
+        # fast/slow, easy/ambiguous, misleading/unclassified,
+        # anticipation/lapse, then extreme DT alone at the far right.
+        handles_by_label = {}
+        for legend_ax in (axes[0, 0], axes[0, 1], ax_lo):
+            panel_handles, panel_labels = legend_ax.get_legend_handles_labels()
+            handles_by_label.update(zip(panel_labels, panel_handles))
+        column_major_order = [
+            "fast", "slow", "easy", "ambiguous",
+            "misleading", "unclassified",
+            style.QC_LABELS["anticipation"], style.QC_LABELS["lapse"],
+            style.QC_LABELS["extreme_dt"],
+        ]
         fig.legend(
-            handles, labels, loc="outside lower center", ncol=len(labels),
-            fontsize=10, frameon=False, handlelength=1.2,
-            columnspacing=1.2, handletextpad=0.5,
+            [handles_by_label[label] for label in column_major_order],
+            column_major_order,
+            loc="outside lower center", ncol=5,
+            fontsize=9, frameon=False, handlelength=1.2,
+            columnspacing=1.4, handletextpad=0.45,
         )
 
         # Retention belongs in the caveat, not the title: spelled out here the
@@ -716,10 +740,19 @@ def build_summary_cohort(tables: BehaviorTableSet) -> tuple[Figure, dict[str, An
             ],
         },
         "statistics_source": "none (descriptive)",
+        "n_extreme": int(extreme["n_extreme_dt"].sum()),
+        "n_lapse": int(flags["n_lapse_trials"].sum()),
+        "n_negative_dt": int(extreme["n_negative_dt"].sum()),
+        "caveat": (
+            "Nothing is removed on the basis of panel E. Every extreme "
+            "decision time is slow-side; there are no fast-side extremes, and "
+            "none of the negative decision times reaches the 5 MAD threshold."
+        ),
         "dt_retention_percent": round(retained, 2),
         "unclassified_percent": round(
             100.0 * float(dt_trials.sum() - class_totals.sum()) / float(dt_trials.sum()), 1
         ),
-        "palette": {**style.CLASS_COLORS, "unclassified": style.SUBJECT_LINE},
+        "palette": {**style.CLASS_COLORS, "unclassified": style.SUBJECT_LINE,
+                    **style.QC_COLORS},
     }
     return fig, metadata

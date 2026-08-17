@@ -70,7 +70,7 @@ state and expensive to retrofit.
 
 ## 3. Figure inventory
 
-26 figures. Every result family in `docs/behavior.md` has a disposition here;
+24 figures. Every result family in `docs/behavior.md` has a disposition here;
 §3.9 lists the families that get no figure, with reasons.
 
 Naming: each figure has a key `<analysis>-<view>`, where `<analysis>` is the
@@ -252,42 +252,7 @@ KDE or caption on panel B in the shipped version: panel A's violins already
 carry the distribution-shape story, so B stays to the quantile functions
 alone, zoomed to 500-2000 ms.
 
-### 3.3 Design effects (`behavior/analyses/design_effects.py`)
-
-#### F12 `lapses-quality` — lapses and extreme decision times (supplementary/QC)
-
-*Reads*
-- `lapses`: `subject`, `condition`, `n_started_trials`, `n_lapse_trials`,
-  `lapse_rate`, `n_outcome_7006_reaction_time_too_long`,
-  `n_outcome_7011_delay_1_error`, `n_lapse_other_outcomes`.
-- `lapsestats`: `measure == "lapse_rate"`, `condition in {all, fast, slow,
-  fast_vs_slow}`.
-- `extremedt`: `subject`, `n_dt_trials`, `median_dt_ms`, `mad_dt_ms`,
-  `n_extreme_dt`, `n_extreme_slow`, `n_extreme_fast`, `n_negative_dt`,
-  `max_dt_ms`, `min_dt_ms`.
-- `extremedttrials`: `subject`, `trial_id`, `condition`, `run`,
-  `run_trial_index`, `trial_class_name`, `dt_ms`, `robust_z`, `nOutcome`.
-
-*Layout* — three panels.
-
-- **A.** Per-subject lapse census: horizontal dot plot of `n_lapse_trials`
-  (integer axis), subjects on y, split by outcome code as two marker shapes
-  (7006 / 7011). Most subjects are 0.
-- **B.** Per-subject `n_extreme_dt`, with `n_extreme_slow` / `n_extreme_fast`
-  as a paired marker and `n_negative_dt` overlaid as a distinct marker.
-- **C.** Every flagged trial: strip of `robust_z` by subject, with the 5-MAD
-  cutoff as a vertical rule and negative-DT (anticipation) trials marked
-  separately.
-
-*Chart-type justification.* A histogram of a 0.08 % lapse rate communicates
-nothing; the useful object is a per-subject census that lets a reviewer see
-that 13 trials in 16,337 are concentrated nowhere in particular. Panel C is a
-census too — 56 trials — and each one is individually inspectable, which is
-the point of the "flag, never remove" policy.
-
-*Annotation.* Panel A: `13 lapse trials / 16,337 started (0.08 %), 7 Fast /
-6 Slow, p = .96`. Panel C: `56 / 16,324 (0.34 %) at 5 MAD, in 14 of 32
-subjects; nothing removed`.
+### 3.4 Evidence and criterion (`behavior/analyses/evidence.py`)
 
 #### F14 `criteriondecline-tokens` — evidence at decision vs. tokens observed
 
@@ -652,7 +617,7 @@ Revisit once the Tier C5 join lands and a derivative owns the statistic.
 | :--- | :--- |
 | `trialfeatures` | Not a result. It is the trial-level layer behind F04, F05, F10, F14, F15, F18. |
 | `groupstats` | Not a figure of its own; its rows are the annotations on F04, F05, F06. Drawing a table as a chart adds nothing. |
-| `extremedttrials` | Folded into F12 panel C; a 56-row table needs no second figure. |
+| `extremedttrials` | Summarized as subject counts in F13 panel E; the per-trial derivative needs no second figure. |
 | `ssmtrialpredictions` | **No figure.** It is the trial-level model-derived regressor for the Tier C5 MEG join (`criterion_at_decision`, `decision_variable_at_decision`, `predicted_accuracy`), not a behavioural result. Revisit when the source-space features it joins to exist. |
 | `ssmhierarchical`, `ssmhierarchicalstats` | **No figure.** These files exist in the data root but are *not* written by the current workflow (`workflows/behavior_characterization.py` writes `ssmpopulation`/`ssmpopulationstats`). They are stale outputs of a previous name. Do not build a figure against them; flag them for deletion from the data root as a separate cleanup, not from the plotting code. |
 | Response vigor (Tier B8) | Dropped upstream — movement time is not recorded (`docs/behavior.md`, Known Issues). Nothing to plot, and nothing must be plotted against the null field. |
@@ -673,7 +638,7 @@ Revisit once the Tier C5 join lands and a derivative owns the statistic.
 | `meg_tokens/reports/behavior/__init__.py` | Figure registry, `FigureSpec`, public API. |
 | `meg_tokens/reports/behavior/_tables.py` | `BehaviorTableSet` — derivative loader/cache with contract-shaped errors. |
 | `meg_tokens/reports/behavior/distributions.py` | F04, F05, F06. |
-| `meg_tokens/reports/behavior/design.py` | F08, F09, F10, F11, F12, F13. |
+| `meg_tokens/reports/behavior/design.py` | F08–F11 and F13 (F12 was folded into F13). |
 | `meg_tokens/reports/behavior/evidence.py` | F14, F15, F16, F17, F18. |
 | `meg_tokens/reports/behavior/sequential.py` | F19, F20. |
 | `meg_tokens/reports/behavior/modeling.py` | F01, F02, F03, F21, F22. |
@@ -1126,7 +1091,7 @@ sidecars.
 ## 6. CLI wiring
 
 Extend the existing `report behavior` subcommand. **Do not add one subcommand
-per figure group**: 26 figures would mean 26 parsers duplicating the same four
+per figure group**: 24 figures would mean 24 parsers duplicating the same four
 path arguments, and the group boundaries would drift from the registry. A
 `--figures` selector over a registry keeps one dispatch path and makes the
 figure list discoverable at runtime.

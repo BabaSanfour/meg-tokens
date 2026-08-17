@@ -164,14 +164,21 @@ def test_conditionorder_balance(design_tables):
     assert "underpowered" in metadata["caveat"]
 
 
-def test_lapses_quality(design_tables):
-    figure, metadata = design.build_lapses_quality(design_tables)
-    _assert_basic_figure(figure, metadata, min_axes=3, require_stat_text=False)
-
-
 def test_summary_cohort(design_tables):
     figure, metadata = design.build_summary_cohort(design_tables)
-    _assert_basic_figure(figure, metadata, min_axes=3, require_stat_text=False)
+    # Five panels: the standalone QC figure was folded in as panel E, since it
+    # asked the same question of the same subject rows and 22 of 32 subjects
+    # had at most one flagged trial.
+    # Six axes: panel E is split into the two halves of a broken x-axis, one
+    # subject contributing 27 of 59 flagged trials against a median of 1.
+    _assert_basic_figure(figure, metadata, min_axes=6, require_stat_text=False)
+    assert len(figure.axes) == 6
+
+    # The QC counts must reach the figure, or the fold-in lost them.
+    labels = [ax.get_xlabel() for ax in figure.axes]
+    assert "Flagged" in labels
+    assert {"n_extreme", "n_lapse", "n_negative_dt"} <= set(metadata)
+    assert "Nothing is removed" in metadata["caveat"]
 
 
 # --- evidence.py (F14-F18) --------------------------------------------------

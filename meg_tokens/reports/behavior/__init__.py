@@ -129,17 +129,10 @@ REGISTRY: tuple[FigureSpec, ...] = (
         builder=design.build_conditionorder_balance,
     ),
     FigureSpec(
-        key="lapses-quality", analysis="lapses", view="quality",
-        title="Lapses and extreme decision times",
-        kind="qc_census", groups=("design", "qc"),
-        requires=("lapses", "extremedt", "extremedttrials"),
-        builder=design.build_lapses_quality,
-    ),
-    FigureSpec(
         key="summary-cohort", analysis="summary", view="cohort",
-        title="Dataset overview",
+        title="Cohort composition and data quality",
         kind="cohort_overview", groups=("design", "qc"),
-        requires=("summary",),
+        requires=("summary", "lapses", "extremedt"),
         builder=design.build_summary_cohort,
     ),
     # --- Evidence and criterion (behavior/analyses/evidence.py) ---

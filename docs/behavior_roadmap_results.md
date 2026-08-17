@@ -58,20 +58,6 @@ Group means of the per-subject statistics (ms):
 | Fast | 1186 | 677 | 1127 | 1768 | 0.89 |
 | Slow | 1313 | 756 | 1255 | 1916 | 1.05 |
 
-## A6 — Lapses and extreme DTs (`lapses`, `extremedt`, `extremedttrials`)
-
-Only **13 lapse trials** in the whole dataset (started task trials with a go
-cue and no choice), a rate of 0.08 %, split 7 Fast / 6 Slow (`p=0.96`). Six
-are `7006` (reaction time too long) and seven are `7011` (delay-1 error); no
-other outcome code appears among them. 16,337 task trials started, 16,324 of
-which produced a choice.
-
-At a 5-MAD robust cutoff, **56 of 16,324 task DTs (0.34 %)** are extreme, in 14
-of 32 subjects, all in the slow tail; 5 negative DTs (anticipations) are
-retained and flagged, as before. Every flagged trial is listed with its
-`trial_id`, condition, run, class, and robust z-score. Nothing is removed: the
-DT contract still retains all finite values.
-
 ## B1–B2, C3 — Evidence, criterion, and urgency (`criteriondecline`, `urgency`)
 
 Slope of evidence at decision, fitted per subject on both scales:

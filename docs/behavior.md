@@ -108,8 +108,9 @@ drop the most decisive trials from every regression.
 `meg-tokens report behavior --figures <keys or groups>` renders the figure
 battery; `--list-figures` prints the full registry. Full per-figure
 specification (source columns, chart-type justification, statistical
-annotation): `docs/behavior_reporting_plan.md`. All 6 phases complete (26
-figures); F26 additionally requires `--neural-metrics`.
+annotation): `docs/behavior_reporting_plan.md`. The registry contains 24
+figures: F07 was removed and F12 was folded into F13; F26 additionally
+requires `--neural-metrics`.
 
 | Key | Derivative(s) | Shows |
 | :--- | :--- | :--- |
@@ -118,20 +119,19 @@ figures); F26 additionally requires `--neural-metrics`.
 | `ssmcomparison-urgencyparams` | `ssmcomparison`, `ssmcomparisonstats` | All four urgency-model parameters, Fast vs. Slow |
 | `ssmtimecourse-fit` | `ssmtimecourse` | Criterion time course, fit quality, decision-variable trajectory |
 | `ssmpopulation-shrinkage` | `ssmpopulation`, `ssmpopulationstats` | Empirical-Bayes population model, per parameter |
-| `dtdistribution-condition` | `dtdistribution`, `dtdistributionstats`, `trialfeatures`, `groupstats` | Decision time, Fast vs. Slow (`dt_ms`, not `rawRT`) |
+| `dtdistribution-condition` | `dtdistribution`, `dtdistributionstats` | Decision time, Fast vs. Slow (`dt_ms`, not `rawRT`) |
 | `dtdistribution-class` | `dtdistribution`, `dtdistributionstats` | Decision time by trial class |
-| `spdcumulative-class` | `spdcumulative`, `groupstats` | SPD at decision, cumulative by class |
+| `spdcumulative-class` | `spdcumulative` | SPD at decision, cumulative by class |
 | `conditionclass-anova` | `conditionclass`, `conditionclassstats` | Decision time and accuracy by condition x difficulty |
 | `choiceside-asymmetry` | `choiceside`, `choicesidestats` | Left − right asymmetry in choice, decision time, accuracy |
-| `timeontask-drift` | `timeontaskstats`, `trialfeatures` | Session and within-block drift |
+| `timeontask-drift` | `timeontaskstats` | Session and within-block drift |
 | `conditionorder-balance` | `conditionorder`, `conditionorderstats` | First-block counterbalancing (between-subject) |
-| `lapses-quality` | `lapses`, `extremedt`, `extremedttrials` | Lapses and extreme decision times (QC) |
-| `summary-cohort` | `summary` | Dataset overview (counts, motor baseline, accuracy) |
-| `criteriondecline-tokens` | `criteriondecline`, `criteriondeclinestats`, `trialfeatures` | Evidence at decision vs. tokens observed |
-| `urgency-decisiontime` | `urgency`, `urgencystats`, `trialfeatures` | Evidence at decision vs. decision time |
+| `summary-cohort` | `summary`, `lapses`, `extremedt` | Cohort composition and data quality |
+| `criteriondecline-tokens` | `criteriondecline`, `criteriondeclinestats` | Evidence at decision vs. tokens observed |
+| `urgency-decisiontime` | `urgency`, `urgencystats` | Evidence at decision vs. decision time |
 | `reversecorrelation-kernel` | `reversecorrelation`, `reversecorrelationstats` | Psychophysical kernel by token jump |
 | `conditionalaccuracy-caf` | `conditionalaccuracy`, `conditionalaccuracystats` | Conditional accuracy function |
-| `continuousevidence-effects` | `continuousevidence`, `continuousevidencestats`, `trialfeatures` | Continuous early-evidence effects (incl. unclassified trials) |
+| `continuousevidence-effects` | `continuousevidence`, `continuousevidencestats` | Continuous early-evidence effects (incl. unclassified trials) |
 | `posterror-slowing` | `posterror`, `posterrorstats` | Robust post-error slowing |
 | `choicehistory-effects` | `choicehistory`, `choicehistorystats` | Win-stay/lose-shift, side autocorrelation, DT by history |
 | `individualcorrelations-matrix` | `individualcorrelations` | Pairwise correlation matrix, individual differences |
@@ -171,6 +171,13 @@ how each was handled, and its impact.
 
 ## Findings
 
+The findings are ordered as a scientific argument rather than by figure
+number: cohort composition and data quality first; checks on block order,
+response side, and time on task next; then the classification reference frame
+used by the class-based results; finally the condition, difficulty,
+distribution, and confidence results. Figure numbers retain build order, so
+their sequence below is intentionally non-numeric.
+
 ### Cohort and trial composition
 
 **Result.**
@@ -191,9 +198,9 @@ how each was handled, and its impact.
   misleading 1,718 (10.5%), **unclassified 7,025 (43.0%)**, 198–237 per
   subject. The unclassified share is large and is drawn explicitly in the
   figure; class-keyed analyses run on the 57% that carry a class.
-- Accuracy 78.5–90.1% (mean 83.7); motor baseline 367–583 ms (mean 449).
-  Motor baseline does not track accuracy across subjects (r = +0.23,
-  p = .20), so subtracting it does not import a performance confound into
+- Accuracy 78.5–90.1% (mean 83.7); motor baseline 367–575 ms (mean 449).
+  Motor baseline does not track accuracy across subjects (r = +0.24,
+  p = .19), so subtracting it does not import a performance confound into
   decision time.
 - 226 trials were never started (`nOutcome == 7003`, no go cue), up to 54 in
   one subject; they are excluded from every count above.
@@ -209,7 +216,34 @@ how each was handled, and its impact.
   share (which is why class-keyed panels carry a smaller *n* than
   condition-keyed ones).
 
-Figure: `summary-cohort` (F13).
+
+**Data quality.**
+
+- **Lapses are negligible.** 13 of 16,337 started trials (0.08%) ended
+  without a response — 6 `7006` (reaction time too long), 7 `7011`
+  (delay-1 error). 22 of 32 subjects have zero; the maximum is 3 (`lapses`).
+- **Extreme decision times are rare and one-sided.** 59 of 16,324 (0.36%)
+  exceed 5 robust MAD from the subject's own median (`extremedt`). **Every
+  one is slow-side** (z from 5.0 to 24.4); there is not a single fast-side
+  extreme. They split 32 Slow / 27 Fast, so they are not a property of one
+  condition.
+- They are concentrated: 17 of 32 subjects have none, and **H20 alone
+  contributes 27 of the 59** (46%), H21 nine, H26 five.
+- **Four anticipations** (dt < 0) exist across 4 subjects; none reaches the
+  5 MAD threshold. **Nothing is removed** — extremes are flagged and listed
+  per trial (`extremedttrials`), never dropped.
+- The one-sidedness is expected rather than suspicious: decision time is
+  bounded below by the motor baseline and above by the 15-jump deadline, so
+  the distribution has a long right tail and no room for a symmetric one.
+- **H20 is worth naming but not excluding.** Contributing 46% of the extremes
+  is an outlier in *variability*, not in central tendency, and the MAD
+  criterion is per subject, so the flag already accounts for that subject's
+  own scale. Any analysis sensitive to tail behaviour should check its
+  influence explicitly.
+
+Figure: `summary-cohort` (F13) — panel E carries the quality census; it was a
+separate figure (F12) until it was folded in, since it asked the same
+question of the same subject rows.
 
 ### Block order does not explain the Slow − Fast effect
 
@@ -223,14 +257,14 @@ Figure: `summary-cohort` (F13).
 
 | First block | n | Slow − Fast | 95% CI | t | p | positive |
 | :--- | ---: | ---: | :--- | ---: | ---: | ---: |
-| Fast-first | 15 | +104.8 ms | [24, 185] | 2.78 | .015 | 12/15 |
-| Slow-first | 17 | +147.3 ms | [105, 189] | 7.41 | 1.5e-6 | 16/17 |
+| Fast-first | 15 | +104.1 ms | [24, 185] | 2.77 | .015 | 12/15 |
+| Slow-first | 17 | +147.3 ms | [105, 189] | 7.44 | 1.4e-6 | 16/17 |
 
-- The two groups do not differ reliably (Welch t(21.4) = −1.00, p = .33), and
+- The two groups do not differ reliably (Welch t(21.4) = −1.02, p = .32), and
   neither does baseline decision time in either condition (Fast p = .63,
   Slow p = .84; `conditionorderstats`).
 - **That null is not evidence of balance, and is reported as a bound.** The
-  90% CI on the between-group difference is [−116, +31] ms, so the test
+  90% CI on the between-group difference is [−116, +30] ms, so the test
   excludes only order effects larger than **~116 ms — about the size of the
   Slow − Fast effect itself (127 ms)**. It fails a TOST at d = ±0.8 and
   passes only at d = ±1.0. At n = 15 vs 17 this comparison cannot demonstrate
@@ -244,44 +278,53 @@ Figure: `summary-cohort` (F13).
 - The between-group comparison is uninformative in both directions. It gives
   no reason to suspect an order effect and no power to rule a moderate one
   out; the honest statement is that this dataset cannot resolve it. A
-  numerically larger effect in the Slow-first group (147 vs 105 ms) is well
+  numerically larger effect in the Slow-first group (147 vs 104 ms) is well
   inside that uncertainty.
 
 Figure: `conditionorder-balance` (F11).
 
-### Response side: no choice or accuracy bias, a small left-hand speed advantage
+### Response side: no bias in choice, accuracy, or decision time
 
 **Result.**
 
-- Left and right are balanced in *what* subjects chose and in *how well*
+- Left and right are balanced on all three measures
   (`choiceside`, `choicesidestats`, paired per subject, n = 32):
 
 | Measure (left − right) | Δ | t(31) | p | 90% CI |
 | :--- | ---: | ---: | ---: | :--- |
 | choice proportion | +0.016 | 1.14 | .263 | [−0.008, +0.040] |
 | accuracy | +0.002 | 0.16 | .877 | [−0.017, +0.020] |
-| **decision time** | **−22.8 ms** | **−2.39** | **.023** | [−39.0, −6.7] |
+| decision time | −9.8 ms | −0.94 | .354 | [−27.5, +7.9] |
+| decision time, Fast | −0.3 ms | — | .979 | — |
+| decision time, Slow | −18.9 ms | — | .250 | — |
 
-- Choice proportion and accuracy are bounded, not merely non-significant:
-  the choice bias is within ±0.04 (≈4 percentage points) and the accuracy
-  difference within ±0.02. Both fail a TOST at dz = ±0.5, so a small bias is
-  not excluded — but nothing approaching a side preference survives.
-- **Left-hand responses are ~23 ms faster than right.** The effect is
-  present in both conditions in the same direction and does not differ
-  between them (Fast −13.3 ms, p = .19; Slow −31.9 ms, p = .050).
+- All three are bounded, not merely non-significant: the choice bias is
+  within ±0.04 (≈4 percentage points), the accuracy difference within ±0.02,
+  and the decision-time difference within ±28 ms. None passes a TOST at
+  dz = ±0.5, so a small asymmetry is not excluded — but nothing approaching
+  a side preference survives.
+- One subject sits outside the plotted decision-time range: H21 at +239 ms
+  under Slow, running opposite to the group (left *slower*), which pulls the
+  group mean toward zero.
 
 **Interpretation.**
 
-- Subjects did not prefer a side and were not more accurate on one — the
-  two-alternative design is balanced in the ways that would bias a choice
-  analysis.
-- The 23 ms speed advantage is a **motor** asymmetry, not a decision one:
-  it appears in decision time but not accuracy, and decision time here is
-  `rawRT − motor_baseline` with a single baseline per subject that cannot
-  absorb a per-hand difference. It is 18% of the Fast/Slow effect (127 ms)
-  and, being common to both conditions, cannot generate it.
-- Worth carrying into the MEG analyses, where lateralised motor preparation
-  is measured directly and a 23 ms per-hand offset is not negligible.
+- Subjects did not prefer a side, were not more accurate on one, and are not
+  reliably faster with one hand once the motor baseline accounts for the
+  hand. The two-alternative design is balanced in every way that would bias
+  a choice analysis.
+- **This is the result of a correction, not the raw data.** Under a single
+  pooled motor baseline the same contrast gave −22.8 ms, p = .023 — an
+  apparent left-hand speed advantage. The RT runs, which contain no
+  deliberation, show a 13.9 ms hand difference of their own, so that
+  "advantage" was motor latency the pooled baseline could not remove.
+  Subtracting each hand's own baseline reduces it to −9.8 ms (p = .354).
+  See "Deliberate deviations from the preprint's analysis," below.
+- A residual ~10 ms remains, and the bound cannot exclude it. It is small
+  relative to the Fast/Slow effect (127 ms) and common to both conditions,
+  so it cannot generate that effect — but lateralised motor preparation is
+  measured directly in the MEG analyses, and a ~10 ms per-hand offset is
+  worth carrying there.
 
 Figure: `choiceside-asymmetry` (F09).
 
@@ -294,13 +337,13 @@ Figure: `choiceside-asymmetry` (F09).
 
 | Term | Slope | t(31) | p | dz |
 | :--- | ---: | ---: | ---: | ---: |
-| per session block | **−35.9 ms** | −4.14 | 2.5e-4 | −0.73 |
-| per within-block trial | **+3.06 ms** | 8.00 | 5.0e-9 | 1.41 |
+| per session block | **−35.8 ms** | −4.14 | 2.5e-4 | −0.73 |
+| per within-block trial | **+3.06 ms** | 7.95 | 5.7e-9 | 1.41 |
 
-- Roughly −270 ms across eight task blocks against +180 ms across a 60-trial
+- Roughly −272 ms across eight task blocks against +180 ms across a 60-trial
   block: practice between blocks, fatigue or disengagement within them.
 - **The session decline is a learning curve, not a steady drift.** Blocks 1→3
-  account for −199 ms (t(31) = 4.61, p = 6.5e-5); blocks 3→8 for only −73 ms
+  account for −198 ms (t(31) = 4.61, p = 6.6e-5); blocks 3→8 for only −73 ms
   (p = .27). The linear coefficient understates the early change and
   overstates the late one. Both conditions show the same shape (panel A).
 - **The decline is decisional, not motor.** Motor baseline is a single
@@ -311,8 +354,8 @@ Figure: `choiceside-asymmetry` (F09).
   against a session drift of 199 ms.
 - **Neither slope differs Fast vs. Slow, and here the null is informative.**
   Session drift Δ = −10.4 ms/block, 90% CI [−25.7, +4.9] — the difference is
-  bounded well below the drift itself (35.9 ms). Within-block drift
-  Δ = +0.28 ms/trial, 90% CI [−1.13, +1.68], against a slope of 3.06. Time on
+  bounded well below the drift itself (35.8 ms). Within-block drift
+  Δ = +0.25 ms/trial, 90% CI [−1.16, +1.66], against a slope of 3.06. Time on
   task acts on both conditions alike, so it cannot generate the Fast/Slow
   contrast in F04.
 - **The confound is confined to within-block position.** Trial class is
@@ -325,16 +368,16 @@ Figure: `choiceside-asymmetry` (F09).
   25% ambiguous with almost no easy — and easy trials are ~450 ms faster.
   Panel B draws the class-adjusted profile alongside the observed one, so the
   compositional contribution is the gap between them: it shrinks the
-  first-to-last rise from +255 ms to +151 ms and the total excursion from
+  first-to-last rise from +254 ms to +150 ms and the total excursion from
   296 ms to 190 ms.
-  Re-fitting with trial-class controls: slope drops from **+3.08 to +2.69
-  ms/trial** (95% CI [1.86, 3.52], t(31) = 6.59, p = 2.3e-7; reduction
-  reliable at t(31) = 6.09, p = 9.5e-7). The effect is genuine but smaller
+  Re-fitting with trial-class controls: slope drops from **+3.08 to +2.68
+  ms/trial** (95% CI [1.85, 3.52], t(31) = 6.56, p = 2.5e-7; reduction
+  reliable at t(31) = 6.13, p = 8.5e-7). The effect is genuine but smaller
   than the uncontrolled coefficient implies.
 - **The within-block profile is not linear.** Deviations from a per-subject
-  linear fit are reliable across deciles (omnibus F = 18.0, p = 5e-24; 6 of
+  linear fit are reliable across deciles (omnibus F = 18.0, p = 4.5e-24; 6 of
   10 deciles differ from the linear prediction at Bonferroni α = .005), with
-  a +122 ms excursion at decile 6. The linear coefficient is a summary, not a
+  a +123 ms excursion at decile 6. The linear coefficient is a summary, not a
   description of the shape.
 
 **Interpretation.**
@@ -445,14 +488,14 @@ evidence invites early commitment while ambiguous evidence delays it.
 
 | Condition | Easy | Ambiguous | Misleading |
 | :--- | ---: | ---: | ---: |
-| Fast | 981 / 0.992 | 1367 / 0.767 | 1303 / 0.390 |
-| Slow | 1094 / 0.983 | 1517 / 0.779 | 1426 / 0.359 |
+| Fast | 981 / 0.992 | 1367 / 0.767 | 1305 / 0.390 |
+| Slow | 1094 / 0.983 | 1518 / 0.779 | 1427 / 0.359 |
 
 - Both factors act strongly and independently on decision time
   (`conditionclassstats`; 2 × 3 repeated-measures ANOVA, n = 32):
   condition ηp² = .51, difficulty ηp² = .90, both p < .001.
 - Decision time is **non-monotonic in difficulty**: ambiguous is the slowest
-  class, slower than misleading by 64 ms (Fast) and 91 ms (Slow), even though
+  class, slower than misleading by 62 ms (Fast) and 91 ms (Slow), even though
   misleading is by far the least accurate. Time-to-decide and
   probability-correct come apart — pursued in F05.
 - The interaction depends entirely on the scale it is tested on, and only one
@@ -460,25 +503,25 @@ evidence invites early commitment while ambiguous evidence delays it.
 
 | Interaction tested on | F(2, 62) | p | ηp² |
 | :--- | ---: | ---: | ---: |
-| decision time in ms | 1.19 | .310 | **.037** |
-| **log decision time** | 0.04 | .957 | **.0014** |
+| decision time in ms | 1.20 | .307 | **.037** |
+| **log decision time** | 0.06 | .938 | **.0021** |
 
 - Condition shifts decision time by a *factor*, not by a constant (F04), so
   the millisecond interaction tests a model already known to be wrong. On the
   log scale — where the interaction asks whether Fast→Slow scales every
-  difficulty by the same amount — the residual effect is 26× smaller and
+  difficulty by the same amount — the residual effect is 18× smaller and
   essentially zero.
 - Stated positively, the per-class stretch factors are near-identical while
   the millisecond effects are not:
 
 | Class | Slow − Fast | Slow ÷ Fast |
 | :--- | ---: | ---: |
-| easy | +112 ms | 1.125 |
-| ambiguous | +150 ms | 1.121 |
-| misleading | +123 ms | 1.118 |
+| easy | +113 ms | 1.126 |
+| ambiguous | +151 ms | 1.121 |
+| misleading | +122 ms | 1.117 |
 
 - Bound on the residual additive interaction: easy-vs-misleading
-  difference-of-differences = −10.5 ms, 90% CI [−55.3, +34.3] ms.
+  difference-of-differences = −9.3 ms, 90% CI [−54.1, +35.5] ms.
 - **Accuracy shows no condition effect** (ηp² = .04, p = .26), and no
   interaction (ηp² = .06, p = .15). Difficulty dominates it (ηp² = .95,
   p < .001), as designed: easy ≈ 0.99, ambiguous ≈ 0.77, misleading ≈ 0.37.
@@ -491,7 +534,7 @@ evidence invites early commitment while ambiguous evidence delays it.
 **Interpretation.**
 
 - The urgency manipulation rescales the deliberation clock **by the same
-  factor regardless of evidence quality** — 1.118 to 1.125 across three
+  factor regardless of evidence quality** — 1.117 to 1.126 across three
   classes that differ by 400 ms in mean decision time. Urgency and evidence
   quality are separable knobs, which is what licenses treating F04 (rate) and
   F05 (shape) as distinct effects rather than one effect seen twice.
@@ -514,18 +557,18 @@ Figure: `conditionclass-anova` (F08).
 **Result.**
 
 - Slow decisions take ~11% longer than Fast: **1186 ± 70 ms (Fast) vs.
-  1313 ± 66 ms (Slow)**, t(31) = −6.19, p = 7.1e-7, dz = −1.10, n = 32
+  1314 ± 66 ms (Slow)**, t(31) = −6.19, p = 7.1e-7, dz = −1.09, n = 32
   (`dtdistribution`, `groupstats`).
 - Every quantile moves, but by a common *factor*, not a common number of
   milliseconds (`dtdistributionstats`):
 
 | Quantile | Fast | Slow | Slow − Fast | Slow ÷ Fast |
 | :--- | ---: | ---: | ---: | ---: |
-| q10 | 677 ms | 756 ms | +79 ms | 1.124 |
+| q10 | 678 ms | 757 ms | +80 ms | 1.127 |
 | q25 | 867 ms | 966 ms | +99 ms | 1.131 |
-| q50 | 1126 ms | 1255 ms | +129 ms | 1.140 |
-| q75 | 1442 ms | 1601 ms | +159 ms | 1.127 |
-| q90 | 1768 ms | 1916 ms | +148 ms | 1.091 |
+| q50 | 1128 ms | 1255 ms | +127 ms | 1.139 |
+| q75 | 1441 ms | 1601 ms | +160 ms | 1.128 |
+| q90 | 1767 ms | 1915 ms | +148 ms | 1.091 |
 
 Both right-hand columns aggregate *per subject*, not across group means:
 Δ is the mean of each subject's difference, and the ratio is the geometric
@@ -534,9 +577,9 @@ below). Dividing the two group-mean columns instead gives ~1.11 and is not
 the quantity tested.
 
 - **Not a fixed delay.** The millisecond gap nearly doubles from the fast end
-  to the slow end: Δq90 vs. Δq10, t(31) = 2.44, p = .021.
+  to the slow end: Δq90 vs. Δq10, t(31) = 2.42, p = .021.
 - **Consistent with a stretch.** The ratios do not differ across quantiles:
-  log-ratio q90 vs. q10, t(31) = −1.42, p = .167.
+  log-ratio q90 vs. q10, t(31) = −1.60, p = .119.
 - **Spread agrees.** A delay moves the mean without touching the SD; a
   stretch scales both. Giving each model its best per-subject fit (that
   subject's own delay `mean_slow − mean_fast`, or their own factor
@@ -544,12 +587,12 @@ the quantity tested.
 
 | | Observed Slow | Fixed delay predicts | Stretch predicts |
 | :--- | ---: | ---: | ---: |
-| SD | 487 ms | 447 ms (t(31) = 2.69, p = .011) | 500 ms (t(31) = −1.01, p = .32) |
-| CV | 0.394 | 0.355 (t(31) = 2.53, p = .017) | 0.401 (t(31) = −0.51, p = .62) |
+| SD | 487 ms | 447 ms (t(31) = 2.68, p = .012) | 500 ms (t(31) = −1.01, p = .32) |
+| CV | 0.394 | 0.355 (t(31) = 2.52, p = .017) | 0.401 (t(31) = −0.50, p = .62) |
 
 - The observed spread is therefore incompatible with a fixed delay and
   compatible with a proportional stretch.
-- **Skewness decides nothing here** (0.89 vs. 1.05, p = .53). It is invariant
+- **Skewness decides nothing here** (0.89 vs. 1.05, p = .52). It is invariant
   under *any* positive linear transform, so both models predict no change —
   reported for completeness only. Its null *does* rule out a non-linear
   change: Slow occasionally derailing a trial into a long deliberation would
@@ -559,13 +602,13 @@ the quantity tested.
 
 | Normalization applied before the test | Subjects with Fast ≠ Slow |
 | :--- | ---: |
-| none (raw decision time) | 18 / 32 |
+| none (raw decision time) | 19 / 32 |
 | each condition's median **subtracted** | 6 / 32 |
 | each condition's median **divided out** | 2 / 32 |
 
 - Fitting each subject's five Slow quantiles as a multiple of their Fast
-  quantiles gives a stretch factor of **1.117, 95% CI [1.073, 1.161]**
-  (t(31) = 5.22 against 1, p = 1.1e-5; 27 of 32 subjects above 1).
+  quantiles gives a stretch factor of **1.117, 95% CI [1.071, 1.163]**
+  (t(31) = 5.21 against 1, p = 1.2e-5; 27 of 32 subjects above 1).
 
 **Interpretation.**
 
@@ -598,8 +641,8 @@ the quantity tested.
 
 - "Proportional" describes the *group-level* pattern. Within a single subject
   the two models are not separable at this trial count: fitting each
-  subject's five quantiles, the scale model's residual (55.6 ms) beats the
-  shift model's (63.0 ms) in only 18 of 32 subjects, t(31) = −0.89, p = .38.
+  subject's five quantiles, the scale model's residual (54.9 ms) beats the
+  shift model's (62.3 ms) in only 18 of 32 subjects, t(31) = −0.92, p = .37.
   The claim rests on the aggregate tests, not on per-subject model selection.
 - A ratio depends on where zero sits. The origin here is decision onset with
   non-decision time subtracted out — the theoretically meaningful zero for a
@@ -617,8 +660,8 @@ Figure: `dtdistribution-condition` (F04).
 
 | Contrast | q10 | q50 | q90 |
 | :--- | ---: | ---: | ---: |
-| Easy − Ambiguous | −315 ms, t(31)=−9.11, p=2.9e-10 | −419 ms, t(31)=−13.29, p=2.4e-14 | −462 ms, t(31)=−12.88, p=5.6e-14 |
-| Easy − Misleading | −207 ms, t(31)=−6.27, p=5.7e-7 | −355 ms, t(31)=−11.32, p=1.5e-12 | −448 ms, t(31)=−10.42, p=1.2e-11 |
+| Easy − Ambiguous | −316 ms, t(31)=−9.15, p=2.6e-10 | −420 ms, t(31)=−13.40, p=1.9e-14 | −459 ms, t(31)=−13.07, p=3.8e-14 |
+| Easy − Misleading | −209 ms, t(31)=−6.32, p=4.9e-7 | −355 ms, t(31)=−11.30, p=1.6e-12 | −449 ms, t(31)=−10.55, p=8.8e-12 |
 
 - Ambiguous vs. misleading differs in kind, not just size — misleading is
   faster through the fast and typical range, but the two converge in the
@@ -626,9 +669,9 @@ Figure: `dtdistribution-condition` (F04).
 
 | Quantile | Δ (ambiguous − misleading) | t(31) | p |
 | :--- | ---: | ---: | ---: |
-| q10 | +107 ms | 5.39 | 7.1e-6 |
-| q50 | +64 ms | 4.37 | 1.3e-4 |
-| q90 | +13 ms | 0.42 | .68 (n.s.) |
+| q10 | +107 ms | 5.65 | 3.3e-6 |
+| q50 | +65 ms | 4.17 | 2.3e-4 |
+| q90 | +10 ms | 0.31 | .76 (n.s.) |
 
 - Applying the F04 geometry tests to each contrast (fixed delay, proportional
   stretch, or neither?) separates them cleanly. The per-subject KS ladder —
@@ -637,16 +680,16 @@ Figure: `dtdistribution-condition` (F04).
 
 | Contrast | Fixed delay? | Stretch? | KS raw → −median → ÷median |
 | :--- | :--- | :--- | :--- |
-| Easy vs. Ambiguous | no (p = .003) | no (p = .003) | 32/32 → 11/32 → 9/32 |
-| Easy vs. Misleading | no (p < 1e-4) | **yes** (p = .63) | 29/32 → 9/32 → **0/32** |
-| Ambiguous vs. Misleading | no (p = .017) | no (p < 1e-4) | 5/32 → 0/32 → 0/32 |
+| Easy vs. Ambiguous | no (p = .004) | no (p = .003) | 32/32 → 10/32 → 6/32 |
+| Easy vs. Misleading | no (p < 1e-4) | **yes** (p = .67) | 29/32 → 10/32 → **0/32** |
+| Ambiguous vs. Misleading | no (p = .014) | no (p < 1e-4) | 5/32 → 0/32 → 0/32 |
 
-- **Easy vs. misleading is a clean ~1.30× stretch.** Dividing out a per-class
+- **Easy vs. misleading is a clean ~1.29× stretch.** Dividing out a per-class
   factor leaves the two distributions indistinguishable in every subject
   (0/32).
 - **Easy vs. ambiguous is neither.** Differences grow toward the tail
-  (315 → 462 ms) while the ratios *shrink* (1.49 → 1.33), and both
-  normalizations leave 9–11 subjects still differing, well above the 1.6
+  (316 → 459 ms) while the ratios *shrink* (1.49 → 1.33), and both
+  normalizations leave 6–10 subjects still differing, well above the 1.6
   expected by chance. That residual is a genuine change in distribution
   *shape*, not in location or scale.
 - **Ambiguous vs. misleading is group-real but individually weak.** Only 5 of
@@ -712,22 +755,22 @@ Figure: `dtdistribution-class` (F05).
 | :--- | ---: | ---: |
 | Easy | 0.781 | 0.010 |
 | Ambiguous | 0.651 | 0.013 |
-| Misleading | 0.648 | 0.006 |
+| Misleading | 0.647 | 0.006 |
 
 | Contrast | Δ | t(31) | p | dz |
 | :--- | ---: | ---: | ---: | ---: |
-| Easy − Ambiguous | 0.129 | 17.03 | 2.7e-17 | 3.01 |
-| Easy − Misleading | 0.133 | 17.51 | 1.3e-17 | 3.09 |
-| Ambiguous − Misleading | 0.0035 | 0.37 | .713 | 0.07 |
+| Easy − Ambiguous | 0.130 | 17.13 | 2.3e-17 | 3.03 |
+| Easy − Misleading | 0.134 | 16.86 | 3.7e-17 | 2.98 |
+| Ambiguous − Misleading | 0.0039 | 0.41 | .684 | 0.07 |
 
 - Easy vs. either harder class is about as large an effect as behavioral data
   gets (dz ≈ 3, near-zero group overlap).
 - **Ambiguous vs. misleading is stated as a bound, not an absence** —
-  p = .713 is not by itself evidence of equivalence. The 90% CI on the paired
-  difference is [−0.012, +0.019] SPD, which passes a two-one-sided-tests
+  p = .684 is not by itself evidence of equivalence. The 90% CI on the paired
+  difference is [−0.012, +0.020] SPD, which passes a two-one-sided-tests
   equivalence check at dz = ±0.4 (and ±0.5) but fails at ±0.3.
 - Read directly: **the data rule out any difference larger than about
-  0.019 SPD (dz ≈ 0.36); a smaller one remains possible and this sample
+  0.020 SPD (dz ≈ 0.37); a smaller one remains possible and this sample
   cannot exclude it.**
 
 **Interpretation.**
@@ -802,12 +845,15 @@ silently applied.
   leaves a purely motor asymmetry inside `dt_ms`. Each trial is now corrected
   with the baseline for the hand that answered it (a hand with no usable RT
   response falls back to the pooled value). Effect: the left-minus-right
-  asymmetry in decision time drops from −22.8 ms (p = .023) to −8.9 ms
-  (p = .39), while **every other result is unchanged** — Slow − Fast
-  +127.4 → +127.1 ms with identical t and p, class contrasts within 0.6 ms,
-  per-class stretch factors within 0.004, time-on-task slopes within 0.1.
-  This also shifts the commitment time that `logged_spd` is read at, by
-  10.4 ms on average; SPD is re-derived accordingly (F06).
+  asymmetry in decision time drops from −22.8 ms (p = .023) to −9.8 ms
+  (p = .354), while **every conclusion elsewhere is unchanged** — verified
+  by regenerating the full battery: Slow − Fast +127.4 → +127.1 ms with
+  identical t and p; class contrasts within 3 ms; per-class stretch factors
+  within 0.001; time-on-task slopes within 0.1; and F06's equivalence bound
+  on ambiguous-vs-misleading SPD moves from 0.019 to 0.020 SPD, still
+  passing TOST at dz = ±0.4 and failing at ±0.3. The commitment time that
+  `logged_spd` is read at shifts by 10.4 ms on average, which is why SPD
+  had to be re-derived rather than assumed safe.
 - **Trial classification uses the correct-target design frame**, not the
   recorded chosen-target `nProb`. This is the deviation that reverses the
   ambiguous-vs-misleading result; mechanism and evidence in

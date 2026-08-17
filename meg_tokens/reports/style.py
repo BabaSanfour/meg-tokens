@@ -58,6 +58,30 @@ MODEL_LABELS: Final[Mapping[str, str]] = {
 # ddm (#e87ba4) is 2.62:1 on white -> relief rule applies here too: always a
 # direct label or legend text, never colour alone (same as CLASS_COLORS.easy).
 
+QC_ORDER: Final[tuple[str, ...]] = ("extreme_dt", "lapse", "anticipation")
+QC_COLORS: Final[Mapping[str, str]] = {
+    "extreme_dt": "#0b0b0b",  # ink
+    "lapse": "#b8860b",  # goldenrod
+    "anticipation": "#b7dce8",  # powder blue
+}
+QC_LABELS: Final[Mapping[str, str]] = {
+    "extreme_dt": "extreme DT",
+    "lapse": "lapse",
+    "anticipation": "anticipation",
+}
+# A fourth scope, for the data-quality census. The saturated hues are all
+# spoken for -- aqua/blue/orange by CLASS, red/violet by CONDITION,
+# green/magenta by MODEL -- and the one free neutral (#9a9992) is already
+# 'unclassified', which shares F13's legend with these. So this scope
+# separates primarily on lightness: solid ink, dark goldenrod, and a pale
+# powder blue. Goldenrod sits at hue 43 deg against
+# misleading's 15 deg and is darker than it, so the two do not trade even
+# in the shared legend. Powder blue adds a cool/warm distinction from lapse,
+# while its much higher lightness keeps it apart from the blue and aqua class
+# fills. Counts here are frequently 1-3 trials, i.e. a bar a few pixels wide,
+# which is why lightness carries the distinction rather than relying on hue
+# alone.
+
 OBSERVED: Final[str] = "#52514e"  # observed data behind model fits
 SUBJECT_LINE: Final[str] = "#9a9992"  # per-subject traces
 SUBJECT_ALPHA: Final[float] = 0.30
