@@ -137,11 +137,13 @@ REGISTRY: tuple[FigureSpec, ...] = (
     ),
     # --- Evidence and criterion (behavior/analyses/evidence.py) ---
     FigureSpec(
-        key="criteriondecline-tokens", analysis="criteriondecline", view="tokens",
-        title="Evidence at decision vs. tokens observed",
+        key="criteriondecline-sumloglr",
+        analysis="criteriondecline",
+        view="sumloglr",
+        title="Chosen-target evidence criterion vs. decision time",
         kind="fitted_criterion", groups=("evidence",),
         requires=("criteriondecline", "criteriondeclinestats"),
-        builder=evidence.build_criteriondecline_tokens,
+        builder=evidence.build_criteriondecline_sumloglr,
     ),
     FigureSpec(
         key="urgency-decisiontime", analysis="urgency", view="decisiontime",

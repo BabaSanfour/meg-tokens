@@ -28,6 +28,7 @@ from meg_tokens.behavior.math.inference import (
     one_sample_statistics,
     paired_subject_statistics,
 )
+from meg_tokens.behavior.math.evidence import FIRST_ORDER_TOKEN_LOG_LR
 from meg_tokens.behavior.schema import (
     parse_token_directions,
     validate_boolean_values,
@@ -43,6 +44,9 @@ DEFAULT_EVIDENCE_PREDICTORS: Final[dict[str, float]] = {
     "sp_design_early": 0.5,
     "sum_log_lr_design_early": 0.0,
 }
+FIRST_ORDER_CRITERION_RESPONSE: Final[str] = (
+    "chosen_sum_log_lr_first_order_at_decision"
+)
 
 INVALID_LOGIT_WARNINGS: Final[tuple[type[Warning], ...]] = (
     ConvergenceWarning,
@@ -87,6 +91,7 @@ def criterion_decline(
     *,
     predictor: str = "decision_token_index",
     response: str = "logged_spd",
+    require_design_time_alignment: bool = False,
 ) -> pd.DataFrame:
     """Fit each subject's evidence criterion as a function of trial duration.
 
@@ -106,6 +111,10 @@ def criterion_decline(
         seconds before fitting; other predictors retain their stored units.
     response
         Numeric evidence-at-decision feature to model.
+    require_design_time_alignment
+        If ``True``, retain only trials whose complete 15-row token log makes
+        the designed token sequence and commitment index directly alignable.
+        This is required for first-order SumLogLR at a particular token time.
 
     Returns
     -------
@@ -124,6 +133,13 @@ def criterion_decline(
     imputation, outlier removal, or alternative model is applied.
     """
     trials = task_trials(features)
+    if require_design_time_alignment:
+        require_columns(trials, ["design_time_alignment_valid"])
+        validate_boolean_values(
+            trials["design_time_alignment_valid"],
+            field="design_time_alignment_valid",
+        )
+        trials = trials.loc[trials["design_time_alignment_valid"].astype(bool)]
     require_columns(trials, [predictor, response, "subject", "condition"])
     scale = 1000.0 if predictor == "dt_ms" else 1.0
     rows = []
@@ -223,6 +239,7 @@ def evidence_at_decision_responses(
     *,
     predictor: str,
     responses: Sequence[str] = ("logged_spd", "logged_spd_log_odds"),
+    require_design_time_alignment: bool = False,
 ) -> pd.DataFrame:
     """Fit the criterion against one predictor on every evidence scale.
 
@@ -239,6 +256,9 @@ def evidence_at_decision_responses(
     responses
         Evidence columns to fit independently. By default these are logged
         success probability and its natural-log-odds transform.
+    require_design_time_alignment
+        Forwarded to :func:`criterion_decline`; use it for responses derived
+        from the designed token present at the commitment index.
 
     Returns
     -------
@@ -254,10 +274,66 @@ def evidence_at_decision_responses(
     """
     return pd.concat(
         [
-            criterion_decline(features, predictor=predictor, response=response)
+            criterion_decline(
+                features,
+                predictor=predictor,
+                response=response,
+                require_design_time_alignment=require_design_time_alignment,
+            )
             for response in responses
         ],
         ignore_index=True,
+    )
+
+
+def first_order_chosen_sum_log_lr(features: pd.DataFrame) -> pd.Series:
+    """Return Cisek et al. (2009) first-order chosen-target SumLogLR.
+
+    The canonical trial-feature table stores token lead against the correct
+    target so predictors remain response-independent. Criterion estimation is
+    the deliberate exception: Cisek et al. (2009) define evidence relative to
+    the selected target. Correct choices preserve the stored sign; errors
+    reverse it. The fixed first-order log likelihood per token then converts
+    token lead to SumLogLR without the exact posterior's shrinking-horizon
+    transformation.
+    """
+    require_columns(features, ["token_lead_at_decision", "isCorrect"])
+    validate_boolean_values(
+        features["isCorrect"], field="isCorrect", optional=True
+    )
+    lead = pd.to_numeric(features["token_lead_at_decision"], errors="coerce")
+    correct = features["isCorrect"].astype("boolean")
+    sign = pd.Series(np.nan, index=features.index, dtype=float)
+    sign.loc[correct == True] = 1.0  # noqa: E712 - nullable Boolean comparison
+    sign.loc[correct == False] = -1.0  # noqa: E712
+    return lead * sign * FIRST_ORDER_TOKEN_LOG_LR
+
+
+def first_order_criterion_decline(
+    features: pd.DataFrame,
+    *,
+    predictor: str = "dt_ms",
+) -> pd.DataFrame:
+    """Fit Cisek et al. (2009) SumLogLR against continuous decision time.
+
+    Trials without a complete token log are excluded because the token present
+    at commitment cannot be aligned unambiguously. Commitments before the first
+    token are also excluded: their zero SumLogLR is an anticipation, not an
+    evidence criterion. The default fit is trial-level OLS against decision
+    time in seconds; any 200-ms binning belongs only to the report display.
+    """
+    require_columns(features, ["decision_token_index"])
+    decision_token = pd.to_numeric(features["decision_token_index"], errors="coerce")
+    post_first_token = decision_token.gt(0).fillna(False)
+    enriched = features.copy()
+    enriched[FIRST_ORDER_CRITERION_RESPONSE] = first_order_chosen_sum_log_lr(
+        enriched
+    )
+    return criterion_decline(
+        enriched.loc[post_first_token],
+        predictor=predictor,
+        response=FIRST_ORDER_CRITERION_RESPONSE,
+        require_design_time_alignment=True,
     )
 
 

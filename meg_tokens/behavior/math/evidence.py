@@ -2,15 +2,39 @@
 
 from __future__ import annotations
 
-from math import log
+from math import comb, log
 from typing import Final, Sequence
 
 import numpy as np
 
-from meg_tokens.behavior.math.probability import success_probability_profile
+from meg_tokens.behavior.math.probability import (
+    TOTAL_TOKENS,
+    WINNING_TOKENS,
+    success_probability_profile,
+)
 
 
 MAX_LOG_ODDS: Final[float] = log(255.0)
+# Cisek, Puskas, and El-Murr (2009), Eq. 22
+# https://doi.org/10.1523/JNEUROSCI.1844-09.2009
+#
+# Conditional on the selected target eventually winning a 15-token majority,
+# a particular token points toward it with probability
+# P[Binomial(14, .5) >= 7] = 0.604736328125. The complementary likelihood
+# conditional on the unselected target winning is 0.395263671875. Equation 22
+# treats successive token events as independent and sums their fixed log
+# likelihood ratios.
+_FIRST_ORDER_SELECTED_EVENT_LIKELIHOOD: Final[float] = sum(
+    comb(TOTAL_TOKENS - 1, selected_remaining)
+    for selected_remaining in range(WINNING_TOKENS - 1, TOTAL_TOKENS)
+) / (2 ** (TOTAL_TOKENS - 1))
+_FIRST_ORDER_UNSELECTED_EVENT_LIKELIHOOD: Final[float] = (
+    1.0 - _FIRST_ORDER_SELECTED_EVENT_LIKELIHOOD
+)
+FIRST_ORDER_TOKEN_LOG_LR: Final[float] = log(
+    _FIRST_ORDER_SELECTED_EVENT_LIKELIHOOD
+    / _FIRST_ORDER_UNSELECTED_EVENT_LIKELIHOOD
+)
 
 
 def _validated_directions(directions: Sequence[int]) -> list[int]:
@@ -137,6 +161,25 @@ def sum_log_lr_profile(
         target=target,
     )
     return [log_posterior_odds(value)[0] for value in profile]
+
+
+def first_order_sum_log_lr_profile(
+    directions: Sequence[int],
+    *,
+    target: int,
+) -> list[float]:
+    """Compute the first-order SumLogLR used by Cisek et al. (2009).
+
+    Unlike :func:`sum_log_lr_profile`, this is not the exact posterior odds
+    under the shrinking token horizon. It assigns a fixed log likelihood ratio
+    to every token movement, making the result proportional to the running
+    token-count difference in favor of ``target``. This is the sensory-evidence
+    scale used for the canonical decreasing-criterion analysis.
+    """
+    return [
+        FIRST_ORDER_TOKEN_LOG_LR * lead
+        for lead in token_lead_profile(directions, target=target)
+    ]
 
 
 def evidence_after_tokens(

@@ -1,13 +1,15 @@
 """Tests for meg_tokens.behavior.math.evidence."""
 
-from math import log
+from math import comb, log
 
 import numpy as np
 import pytest
 
 from meg_tokens.behavior.math.evidence import (
+    FIRST_ORDER_TOKEN_LOG_LR,
     MAX_LOG_ODDS,
     evidence_after_tokens,
+    first_order_sum_log_lr_profile,
     log_posterior_odds,
     sum_log_lr_profile,
     token_lead_profile,
@@ -90,6 +92,18 @@ def test_odds_reject_values_outside_the_probability_scale(value):
 # --- cumulative log likelihood ratio ------------------------------------------
 
 
+def test_first_order_token_log_lr_follows_the_15_token_majority_design():
+    selected_event_likelihood = sum(
+        comb(14, selected_remaining)
+        for selected_remaining in range(7, 15)
+    ) / (2**14)
+
+    assert selected_event_likelihood == pytest.approx(0.604736328125)
+    assert FIRST_ORDER_TOKEN_LOG_LR == pytest.approx(
+        log(selected_event_likelihood / (1.0 - selected_event_likelihood))
+    )
+
+
 def test_the_evidence_profile_grows_with_the_target_majority():
     profile = sum_log_lr_profile([1] * 8 + [2] * 7, target=1)
 
@@ -114,6 +128,24 @@ def test_the_evidence_profile_is_finite_throughout():
 def test_the_evidence_profile_rejects_a_serialized_direction_string():
     with pytest.raises(TypeError, match="sequence of integer"):
         sum_log_lr_profile("1121", target=1)
+
+
+def test_first_order_sum_log_lr_is_a_fixed_multiple_of_token_lead():
+    profile = first_order_sum_log_lr_profile([1, 2, 1, 1], target=1)
+
+    assert profile == pytest.approx([
+        FIRST_ORDER_TOKEN_LOG_LR,
+        0.0,
+        FIRST_ORDER_TOKEN_LOG_LR,
+        2 * FIRST_ORDER_TOKEN_LOG_LR,
+    ])
+
+
+def test_first_order_sum_log_lr_does_not_saturate_with_the_horizon():
+    profile = first_order_sum_log_lr_profile([1] * 8 + [2] * 7, target=1)
+
+    assert profile[7] == pytest.approx(8 * FIRST_ORDER_TOKEN_LOG_LR)
+    assert profile[-1] == pytest.approx(FIRST_ORDER_TOKEN_LOG_LR)
 
 
 # --- selecting evidence at a token count --------------------------------------

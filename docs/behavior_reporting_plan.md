@@ -254,60 +254,21 @@ alone, zoomed to 500-2000 ms.
 
 ### 3.4 Evidence and criterion (`behavior/analyses/evidence.py`)
 
-#### F14 `criteriondecline-tokens` — evidence at decision vs. tokens observed
-
-*Reads*
-- `criteriondecline`: `subject`, `condition`, `predictor ==
-  "decision_token_index"`, `response in {logged_spd, logged_spd_log_odds}`,
-  `n_trials`, `intercept`, `slope`, `slope_se`, `converged`.
-- `criteriondeclinestats`: `term in {intercept, slope}` × `response` ×
-  `condition in {all, fast, slow, fast_vs_slow}`.
-- `trialfeatures`: `decision_token_index`, `logged_spd`,
-  `logged_spd_log_odds`, `condition`, `primary_analysis_eligible` — for the
-  binned observed overlay.
-
-*Layout* — 2 × 2. Rows = response scale (probability, log odds).
-
-- **Left column:** per-subject fitted lines (`intercept + slope · x`) drawn
-  over the observed range of `decision_token_index` (0–15) in faint grey, the
-  group mean line in ink, and binned observed means (one point per integer
-  token index, ± SEM across subjects) as markers.
-- **Right column:** `slope` strip plot vs. zero at three x positions (all,
-  fast, slow) with Fast/Slow subject connectors; group mean ± 95 % CI.
-  Non-converged subjects excluded, retained n printed.
-
-*Chart-type justification.* Fitted lines reconstructed from persisted
-`intercept`/`slope` are exactly the model that was tested; overlaying binned
-observed means is the standard check that the linear fit is not the whole
-story. Drawing per-subject lines rather than a single group regression makes
-the two-stage inference visible.
-
-*Annotation.* Right column: `+0.100 log odds per token, t(31) = 10.80,
-p < .001` (log-odds row, `condition == "all"`), `+0.0049 per token,
-t = 3.67, p < .001` (probability row), and the Fast-vs-Slow paired contrast
-(t = −3.25, p = .003). **Caption text must carry the discretization caveat**
-from `docs/behavior_roadmap_results.md` (B1–B2): SP moves in larger steps at
-later jumps, so part of the positive slope is overshoot, not a rising
-criterion. Put this string in the figure caption and in the sidecar under
-`"caveat"`; a positive slope drawn without it invites the opposite
-interpretation of the urgency account.
-
 #### F15 `urgency-decisiontime` — evidence at decision vs. decision time
 
-Identical construction to F14, reading the `urgency` and `urgencystats`
+Uses a separate 2 × 2 exact-posterior construction, reading the `urgency` and
+`urgencystats`
 derivatives (`predictor == "dt_ms"`, same column set; note `urgencystats`
 carries `analysis == "criterion_decline"` — filter on `predictor`, not
 `analysis`). x-axis is decision time in seconds; the observed overlay is
 binned into deciles of `dt_ms`.
 
-*Annotation.* `+0.451 log odds per second, t(31) = 9.88, p < .001`; Fast
-+0.314 vs. Slow +0.498, paired t = −2.68, p = .012.
+*Annotation.* `+0.449 log odds per second, t(31) = 9.94, p < .001`; Fast
++0.319 vs. Slow +0.486, paired t = −2.36, p = .025.
 
-*Why both F14 and F15.* They are two parameterisations of the same criterion
-(tokens vs. seconds) and their subject-level slopes correlate at r = 0.98
-(F23). Keeping them as separate figures — rather than one merged panel —
-matches how the derivatives are written and lets the redundancy be the finding
-in F23 instead of an assumption in the figure.
+*Audit requirement.* Recorded exact posterior evidence changes its mapping as
+the token horizon shrinks. This figure therefore needs a separate
+discretization/overshoot audit before interpretation; see the session handoff.
 
 #### F16 `reversecorrelation-kernel` — psychophysical kernel
 
@@ -360,9 +321,9 @@ visible; plotting against bin index would linearise it and misrepresent the
 decline.
 
 *Annotation.* `slope = −0.031 accuracy per bin, t(31) = −11.07, p < .001`,
-plus `Fast −0.033, Slow −0.033` on one line. Caption: slow decisions are not
-more accurate — the signature the urgency account predicts, and the measure
-that disagrees with F14's slope sign.
+  plus `Fast −0.033, Slow −0.033` on one line. Caption: slow decisions are not
+more accurate — an urgency-compatible signature that still requires formal
+mechanistic adjudication.
 
 #### F18 `continuousevidence-effects` — continuous early evidence
 
@@ -385,7 +346,8 @@ group mean. Row 2: the fitted coefficients — (C) `dt_slope_ms_per_unit` and
 (D) `accuracy_log_odds_per_unit` as strips vs. zero at three x positions with
 Fast/Slow connectors.
 
-*Chart-type justification.* Same "data then coefficient" principle as F14. The scientific value of this analysis is that it agrees with the
+*Chart-type justification.* The figure follows the shared "data then
+coefficient" principle. Its scientific value is that it agrees with the
 three-class reduction over *all* trials including the 43 % unclassified, so
 the observed panels must be drawn over every task trial — state that
 explicitly in the panel subtitle, since it is the one place in the figure set
@@ -531,7 +493,8 @@ cohort is a serious misread.
 
 *Layout* — lower-triangular heatmap over the seven measures
 (`mean_dt_ms`, `sat_adjustment_ms`, `urgency_slope_per_second`,
-`criterion_slope_per_token`, `accuracy_log_odds_per_unit`, `percent_correct`,
+`criterion_slope_sum_log_lr_per_second`, `accuracy_log_odds_per_unit`,
+`percent_correct`,
 `lapse_rate`), diverging blue↔grey↔red ramp centred on r = 0, `pearson_r`
 printed in each cell, cells with `pearson_p < .05` outlined.
 
@@ -547,21 +510,25 @@ asterisks — outlining plus the stated convention is the honest treatment.
 #### F24 `individualprofile-scatter` — the correlations that matter
 
 *Reads* `individualprofile` (`subject`, `mean_dt_ms`, `percent_correct`,
-`sat_adjustment_ms`, `urgency_slope_per_second`, `criterion_slope_per_token`,
+`sat_adjustment_ms`, `urgency_slope_per_second`,
+`criterion_slope_sum_log_lr_per_second`,
 `accuracy_log_odds_per_unit`, `dt_slope_ms_per_unit`, `lapse_rate`) for the
 points, and `individualcorrelations` for the annotated `pearson_r`/`pearson_p`.
 
 *Layout* — 2 × 3 small multiples: `mean_dt_ms` against
-`accuracy_log_odds_per_unit` (r = −0.81), `criterion_slope_per_token`
-(−0.52), `urgency_slope_per_second` (−0.50) and `percent_correct` (+0.46);
-`urgency_slope_per_second` against `criterion_slope_per_token` (r = 0.98, the
-redundancy panel); and `sat_adjustment_ms` against `mean_dt_ms` as the
+`accuracy_log_odds_per_unit` (r = −0.81),
+`criterion_slope_sum_log_lr_per_second` (−0.37),
+`urgency_slope_per_second` (−0.50) and `percent_correct` (+0.46);
+`urgency_slope_per_second` against
+`criterion_slope_sum_log_lr_per_second` (r = 0.89, the
+cross-measure convergence panel); and `sat_adjustment_ms` against `mean_dt_ms` as the
 representative null. Each: points + OLS line + 95 % CI band.
 
 *Chart-type justification.* At n = 32 a correlation matrix alone cannot show
 whether an r is outlier-driven; the scatter grid is the required companion,
-not a duplicate. The r = 0.98 panel is included specifically to make the
-near-redundancy of the two urgency predictors visible rather than asserted.
+not a duplicate. The r = .89 panel asks whether the first-order
+criterion and exact-posterior time diagnostic converge across subjects while
+remaining explicitly different scales.
 
 *Annotation.* `r = …, p = …, n = 32` per panel, read from
 `individualcorrelations`. The OLS line and band are display-only; the reported
@@ -576,7 +543,8 @@ r is never recomputed.
 incommensurate and must never share an axis: (i) milliseconds
 (`decision_time_easy_ms`, `_ambiguous_ms`, `_misleading_ms`);
 (ii) probability (`success_probability_at_decision_*`, three rows);
-(iii) log odds per token (`criterion_slope_log_odds_per_token`);
+(iii) first-order SumLogLR per second
+(`criterion_slope_sum_log_lr_per_second`);
 (iv) BIC (`urgency_minus_integrator_bic`);
 (v) criterion-seconds (`urgency_scale_criterion_seconds`,
 `urgency_scale_fast_minus_slow`). Each row: `mean` with a 95 % CI computed as
@@ -615,7 +583,7 @@ Revisit once the Tier C5 join lands and a derivative owns the statistic.
 
 | Family / derivative | Disposition |
 | :--- | :--- |
-| `trialfeatures` | Not a result. It is the trial-level layer behind F04, F05, F10, F14, F15, F18. |
+| `trialfeatures` | Not a result. It is the trial-level layer behind the distribution, drift, criterion, posterior, and continuous-evidence figures. |
 | `groupstats` | Not a figure of its own; its rows are the annotations on F04, F05, F06. Drawing a table as a chart adds nothing. |
 | `extremedttrials` | Summarized as subject counts in F13 panel E; the per-trial derivative needs no second figure. |
 | `ssmtrialpredictions` | **No figure.** It is the trial-level model-derived regressor for the Tier C5 MEG join (`criterion_at_decision`, `decision_variable_at_decision`, `predicted_accuracy`), not a behavioural result. Revisit when the source-space features it joins to exist. |
@@ -639,7 +607,7 @@ Revisit once the Tier C5 join lands and a derivative owns the statistic.
 | `meg_tokens/reports/behavior/_tables.py` | `BehaviorTableSet` — derivative loader/cache with contract-shaped errors. |
 | `meg_tokens/reports/behavior/distributions.py` | F04, F05, F06. |
 | `meg_tokens/reports/behavior/design.py` | F08–F11 and F13 (F12 was folded into F13). |
-| `meg_tokens/reports/behavior/evidence.py` | F14, F15, F16, F17, F18. |
+| `meg_tokens/reports/behavior/evidence.py` | Criterion, posterior, kernel, conditional-accuracy, and continuous-evidence figures. |
 | `meg_tokens/reports/behavior/sequential.py` | F19, F20. |
 | `meg_tokens/reports/behavior/modeling.py` | F01, F02, F03, F21, F22. |
 | `meg_tokens/reports/behavior/individual.py` | F23, F24, F25, F26. |
@@ -1226,9 +1194,10 @@ F03, F06 (`distributions.py`); F08–F13 (`design.py`). Adds the
 
 ### Phase 3 — evidence and criterion
 
-F14–F18 (`evidence.py`). Adds the `evidence` group. Largest phase; the
-per-subject-fitted-line + binned-observed construction is shared by F14, F15
-and F18, so build F14 first and reuse.
+The evidence and criterion figures (`evidence.py`) add the `evidence` group.
+The exact-posterior diagnostic requires a separate horizon/discretization
+audit, while the later figures reuse only the broader data-then-coefficient
+principle.
 
 ### Phase 4 — sequential effects
 

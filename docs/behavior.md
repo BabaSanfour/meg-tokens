@@ -49,15 +49,18 @@ never truncates the rest of the output.
 
 ### `behavior/analyses/evidence.py`
 
-Evidence is `SumLogLR`, computed in `behavior/math/evidence.py` and
-`behavior/features.py` and written into the trial-feature table: the exact
-posterior from Equation 1, so with equal priors the cumulative
-log-likelihood ratio is its log posterior odds. Certainty (SP exactly 0 or
-1) is reported at ±log 255 rather than propagated as an infinity that would
-drop the most decisive trials from every regression.
+Two evidence scales are kept distinct. `sum_log_lr_at_decision` is the exact
+posterior log odds from Equation 1; certainty is reported at ±log 255 rather
+than propagated as infinity. The criterion analysis instead follows Cisek et
+al. (2009): first-order chosen-target `SumLogLR`, a fixed log-likelihood
+increment per token and therefore proportional to the selected-minus-
+unselected token count. It is derived from `token_lead_at_decision` and
+`isCorrect` in `behavior/analyses/evidence.py`; it is not silently equated
+with the horizon-dependent exact posterior.
 
-- `criteriondecline` — evidence at decision against the number of tokens
-  observed, fitted on both the probability and the log-odds scale.
+- `criteriondecline` — first-order chosen-target SumLogLR at commitment
+  against continuous decision time, restricted to complete, alignable 15-row
+  logs and excluding pre-first-token anticipations.
 - `reversecorrelation` — per-subject logistic weights for each of the
   first eight jumps, tokens after commitment coded as unseen, plus a
   model-free kernel and a Fast/Slow comparison per jump.
@@ -127,7 +130,7 @@ requires `--neural-metrics`.
 | `timeontask-drift` | `timeontaskstats` | Session and within-block drift |
 | `conditionorder-balance` | `conditionorder`, `conditionorderstats` | First-block counterbalancing (between-subject) |
 | `summary-cohort` | `summary`, `lapses`, `extremedt` | Cohort composition and data quality |
-| `criteriondecline-tokens` | `criteriondecline`, `criteriondeclinestats` | Evidence at decision vs. tokens observed |
+| `criteriondecline-sumloglr` | `criteriondecline`, `criteriondeclinestats` | First-order chosen-target SumLogLR vs. decision time |
 | `urgency-decisiontime` | `urgency`, `urgencystats` | Evidence at decision vs. decision time |
 | `reversecorrelation-kernel` | `reversecorrelation`, `reversecorrelationstats` | Psychophysical kernel by token jump |
 | `conditionalaccuracy-caf` | `conditionalaccuracy`, `conditionalaccuracystats` | Conditional accuracy function |
@@ -799,6 +802,90 @@ Figure: `dtdistribution-class` (F05).
 
 Figure: `spdcumulative-class` (F06).
 
+### The chosen-target evidence criterion declines across decision time
+
+**Method.** The criterion is the first-order SumLogLR defined by Cisek et al.
+(2009, Eq. 22), not the exact success-probability transform. Under the
+15-token majority rule, a token pointing toward the target that ultimately
+wins has likelihood 0.604736 and one pointing toward the losing target has
+likelihood 0.395264. Each token toward the selected target therefore adds
+`log(0.604736 / 0.395264) = 0.425239`, and each token toward the unselected
+target subtracts it. The resulting SumLogLR is proportional to the
+chosen-target token lead. Following the published analysis, a separate
+trial-level OLS is fitted for each subject against continuous decision time in
+seconds; 200-ms bins are display-only. Fits use 10,849 trials: 5,363 primary
+trials with anomalous 14-row logs are excluded because the token present at
+commitment cannot be aligned unambiguously, and 112 otherwise alignable
+pre-first-token anticipations are excluded because no sensory evidence had
+yet appeared.
+
+| Condition | Mean slope (SumLogLR/s) | SEM | t(31) | p | dz |
+| :--- | ---: | ---: | ---: | ---: | ---: |
+| All | −0.1330 | 0.0286 | −4.66 | 5.75e−5 | −0.82 |
+| Fast | −0.1114 | 0.0316 | −3.53 | .0013 | −0.62 |
+| Slow | −0.1523 | 0.0410 | −3.71 | .00081 | −0.66 |
+
+Fast − Slow is +0.0409 SumLogLR/s (`t(31)=1.07`, `p=.293`,
+`dz=0.19`). Thus, the pooled decline is reliable, but there is no evidence
+that its rate differs between Fast and Slow blocks.
+
+**Sensitivity.** Including the 112 token-0 anticipations leaves the pooled
+decline (`−0.1221`, `p=.00044`) and null Fast−Slow contrast (`p=.192`)
+unchanged in interpretation. Restricting the fit to the 3-s token-transfer
+horizon also preserves the pooled decline (`−0.1393`, `p=.00015`), but makes
+Fast−Slow nominally significant (`+0.0666`, `p=.028`; at 2.8 s, `p=.011`).
+Because Cisek et al. did not state a post-horizon exclusion and this project's
+primary behavior policy flags rather than silently removes extreme decision
+times, the no-cutoff result remains primary. The condition difference is
+therefore cutoff-sensitive and is not a main F14 claim. Panel A extends
+through 4.2 s, the last 200-ms bin represented by at least five subjects, and
+states that the fit retains all eligible trials; 14 later trials are not
+displayed. It shows subject-balanced observed means ± SEM alongside the grey
+subject fits and overall/Fast/Slow mean fits; its limits include every SEM
+whisker. Panel B shows the paired Fast/Slow subject slopes with group mean ±
+95% CI. Its display stops at −0.5; the single lower Slow estimate is shown by
+a hollow purple boundary point with its exact slope printed to the left.
+
+**How to read the two panels scientifically.** Panel A asks how much evidence
+people require before committing as decision time passes. Each observed point
+is the mean chosen-target evidence for decisions made in that 200-ms time
+window; its whisker is the SEM across subject-level bin means. Each faint grey
+line is one subject's overall linear fit. The black, red, and violet lines are
+the means of the subject-level All, Fast, and Slow fits, respectively. Their
+downward direction means that later decisions are made with less evidence in
+favor of the ultimately selected target. The overall slope of −0.133
+SumLogLR/s is reliably below zero, so the population-level criterion declines
+with time. This is the behavioral pattern expected when growing urgency lets
+a person commit with progressively weaker sensory support. The fit is an
+overall summary, however: the early binned means are visibly nonlinear, so it
+does not claim that the criterion drops by an identical amount at every token.
+
+Panel B asks a different question: does the *rate* of that decline change
+between Fast and Slow blocks? Each connecting line joins one subject's Fast
+and Slow slopes; the large black markers and whiskers are the group means and
+95% CIs. Both group means are negative, but the subject-level changes point in
+both directions. The mean Fast-minus-Slow difference is only +0.041
+SumLogLR/s and is not significant (`p=.293`). We therefore have evidence for
+an overall time-dependent decline, but not for a reliable Fast/Slow difference
+in its rate. This null condition contrast is also sensitive to an arbitrary
+3-s cutoff, so it should not be promoted to a mechanistic finding.
+
+**Interpretation.** Later commitments are made with less chosen-target
+sensory evidence on the first-order scale, the canonical behavioral signature
+of a growing urgency signal. The earliest observed 200-ms means are nonlinear
+before the later decline, so the fitted line is an overall policy summary, not
+a claim that the bound falls monotonically at every jump. This model-free
+diagnostic is compatible with urgency gating but does not distinguish it from
+other adaptive or collapsing-bound policies; that requires the sequential-
+sampling comparison.
+
+Figure: `criteriondecline-sumloglr` (F14).
+
+This criterion analysis was not reported in the 2022 dataset preprint. F14 is
+a replication/extension of Cisek et al. (2009), whereas the preprint
+comparison below covers its reported decision-time, error, and exact-SPD
+analyses.
+
 ## Preprint Replication
 
 Current values use all 32 subjects, not the preprint's N=28 (subject
@@ -867,6 +954,7 @@ silently applied.
   [10.1101/2022.06.14.494674](https://doi.org/10.1101/2022.06.14.494674).
 - Cisek P., Puskas G.A., El-Murr S. (2009). *Decisions in changing conditions:
   the urgency-gating model.* J Neurosci 29(37):11560–11571.
+  [10.1523/JNEUROSCI.1844-09.2009](https://doi.org/10.1523/JNEUROSCI.1844-09.2009).
 - Thura D., Beauregard-Racine J., Fradet C.-W., Cisek P. (2012). *Decision
   making by urgency gating: theory and experimental support.* J Neurophysiol
   108:2912–2930.

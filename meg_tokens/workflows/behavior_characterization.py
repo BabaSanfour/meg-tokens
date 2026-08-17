@@ -43,6 +43,7 @@ from meg_tokens.behavior.analyses.evidence import (
     continuous_evidence_statistics,
     criterion_decline_statistics,
     evidence_at_decision_responses,
+    first_order_criterion_decline,
     reverse_correlation,
     reverse_correlation_statistics,
 )
@@ -337,9 +338,7 @@ def analyze_behavior_characterization(
     order = condition_order_effects(features)
     lapses = lapse_summary(features)
     extreme_counts, extreme_flagged = extreme_decision_times(features)
-    criterion = evidence_at_decision_responses(
-        features, predictor="decision_token_index"
-    )
+    criterion = first_order_criterion_decline(features)
     urgency = evidence_at_decision_responses(features, predictor="dt_ms")
     kernels = reverse_correlation(features)
     accuracy_functions = conditional_accuracy_functions(features)

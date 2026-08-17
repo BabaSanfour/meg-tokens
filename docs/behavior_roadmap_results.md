@@ -58,37 +58,20 @@ Group means of the per-subject statistics (ms):
 | Fast | 1186 | 677 | 1127 | 1768 | 0.89 |
 | Slow | 1313 | 756 | 1255 | 1916 | 1.05 |
 
-## B1–B2, C3 — Evidence, criterion, and urgency (`criteriondecline`, `urgency`)
-
-Slope of evidence at decision, fitted per subject on both scales:
+## C3 — Exact-posterior urgency diagnostic (`urgency`)
 
 | Predictor | Scale | Condition | Slope | t (df=31) | p |
 |---|---|---|---:|---:|---:|
-| tokens observed | probability | all | +0.0049 | 3.67 | 9e-4 |
-| tokens observed | log odds | all | +0.100 | 10.80 | 4.9e-12 |
-| tokens observed | log odds | Fast | +0.072 | 6.30 | 5.2e-7 |
-| tokens observed | log odds | Slow | +0.113 | 9.03 | 3.5e-10 |
-| decision time (s) | log odds | all | +0.451 | 9.88 | 4.3e-11 |
-| decision time (s) | log odds | Fast | +0.314 | 5.26 | 1.0e-5 |
-| decision time (s) | log odds | Slow | +0.498 | 7.86 | 7.1e-9 |
+| decision time (s) | exact posterior log odds | all | +0.449 | 9.94 | 3.7e-11 |
+| decision time (s) | exact posterior log odds | Fast | +0.319 | 5.22 | 1.1e-5 |
+| decision time (s) | exact posterior log odds | Slow | +0.486 | 7.76 | 9.3e-9 |
 
-The slope is **positive**, i.e. later commitments happen at *stronger*
-evidence, and it is steeper in Slow than in Fast (log-odds per token
-`t=-3.25, p=0.003`; per second `t=-2.68, p=0.012`). That is the opposite sign
-from the declining accuracy criterion the urgency-gating account predicts, and
-the difference deserves care before it is interpreted:
-
-- Success probability moves in **larger steps at later jumps** (the remaining
-  token count shrinks), so a subject holding a fixed criterion overshoots it
-  more the later they commit. Part of the positive slope is this
-  discretization, not a rising criterion.
-- The conditional accuracy function (B4 below) falls steeply with DT, which is
-  the signature the same account predicts. The two measures disagree here, and
-  the criterion slope is the one with the known confound.
-
-A regression that removes the overshoot — for example, fitting the evidence
-available at the *previous* jump, or fitting against a model-derived bound —
-is the natural next step and is not implemented.
+The decision-time analysis remains on the recorded exact-posterior scale and
+is therefore not a simple criterion measure. Exact
+posterior evidence changes its mapping as the horizon shrinks; its positive
+slope must not be compared directly with first-order SumLogLR. F15 retains
+that result pending its own audit. Fast − Slow on the exact-posterior
+log-odds-per-second scale is −0.167 (`t=-2.36`, `p=.025`).
 
 ## B3 — Reverse correlation (`reversecorrelation`)
 
@@ -193,18 +176,19 @@ Across the 32 subjects (Pearson r, uncorrected):
 | Measure A | Measure B | r | p |
 |---|---|---:|---:|
 | mean DT | evidence sensitivity (accuracy log odds) | −0.81 | 1.6e-8 |
-| mean DT | criterion slope per token | −0.52 | 0.002 |
+| mean DT | first-order criterion slope per second | −0.37 | .036 |
 | mean DT | urgency slope per second | −0.50 | 0.004 |
 | mean DT | percent correct | +0.46 | 0.008 |
 | SAT adjustment (Slow − Fast) | — | no correlation reaches p<0.05 | |
-| urgency slope | criterion slope | +0.98 | 1.3e-23 |
+| exact-posterior time slope | first-order criterion | +0.89 | 1.43e-11 |
 
 The dominant axis is a single speed factor: slower subjects are more accurate,
 show flatter criterion and urgency slopes, and are *less* sensitive to early
-evidence per unit. The urgency/criterion correlation of 0.98 confirms the two
-predictors are near-redundant, as expected — decision time and tokens observed
-are nearly the same clock. The Fast/Slow adjustment itself is not related to
-any other behavioral measure, so it is an independent trait in this cohort.
+evidence per unit. The two slope diagnostics strongly converge across subjects
+(`r=.89`) but are not interchangeable: one uses first-order chosen-target
+SumLogLR, the other exact posterior evidence.
+The Fast/Slow adjustment itself is not related to any other behavioral
+measure, so it is an independent trait in this cohort.
 
 ## C1 — Urgency gating versus bounded integration (`ssmcomparison`, `ssmcomparisonstats`)
 
@@ -224,12 +208,6 @@ about 50 core-hours — a cluster job, run with `--n-jobs`.
 
 Two things to check once it lands:
 
-- **B2's positive accuracy-criterion slope already disagrees with the
-  urgency-gating prediction of a declining criterion** (see B1–B2 above), but
-  that measure has a known discretization confound. If this fit says urgency
-  gating wins decisively, that tension is the thing to explain, and the
-  model-derived criterion here is the tool for it, since it is not subject to
-  the same confound.
 - `tau` (the low-pass filter time constant) is fixed at 200 ms, Cisek et al.
   2009's value for this task, not fitted. A sensitivity refit at the other
   published values, 100 ms (Thura 2012) and 250 ms (Carland 2015), is a
@@ -254,7 +232,7 @@ with.
 |---|---|---|
 | DT easy / ambiguous / misleading | 1033 / 1433 / 1357 ms | DT by class (Cisek et al. 2009) |
 | SP at decision, easy / ambiguous / misleading | 0.791 / 0.663 / 0.650 | SP at decision by class (Thura et al. 2012) |
-| Criterion slope | +0.100 log odds per token | evidence at commitment (Thura et al. 2012) |
+| Criterion slope | −0.1330 first-order SumLogLR per second | evidence at commitment (Cisek et al. 2009) |
 | `urgency_minus_integrator_bic` | pending with C1 | urgency gating preferred over integration (Cisek et al. 2009, Fig. 7; Thura et al. 2012, Figs. 10-11) |
 | `urgency_scale_criterion_seconds` | pending with C1 | linear urgency signal fitted to monkey tokens-task behavior (Thura and Cisek 2014; Carland et al. 2019) |
 | `urgency_scale_fast_minus_slow` | pending with C1 | urgency time-course differs between fast and slow blocks (Cisek et al. 2009, Fig. 8C-D) |

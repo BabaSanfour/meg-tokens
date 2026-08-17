@@ -225,7 +225,8 @@ def group_derivatives_from_rich_features(features: pd.DataFrame) -> dict[str, pd
     )
     from meg_tokens.behavior.analyses.distributions import spd_cumulative_distributions
     from meg_tokens.behavior.analyses.evidence import (
-        evidence_at_decision_responses, criterion_decline_statistics,
+        evidence_at_decision_responses, first_order_criterion_decline,
+        criterion_decline_statistics,
         reverse_correlation, reverse_correlation_statistics,
         conditional_accuracy_functions, conditional_accuracy_statistics,
         continuous_evidence_effects, continuous_evidence_statistics,
@@ -242,7 +243,7 @@ def group_derivatives_from_rich_features(features: pd.DataFrame) -> dict[str, pd
     conditionorder = condition_order_effects(features)
     lapses = lapse_summary(features)
     extremedt, extremedttrials = extreme_decision_times(features)
-    criteriondecline = evidence_at_decision_responses(features, predictor="decision_token_index")
+    criteriondecline = first_order_criterion_decline(features)
     urgency = evidence_at_decision_responses(features, predictor="dt_ms")
     kernels = reverse_correlation(features)
     caf = conditional_accuracy_functions(features)
@@ -311,7 +312,7 @@ def speciescomparison(subjects: tuple[str, ...] = SUBJECTS) -> pd.DataFrame:
         "decision_time_misleading_ms": 1300.0,
         "success_probability_at_decision_easy": 0.78, "success_probability_at_decision_ambiguous": 0.65,
         "success_probability_at_decision_misleading": 0.62,
-        "criterion_slope_log_odds_per_token": 0.1,
+        "criterion_slope_sum_log_lr_per_second": 0.1,
         "urgency_minus_integrator_bic": -230.0,
         "urgency_scale_criterion_seconds": 1.5, "urgency_scale_fast_minus_slow": -0.1,
     }

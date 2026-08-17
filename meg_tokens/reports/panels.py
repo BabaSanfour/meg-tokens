@@ -182,28 +182,53 @@ def subject_strip(
     labels = list(groups.keys())
     positions = {label: index for index, label in enumerate(labels)}
 
+    # Compute the jitter once on the original subject-indexed arrays. Reusing
+    # these exact x coordinates for the paired connectors makes every line
+    # terminate on its two subject dots, including when a group contains NaNs.
+    values_by_label: dict[str, np.ndarray] = {}
+    x_by_label: dict[str, np.ndarray] = {}
+    for label in labels:
+        values = np.asarray(groups[label], dtype=float)
+        finite = np.isfinite(values)
+        x_values = np.full(values.shape, np.nan, dtype=float)
+        if finite.any():
+            x_values[finite] = positions[label] + np.linspace(
+                -0.08, 0.08, int(finite.sum())
+            )
+        values_by_label[label] = values
+        x_by_label[label] = x_values
+
     for label_a, label_b in connect:
         if label_a not in groups or label_b not in groups:
             continue
-        values_a = np.asarray(groups[label_a], dtype=float)
-        values_b = np.asarray(groups[label_b], dtype=float)
+        values_a = values_by_label[label_a]
+        values_b = values_by_label[label_b]
+        x_a = x_by_label[label_a]
+        x_b = x_by_label[label_b]
         n = min(values_a.size, values_b.size)
         for i in range(n):
             if np.isfinite(values_a[i]) and np.isfinite(values_b[i]):
                 ax.plot(
-                    [positions[label_a], positions[label_b]],
+                    [x_a[i], x_b[i]],
                     [values_a[i], values_b[i]],
                     color=style.SUBJECT_LINE, alpha=style.SUBJECT_ALPHA,
                     linewidth=0.8, zorder=1,
                 )
 
     for label in labels:
-        values = np.asarray(groups[label], dtype=float)
-        values = values[np.isfinite(values)]
+        raw_values = values_by_label[label]
+        finite = np.isfinite(raw_values)
+        values = raw_values[finite]
         color = colors.get(label, style.INK)
         x = positions[label]
-        jitter = np.linspace(-0.08, 0.08, values.size) if values.size else np.array([])
-        ax.scatter(x + jitter, values, color=color, s=12, alpha=0.7, zorder=2)
+        ax.scatter(
+            x_by_label[label][finite],
+            values,
+            color=color,
+            s=12,
+            alpha=0.7,
+            zorder=2,
+        )
         if values.size:
             mean = float(np.mean(values))
             sem = float(np.std(values, ddof=1) / np.sqrt(values.size)) if values.size > 1 else np.nan

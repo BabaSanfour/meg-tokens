@@ -1,6 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import pytest
+from matplotlib.collections import PathCollection
 
 from meg_tokens.reports import panels, style
 
@@ -55,6 +56,44 @@ def test_subject_strip_all_nan_group_does_not_raise():
         ax,
         groups={"a": np.full(3, np.nan), "b": np.array([1.0, 2.0, 3.0])},
         colors={"a": "#000000", "b": "#111111"},
+    )
+
+
+def test_subject_strip_connectors_end_on_the_jittered_subject_dots():
+    fig, ax = plt.subplots()
+    panels.subject_strip(
+        ax,
+        groups={
+            "fast": np.array([0.1, np.nan, 0.3]),
+            "slow": np.array([0.2, 0.4, 0.5]),
+        },
+        colors={"fast": "#000000", "slow": "#111111"},
+        connect=(("fast", "slow"),),
+    )
+
+    dot_collections = [
+        collection
+        for collection in ax.collections
+        if isinstance(collection, PathCollection)
+    ]
+    fast_dots = dot_collections[0].get_offsets()
+    slow_dots = dot_collections[1].get_offsets()
+    subject_lines = [
+        line
+        for line in ax.lines
+        if line.get_color() == style.SUBJECT_LINE
+        and line.get_zorder() == 1
+        and len(line.get_xdata()) == 2
+    ]
+
+    assert len(subject_lines) == 2
+    np.testing.assert_allclose(
+        subject_lines[0].get_xdata(),
+        [fast_dots[0, 0], slow_dots[0, 0]],
+    )
+    np.testing.assert_allclose(
+        subject_lines[1].get_xdata(),
+        [fast_dots[1, 0], slow_dots[2, 0]],
     )
 
 

@@ -27,7 +27,7 @@ DEFAULT_PROFILE_MEASURES: Final[tuple[str, ...]] = (
     "percent_correct",
     "sat_adjustment_ms",
     "urgency_slope_per_second",
-    "criterion_slope_per_token",
+    "criterion_slope_sum_log_lr_per_second",
     "accuracy_log_odds_per_unit",
     "lapse_rate",
 )
@@ -58,9 +58,9 @@ def individual_profile(
         The pooled ``logged_spd`` slope becomes
         ``urgency_slope_per_second``.
     criterion
-        Optional subject-level criterion fits using decision-token index as
-        predictor. The pooled ``logged_spd`` slope becomes
-        ``criterion_slope_per_token``.
+        Optional subject-level first-order chosen-target SumLogLR fits using
+        decision time as predictor. The pooled slope becomes
+        ``criterion_slope_sum_log_lr_per_second``.
     evidence
         Optional output of
         :func:`~meg_tokens.behavior.analyses.evidence.continuous_evidence_effects`.
@@ -126,9 +126,12 @@ def individual_profile(
     if criterion is not None and len(criterion):
         profile = _merge_condition_value(
             profile,
-            _one_response(criterion),
+            _one_response(
+                criterion,
+                "chosen_sum_log_lr_first_order_at_decision",
+            ),
             "slope",
-            "criterion_slope_per_token",
+            "criterion_slope_sum_log_lr_per_second",
         )
     if evidence is not None and len(evidence):
         require_columns(evidence, ["predictor"])
@@ -294,9 +297,9 @@ def comparison_statistics(
         time and mean logged success probability for every declared trial
         class.
     criterion
-        Optional multi-response criterion-fit table. When supplied, the pooled
-        slope fitted on ``logged_spd_log_odds`` is summarized because that scale
-        corresponds to cumulative log-likelihood evidence at commitment.
+        Optional criterion-fit table. When supplied, the pooled slope fitted on
+        first-order chosen-target SumLogLR is summarized to match the canonical
+        Tokens-task criterion analysis.
     sequential_sampling
         Optional accumulator-fit table from
         :func:`~meg_tokens.behavior.analyses.sequential_sampling.fit_sequential_sampling_models`.
@@ -342,15 +345,18 @@ def comparison_statistics(
             }
         )
     if criterion is not None and len(criterion):
-        # The log-odds scale is the one the monkey work reports the accuracy
-        # criterion on (their SumLogLR at commitment).
+        # Match the first-order chosen-target SumLogLR reported by the monkey
+        # work rather than the horizon-dependent exact posterior odds.
         require_columns(criterion, ["subject", "condition", "response", "slope"])
-        scaled = _one_response(criterion, "logged_spd_log_odds")
+        scaled = _one_response(
+            criterion,
+            "chosen_sum_log_lr_first_order_at_decision",
+        )
         overall = scaled.loc[scaled["condition"] == "all"]
         rows.append(
             {
                 "analysis": "cross_species_comparison",
-                "measure": "criterion_slope_log_odds_per_token",
+                "measure": "criterion_slope_sum_log_lr_per_second",
                 **one_sample_statistics(overall["slope"]),
             }
         )

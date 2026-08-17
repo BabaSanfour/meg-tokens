@@ -1,535 +1,455 @@
-# Behavior Reporting — Session Handoff
+# Behavior Reporting - Session Handoff
 
-Notes for whoever (human or agent) picks this up next. The work has proceeded
-figure by figure on the real data, with every completed panel checked both as
-a rendered image and as a scientific claim.
+This handoff preserves the scientific and implementation history needed to
+continue safely, then gives the forward plan. Completed numerical results and
+their interpretation remain canonical in `docs/behavior.md`; this file keeps
+the decisions, failure modes, machine boundaries, and next-analysis protocol.
 
-- **Session 1** built and styled F04-F06 and wrote their findings.
-- **Session 2** removed F07, corrected the science in F04-F06 (two of the
-  three findings were wrong as written), and brought the DT computation to
-  preprint parity.
-- **Laptop continuation / Act 1 close** audited and rebuilt F08-F13, corrected
-  response-side DT for hand-specific motor baselines, removed F12 by folding
-  its quality census into F13 panel E, and closed the descriptive behavioral
-  foundation at eight surviving figures (F04-F06, F08-F11, F13).
-- **End of session 2 / machine handoff:** this work was developed on a
-  desktop reachable only via remote desktop (AnyDesk) and had never been
-  committed. Everything staged in `git status` at that point (see commit
-  below) is this whole two-session arc — the `reports/behavior/` package
-  split, the style/annotation modules, F04-F06's relayout and rewritten
-  findings, F07's removal, and the motor-baseline preprint-parity fix.
-  Committed and pushed to `origin/main` so work can continue from a laptop.
-  The real dataset does **not** travel with git: `data_root` pointed at an
-  external drive (`/media/karim/Hamza/meg-tokens`, exfat, not accessible
-  from the laptop), so only the two derivative folders the whole reporting
-  layer actually reads/writes were carried over by hand —
-  `BIDS/derivatives/sub-group/beh/` (61M, Stage 2/2b group derivative
-  tables — required, everything in `meg_tokens/reports/` reads only these)
-  and `BIDS/derivatives/sub-group/fig/` (19M, already-rendered PNG/PDF/JSON
-  outputs — reference only, fully regenerable from `beh/`). Confirmed by
-  grep that no report builder reads per-subject or raw MEG/BIDS paths.
-  `tokens.toml` is gitignored (local machine config) and was **not**
-  copied — recreate it on the laptop from `config/tokens.toml.template`,
-  pointing `data_root` at wherever `meg-tokens/` was placed locally (not
-  the original `/media/karim/Hamza/...` path, which won't exist there).
-  Full SSM fits (F01-F03's source data) were **not** brought over — if F01
-  or F02 need regenerating rather than just reading existing tables, that
-  requires `behavior ssm-fit`, which is expensive and wasn't in scope for
-  this transfer.
+## Current state
 
-**Start here if you are picking this up:** read "The audit that has to
-happen next" below. F04-F06 and F08-F13 have now been checked against the
-literature, the real derivatives, and their rendered figures. F01-F03 and
-F14-F26 have not. Two of the first three findings checked contained the same
-class of error, so do not treat the remaining unaudited write-ups as
-trustworthy.
+- `docs/behavior.md` is the canonical behavioral results narrative.
+- The reporting layer reads group derivatives from
+  `BIDS/derivatives/sub-group/beh/` and writes figures to
+  `BIDS/derivatives/sub-group/fig/`.
+- Laptop data root:
+  `/Users/hamzaabdelhedi/Projects/data/meg-tokens`.
+- Cluster checkout: `~/meg-tokens`.
+- Cluster data root: `/scratch/hamza97/meg-tokens`.
+- The current reporting/behavior test set passes locally. Optional `pyddm`
+  failures in the broader suite are unrelated until the sequential-sampling
+  models are deliberately revisited.
+- The completed criterion/reporting work is the commit immediately after
+  `2dbd2a4`; confirm it with `git log -1 --oneline` at the start of the next
+  session. The attached preprint PDF and `uv.lock` remain deliberately
+  untracked and outside that commit.
 
-## Act 1 wrap-up — behavioral foundation closed
+## Development and machine history
 
-Act 1 now has a coherent scientific chain rather than a collection of QC and
-distribution plots:
+- Session 1 built and styled F04-F06 and wrote their findings.
+- Session 2 removed F07, corrected the science in F04-F06, and brought the
+  decision-time computation to preprint parity. Two of the first three prose
+  findings were contradicted by numbers already present in the same sections;
+  remaining unaudited claims must therefore be treated as provisional.
+- The laptop continuation audited F08-F13, corrected response-side decision
+  time for hand-specific motor baselines, merged the former F12 quality census
+  into F13 panel E, and closed the descriptive behavioral foundation.
+- The two-session reporting refactor and Act 1 work were committed as
+  `2dbd2a4` before the current uncommitted evidence/criterion work began.
+- The original desktop data root was `/media/karim/Hamza/meg-tokens`. The real
+  dataset did not travel with Git. Only the group behavioral derivatives and
+  rendered figures were copied to the laptop; raw behavioral/MEG data remain
+  on the cluster.
+- The raw/per-subject sequential-sampling fit inputs remain cluster-only, but
+  the pooled local derivatives are present: `ssmcomparison`,
+  `ssmcomparisonstats`, `ssmtrialpredictions`, `ssmtimecourse`,
+  `ssmpopulation`, and `ssmpopulationstats`. They are sufficient for a local
+  first-pass figure. Any refit still requires a cluster `behavior ssm-fit`
+  job because `pyddm` is not installed locally.
 
-1. **The cohort is usable without exclusions.** All 32 subjects contribute;
-   DT retention is 99.92%; lapses, anticipations, and robust-MAD extremes are
-   rare. H20 is influential for tail-sensitive work but is not an exclusion.
-2. **The principal condition contrast is not a design artefact.** Response
-   side is balanced after subtracting each hand's own motor baseline; session
-   learning and within-block slowing act on Fast and Slow alike; the effect
-   is present in both counterbalancing groups, although the between-group
-   order test is too weak to establish equivalence.
-3. **Difficulty is defined in the stimulus frame, not the response frame.**
-   Correct-target classification removes the circularity that reversed the
-   preprint's ambiguous-versus-misleading contrast.
-4. **Condition changes rate; evidence quality changes geometry.** Slow is an
-   approximately 1.12x stretch of Fast at every difficulty. Easy versus
-   misleading is also close to a stretch, whereas easy versus ambiguous is a
-   genuine shape change and ambiguous versus misleading converges in the
-   tail.
-5. **Decision time and confidence dissociate.** Easy trials end at higher
-   SPD, while ambiguous and misleading end at equivalent SPD despite their
-   different timing distributions.
+## Scientific act map
 
-The final Act 1 figure set is F04-F06, F08-F11, and F13. F07 was removed as an
-unidentifiable ex-Gaussian detour; F12 was not merely hidden but merged into
-F13 panel E and removed from the registry. F13 now carries condition counts,
-class composition, motor baseline, accuracy, and the broken-axis QC census in
-one shared-subject composition.
+1. **Behavioral foundation.** Cohort/QC, the Fast/Slow manipulation,
+   stimulus-frame difficulty, decision-time distributions, and confidence at
+   commitment. F04-F06, F08-F11, and F13 have been audited.
+2. **Dynamic commitment policy.** How changing evidence becomes a choice:
+   criterion across time, conditional accuracy, continuous-evidence effects,
+   and the temporal choice kernel. The exact-posterior/time plot must be
+   audited separately as a possible sensitivity analysis.
+3. **Mechanistic adjudication.** Formal comparison of urgency gating,
+   bounded integration, collapsing/adaptive bounds, and plausible urgency
+   variants. This is where the 2012 analysis below belongs.
+4. **Sequential adaptation.** Post-error slowing and choice/history effects.
+5. **Individual differences and translation.** Cross-subject structure,
+   cross-species comparison, and the later behavioral-MEG join.
 
-`docs/behavior.md` is the canonical results narrative and is current for Act
-1. Its order is deliberately scientific rather than numeric: cohort/QC →
-design-validity checks → classification reference frame → core condition and
-difficulty signatures → confidence at commitment. The figure-number order is
-therefore intentionally non-sequential. The stale 26-figure count and the
-remaining F12 references in the reporting plan were corrected at Act 1 close.
+This is the scientific Results order, not the historical implementation-phase
+order in `docs/behavior_reporting_plan.md`.
 
-The next real content remains **Act 5 / F14 `criteriondecline-tokens`**: the
-canonical urgency signature and the most important unaudited figure left in
-the behavioral report. F01-F03 remain separately deferred because their
-full SSM source fits were not transferred to the laptop.
+## Behavioral foundation already established
 
-**Worktree at Act 1 close:** the F09 axis/motor-baseline work, F12→F13 merge,
-F13 QC palette and layout, documentation corrections, and their tests are
-still uncommitted in the working tree (most are staged; inspect `git status`
-before committing). `uv.lock` is also untracked; treat it as a separate
-dependency-lock decision rather than silently including or deleting it.
+1. All 32 subjects contribute. Decision-time retention is 99.92%; lapses,
+   anticipations, and robust-MAD extremes are rare. H20 is influential for
+   tail-sensitive work but is not an exclusion.
+2. The Fast/Slow contrast is not explained by response side, session drift,
+   within-block slowing, or counterbalancing order. The between-order test is
+   too weak to establish equivalence and must not be described as proof of no
+   order effect.
+3. Difficulty must be classified in the stimulus/correct-target frame. The
+   former response-frame definition was circular and reversed the
+   ambiguous-versus-misleading result.
+4. Slow is approximately a proportional stretch of Fast, not a fixed added
+   delay. Easy-versus-ambiguous changes distribution shape;
+   easy-versus-misleading is close to a stretch; ambiguous and misleading
+   converge in the tail.
+5. Decision time and confidence dissociate: easy trials finish at higher SPD,
+   while ambiguous and misleading finish at similar SPD despite different
+   timing distributions.
 
-## Where session 1 started
+F07's ex-Gaussian detour was removed. F12 was merged into F13, not merely
+hidden. The registry contains 24 figures after those changes.
 
-The behavior report (`meg-tokens report behavior`) had just been split from
-one file into `meg_tokens/reports/behavior/*.py` (distributions, design,
-evidence, sequential, modeling, individual — 26 figures, F01–F26, indexed in
-`docs/behavior_reporting_plan.md`). The user wanted to go through the
-figures one at a time, on the real dataset (`tokens.toml`, data on
-`/media/karim/Hamza/meg-tokens`, run via
-`uv run meg-tokens --config tokens.toml report behavior --figures <key>`),
-fixing layout problems and improving how results are presented, then writing
-the actual scientific findings into `docs/behavior.md`.
+## Figure-specific decisions worth preserving
 
-Nothing here was reviewable from synthetic test fixtures alone — every real
-bug in session 1 (axes collapsing to zero, text overlapping data, legends
-covering curves) only showed up when a figure was actually regenerated on
-the real 32-subject dataset and the PNG was read and visually checked,
-including close crops. `pytest tests/reports/` passing is necessary but not
-sufficient; it uses tiny synthetic fixtures that never exercise real layout
-pressure.
+- **F04:** keep the condition quantile curves and raincloud; no pooled-trial
+  KDE. The Fast/Slow finding is a proportional stretch. The panel ratio was
+  intentionally asymmetric and the comparison uses a compact bracket.
+- **F05:** use a raincloud plus quantile functions, without a duplicate KDE.
+  Subject-line direction is evaluated per adjacent-category leg. The upper
+  left was the only legend corner that cleared the real curves.
+- **F06:** the `all_logged` and `validated_15row` views were numerically
+  checked before collapsing to the higher-integrity view. The custom 5.7-inch
+  width, x-range starting at 0.2, and explicit solid/dashed legend are
+  deliberate.
+- **F07:** removed because the ex-Gaussian decomposition was unstable and
+  added no identifiable scientific conclusion.
+- **F08-F11:** use within-subject uncertainty for repeated trajectories,
+  compact statistics, and design-validity questions that the data can
+  actually answer.
+- **F13:** combines cohort composition and the quality census on a shared
+  subject axis. Do not recreate the removed standalone lapse figure.
 
-Session 2 added the analogous lesson for the *science*: a finding written in
-prose is not reviewable from the prose. Two of the three findings said
-something the numbers printed in the same paragraph contradicted.
+## Reusable audit lessons
 
-## What we did, per figure
+For any two decision-time distributions, distinguish a fixed delay, a
+proportional stretch, and a genuine shape change:
 
-### F04 `dtdistribution-condition` (Fast vs. Slow decision time) — done
+1. Compare quantile differences and ratios. A delay predicts stable
+   differences; a stretch predicts stable ratios.
+2. Use the per-subject KS ladder on raw, median-subtracted, and median-divided
+   distributions. Subtraction should remove a delay; division should remove a
+   stretch.
+3. Check SD and CV. A delay preserves SD and changes CV; a stretch scales SD
+   and approximately preserves CV.
+4. For a null result, report an equivalence bound or interval. `p > .05` is
+   never evidence that two quantities are identical.
 
-- Scrubbed `dt_ms` out of all display labels ("Decision time (ms)", not
-  "Decision time, dt_ms (ms)").
-- X-axis capped at 0–3000ms, decluttered to 2–3 ticks; tick *marks* removed
-  globally but numeric labels kept (see style rules below).
-- Session 1 fixed a real bug here (the pooled-trial KDE overlay went
-  flat once the x-axis was clipped, because each condition had its own
-  `twinx()` autoscaled against the full unclipped range). **Session 2 then
-  deleted the overlay entirely** and `_pooled_kde_overlay` with it: the
-  finding is that the *gap between the two curves widens*, and a filled
-  density behind them is the wrong background for judging a widening gap.
-- Found and fixed a pipeline-wide bug (not F04-specific): every figure in
-  the whole battery was silently saving at matplotlib's 100dpi default
-  instead of the intended 400dpi, because `savefig.dpi` only applies inside
-  `style.apply_publication_style()`'s `rc_context`, and the actual
-  `fig.savefig()` call happens later, in `behavior_summary.py`, after that
-  context has exited. Fixed by exporting `style.SAVEFIG_DPI` and passing
-  `dpi=style.SAVEFIG_DPI` explicitly in `behavior_summary._render_one`.
-- Panel B iterated through several designs: Gardner-Altman companion axis
-  (rejected — user meant to reference F05's style, not F02's) → per-quantile
-  full-text annotation (broke: text wider than the panel, collapsed
-  `constrained_layout`) → settled on a single bracket between Fast/Slow with
-  `Δ = value marker` (see conventions below).
-- Added two-color subject lines to `paired_slope` (`panels.py`):
-  `increase_color`/`decrease_color` params, gray for "with the group
-  direction", red (`CONDITION_COLORS["fast"]`) for "against it" — makes
-  individual reversals visible at a glance.
-- Panel width ratio settled at A:B = 2.7:1.3 (not equal split), panel taller
-  than the shared default (4.6in vs. 2.85in).
-- **Session 2 relayout.** A is now the two quantile curves alone, x capped
-  to 500-2000 ms; B became a `raincloud` (was `paired_slope`) so the
-  distribution stays in the figure and B matches F05 panel A's chart type.
-  The old `skew n.s.` note is gone -- skewness is invariant under *any*
-  positive linear transform, so it cannot distinguish a fixed delay from a
-  stretch and printing it invited reading a null as evidence. It is replaced
-  by the CV note (`CV 0.40 -> 0.39, fixed delay predicts 0.35`), which does
-  discriminate. Also fixed a latent bug: the significance-marker x-clamp was
-  hardcoded at 2950 ms for the old window and is now derived from
-  `display_range`.
-- Finding written to `docs/behavior.md` → "Findings". It was originally
-  written as "a pure shift, not a tail effect"; that was **wrong and has
-  been rewritten** as a proportional stretch (see the F07 section below for
-  how it surfaced). The section is now "Fast vs. Slow stretches decision
-  time proportionally, rather than adding a fixed delay".
+Session 2 implemented these as temporary scripts (`shift_vs_scale.py`,
+`norm.py`, `rescale.py`, `cv_vs_skew.py`, `cv_persubject.py`, `ks_check.py`,
+and `audit_f05_f06.py`). They may no longer exist. If reused, promote the
+analysis into a persisted derivative instead of creating another throwaway
+script.
 
-### F05 `dtdistribution-class` (decision time by trial class) — done
+## Reporting conventions
 
-- Same style pass as F04 (bigger fonts, decluttered ticks, `dt_ms` scrubbed).
-- `raincloud()` (`panels.py`) extended with the same `increase_color`/
-  `decrease_color` params as `paired_slope`, but **per-leg**, not
-  per-subject — a subject can go up easy→ambiguous and down
-  ambiguous→misleading in the same figure, and both legs matter.
-- Brackets on panel A: same bug as F04 (full `t(31)=…, p=…` text collapsed
-  the axes — two of the three brackets span only one category, ~1/3 of the
-  panel). Fixed with the `Δ = value marker` convention.
-- Panel B went through a detour: added a pooled-trial KDE overlay + zoomed
-  x-range (500–2200ms), then the user asked to remove it again — panel A's
-  violins already carry the distribution-shape story, so B stays to just
-  the quantile functions. (Its x-range is 500–2100 ms in the shipped code;
-  F04's panel A now uses 500–2000, so the two are near but not identical.
-  Worth unifying if anyone touches both.)
-- Legend placement needed an actual visual check, not just a guess:
-  "lower right" clips through the ambiguous/misleading curves for this
-  chart's shape (the curves rise toward high-x at moderate y); moved to
-  upper-left, which is genuinely empty for this specific curve shape.
-- Suptitle: dropped "(unclassified trials excluded)" from the plotted title;
-  moved to the registry's `caveat` field instead (still surfaces in
-  `--list-figures` and the JSON sidecar).
-- Finding written to `docs/behavior.md` → "Decision time by trial class:
-  difficulty changes the shape of the distribution, not just its location"
-  — includes the preprint-reversal writeup (misleading is reliably faster
-  than ambiguous here; the preprint found the opposite, marginally, under a
-  confounded classification — see "Trial-classification reference frame" in
-  the same doc for the mechanism).
-- **Retitled after an audit.** It was originally "easy is a whole-
-  distribution shift…", using the same loose "shift" wording that turned
-  out to be wrong for F04. Running F04's geometry tests on each class
-  contrast showed easy-vs-ambiguous is *neither* a delay nor a stretch (a
-  real shape change; 9-11/32 subjects still differ after either
-  normalization), while easy-vs-misleading is a clean ~1.30x stretch
-  (0/32 after dividing by the median). Also flagged there: only 5/32
-  subjects show any distributional ambiguous-vs-misleading difference, so
-  that contrast is a small consistent effect, not a large one.
+- Numeric tick labels stay visible; reduce their number rather than hiding
+  them. Tick marks themselves are removed globally.
+- `style.SAVEFIG_DPI` must be passed explicitly to saves made after the style
+  context exits. This is fixed centrally in `behavior_summary.py`.
+- Use `Delta = value [unit] marker` for compact comparison brackets. Full
+  `t/df/p/dz` text belongs in the derivative and sidecar when it would distort
+  a panel.
+- Long annotations must be designed for the actual panel width. They can make
+  `constrained_layout` collapse an axis even when the text is technically
+  drawable.
+- Put exclusions and methodological caveats in the sidecar/registry rather
+  than overcrowding the title.
+- Color is never the sole carrier of identity. Use labels, line style, or
+  marker form as well.
+- SEM is used for descriptive subject-balanced bin means. Repeated-measures
+  trajectories and subject-coefficient summaries use appropriate
+  within-subject or group 95% CIs.
+- A passing synthetic report test is necessary but insufficient. Regenerate
+  every changed figure with the real derivatives, render its PDF, and inspect
+  the resulting image.
+- Inferential statistics must be persisted before plotting. The report layer
+  may compute display summaries only.
+- `docs/behavior.md` is the only home for completed numerical Result and
+  Interpretation prose. Planning and handoff files retain implementation and
+  audit instructions without duplicating the result narrative.
 
-### F06 `spdcumulative-class` (SPD at decision, cumulative by class) — done
+## Next analysis 1: exact posterior evidence against decision time
 
-- Started as two panels (`all_logged` vs. `validated_15row` views). Checked
-  whether they actually said the same thing before dropping one — they do
-  (proportions land within a few points of each other despite
-  `validated_15row` excluding up to 40% fewer trials per class from
-  unvalidated "14-row" logs). Collapsed to one panel, kept
-  `validated_15row` (the higher-integrity subset).
-  **`all_logged` is still used elsewhere** — `summary`, `individual.py`
-  (deliberately, a separate choice), `performance.py` — untouched, flagged
-  as TBD in the registry `caveat`, not changed.
-- Same `Δ = value marker` fix needed again (full stat text collapsed the
-  axes on the narrower single-width panel).
-- Width iterated: single (3.42in) → double (7.09in, "make it wider") →
-  a custom 5.7in ("reduce a bit"). This required extending
-  `style.figure_grid`'s `width` param to accept a raw float in inches, not
-  just the `"single"`/`"double"` literals — backward compatible, every
-  other call site unaffected.
-- X-axis progressively cropped (0 → 0.2 → 0.3 → back to 0.2) as the curves
-  are flat/uninformative below there for every class; guide lines at
-  0.4/0.6/0.8 removed per request.
-- Legend: replaced a text note ("dashed = pooled...") with actual gray
-  `Line2D` proxy legend entries (solid = mean of subjects, dashed = pooled
-  across trials) — cleaner than prose, matches how class rows already key
-  color.
-- Its entire section was **removed** from `docs/behavior_reporting_plan.md`
-  (not trimmed to a pointer — deleted outright), per explicit request,
-  since that doc is transitional and slated for eventual removal.
-- Finding written to `docs/behavior.md` → "Success probability at decision:
-  easy resolves at higher confidence; ambiguous and misleading resolve at
-  the same confidence despite different timing".
+### Ready at session start
 
-### F07 `dtdistribution-exgaussian` — removed, question closed
+No data transfer or cluster job is needed to begin this audit. The laptop
+already has:
 
-**Resolved: the figure and its whole analysis layer were deleted.** The
-open question recorded here (was the shared-sigma fix correct, given that
-ambiguous got worse?) dissolved rather than being answered, so the
-`fixed_sigma` / `_subject_shared_sigma` work described in earlier drafts of
-this file no longer exists in the tree.
+- `trialfeatures` (19,090 rows, including the eligibility and alignment flags);
+- `urgency` (192 subject-fit rows = 32 subjects x 3 conditions x 2 response
+  scales);
+- `urgencystats` (probability and log-odds inference rows); and
+- the current 2 x 2 report builder under the `urgency-decisiontime` key.
 
-Three independent reasons, any one sufficient:
+`logged_spd` is documented in `behavior/features.py` as the acquisition-file
+probability referenced to the chosen target. The fit already uses
+`task_trials(features)`, i.e. `primary_analysis_eligible`; complete token-log
+alignment is not currently required because the probability is logged rather
+than reconstructed.
 
-- **No precedent.** The tokens-task literature never fits a distribution to
-  DT. Cisek, Puskas & El-Murr (2009), Thura et al. (2012), Thura & Cisek
-  (2014, 2017) and Carland et al. (2016) all compare whole DT distributions
-  with per-subject two-sample KS tests and report the count of significant
-  subjects; parametric machinery goes into the *model* (UGM vs. DDM), never
-  into a descriptive fit. The preprint (Thiery, Rainville, Cisek & Jerbi,
-  2022) uses paired t-tests on subject means and no distribution fitting at
-  all.
-- **Not identifiable at these trial counts.** Strata here hold 54-128 trials
-  per subject. Lacouture & Cousineau's (2008) recovery study puts sigma's
-  95 % interval at [0, 141] for a true sigma of 100 at n = 50. The
-  corr(mu, tau) ≈ -0.6 table recorded in earlier drafts of this file is the
-  textbook small-n signature, not a discovery about this cohort.
-- **Not interpretable even when well estimated.** Matzke & Wagenmakers
-  (2009) fit the ex-Gaussian to diffusion-generated data: tau moves with
-  both drift rate *and* boundary separation. It licenses no claim about
-  which mechanism changed.
+The current figure is not ready for interpretation. Its observed layer reads
+all trial-feature rows, pools trials rather than first averaging within
+subject, and chooses its range from the unfiltered table. Therefore the first
+task is to make the plotted data use exactly the same eligible trials as the
+fits and to compute subject-balanced display summaries.
 
-DT here is additionally right-censored by the 15-jump deadline, which biases
-exactly the tail parameter tau estimates.
+### Scientific question
 
-**What replaced it.** Quantile contrasts (already in `dtdistributionstats`)
-answer the same shape questions without the identifiability problem, and
-per-subject KS tests are available cheaply from `trialfeatures` if a formal
-shape test is wanted — that is Cisek's own idiom (2009 Fig. 3C: "Most
-subjects (20 of 22) showed significantly faster responses in fast versus
-slow blocks").
+Determine whether recorded success probability at commitment changes with
+decision time, and whether that pattern contains information beyond the
+first-order chosen-target evidence result already documented in
+`docs/behavior.md`.
 
-**Knock-on: F04's finding was wrong and has been rewritten.** Removing tau
-also removed the prop under F04's "pure shift" claim, and checking it
-directly showed the claim was wrong as written -- the quantile shifts are
-79/129/148 ms, not "the same amount" (p = .021), while the *ratios* are
-constant (p = .167), CV is invariant (p = .62), and per-subject KS goes
-18/32 raw -> 6/32 median-subtracted -> 2/32 median-*divided* (chance 1.6).
-Fast -> Slow is a ~1.12x stretch of the deliberation clock, not an additive
-delay -- a stronger result for urgency gating, since a constant added to
-every trial would be non-decision time, which the motor-baseline subtraction
-has already removed. Rewritten in `docs/behavior.md`; the per-subject model
-comparison is underpowered (p = .38) and the write-up says so.
+This is a scale audit, not an automatic second urgency finding. Exact
+posterior success probability is horizon-dependent: the same token lead maps
+to a different posterior as the number of remaining tokens shrinks. Later
+decisions can therefore overshoot in larger posterior steps even if the
+underlying policy is unchanged.
 
-**Lesson worth keeping.** The bad claim was visible in its own numbers the
-whole time -- "all three move together by about the same amount: 677->756,
-1127->1255, 1768->1916" lists 79, 129 and 148 ms in the same sentence that
-calls them the same. When a finding states a pattern, check the pattern
-against the numbers printed next to it before trusting the sentence.
+### Required audit
 
-## Session 2: decision time now matches the preprint exactly
+1. Inspect the persisted `urgency` and `urgencystats` derivatives and trace
+   every response, predictor, eligibility flag, and unit back to
+   `trialfeatures`.
+2. Confirm that `logged_spd` is the success probability for the selected
+   target on both correct and error trials. Do not silently convert it to the
+   correct-target frame.
+3. Use continuous `dt_ms` for fitting. Any bins are display-only.
+4. State explicitly whether anomalous 14-row logs are usable. Directly logged
+   SPD may not require token-to-commitment reconstruction; do not inherit a
+   complete-log exclusion without demonstrating that the analysis needs it.
+5. Fit each subject separately, then perform group inference on subject
+   coefficients. Do not pool trials across subjects for the inferential fit.
+6. Audit both probability and log-odds scales. Report which features are
+   invariant to the transformation and which are not.
+7. Quantify the horizon/discretization contribution. At minimum, simulate or
+   enumerate the posterior step size at each token index and compare the
+   observed time slope with the slope expected from step-size overshoot alone.
+8. Repeat the prespecified sensitivities used elsewhere only when they answer
+   a real ambiguity: token-0 inclusion, complete-log eligibility, and a 3-s
+   display or fit horizon. Keep the no-cutoff analysis primary unless the
+   paper or task design supplies a principled cutoff.
+9. Compare subject coefficients with the first-order criterion coefficients,
+   but treat correlation as convergence between distinct measures, not proof
+   that they are interchangeable.
+10. Decide only after this audit whether the result belongs in the main
+    narrative, a sensitivity figure, or no figure. A positive posterior slope
+    cannot by itself be called a rising criterion.
 
-`calculate_motor_baseline` (`meg_tokens/behavior/features.py`) previously
-pooled every RT trial and took one mean. It now averages *per-run* means,
-which is what the preprint notebook does
-(`archive/replicated/DDM_scripts/scripts_new/00_44_Behavior_Trial_Types.ipynb`:
-`mean_RT_mean = np.mean(np.array(mean_RT))` over per-run means). The two
-differ whenever the RT runs hold unequal numbers of usable responses.
+### Ordered work for the next session
 
-Deliberately **not** changed: H02 still uses both RT runs, where the preprint
-uses RT2 only. That is a documented data-quality call (`docs/meg.md`, "H02
-motor baseline") and the user reaffirmed it. Effect of the whole
-motor-baseline question is ~1.4 ms on absolute group means and exactly zero
-on any paired within-subject contrast.
+1. Run the existing figure once as a diagnostic, render it, and record every
+   mismatch between the observed layer and `task_trials` eligibility.
+2. Add a reusable eligible observed-data table: subject, condition,
+   continuous decision time, decision token index, `logged_spd`, and
+   `logged_spd_log_odds`.
+3. Rebuild the 200-ms or prespecified display bins by averaging within subject
+   first, then calculate the group mean and SEM. Bins remain display-only.
+4. Enumerate the exact posterior grid by token index and remaining horizon.
+   Quantify how much positive time slope a fixed underlying criterion acquires
+   from discrete posterior overshoot alone.
+5. Run the probability/log-odds, token-0, complete-log, and 3-s sensitivities.
+   Persist every inferential comparison rather than calculating it in the
+   report builder.
+6. Only then redesign and style the figure. Decide whether both response
+   scales are informative or whether one belongs in a sensitivity panel.
+7. Write a plain-language result in `docs/behavior.md` only after deciding
+   whether the corrected effect survives the discretization audit.
 
-Confirmed while verifying this: the project's DT definition already matched
-both Cisek and the preprint. `rawRT = tEnterTarget - tGO` (`tables.py:62`),
-`dt = rawRT - motor_baseline` (`features.py`), which is Thura et al. (2012)
-Eq. 31, `DT = RT_VMD - RT_CMD`. Note the consequence, which matters for
-interpretation: **non-decision time is already subtracted out**, so a
-constant added to every DT has no mechanism left to point at.
+### Figure requirements
 
-## The audit that has to happen next
+- Show the observed subject-balanced data and subject-level fits.
+- Put the overall slope result in the data/fits panel.
+- Use a paired Fast/Slow coefficient panel only if the condition contrast is
+  scientifically interpretable after the horizon audit.
+- Use SEM for descriptive subject-balanced bins and 95% CI for subject-level
+  coefficient summaries; label both explicitly.
+- Apply the shared palette, legend, bracket, and outlier conventions from the
+  already reviewed figures.
+- Render the PDF to PNG and inspect it before sign-off.
 
-Session 2 found that **two of the three reviewed findings asserted a
-mechanism from a statistic that cannot distinguish the mechanisms.** All
-three errors were visible in numbers already printed in the same paragraph.
-This is the single most important thing to carry forward.
+## Next analysis 2: Thura et al. (2012) mechanistic test
 
-| Where | Claimed | Actually |
-|---|---|---|
-| F04 | "all three quantiles move by about the same amount" | 79 / 129 / 148 ms — Δq90 vs Δq10 p = .021. It is a ~1.12x stretch, not a delay |
-| F04 figure | "shape unchanged: skew n.s." | skewness is invariant under both models; it was never evidence |
-| F05 | "easy is a whole-distribution shift" | easy-vs-ambiguous is neither a delay nor a stretch — a real shape change |
-| F06 | "completely null", "statistically identical" | p > .05 is not equivalence; TOST bounds it at dz < 0.36 |
+Primary source: Thura, Beauregard-Racine, Fradet, and Cisek (2012),
+"Decision making by urgency gating: theory and experimental support,"
+*Journal of Neurophysiology*, 108, 2912-2930,
+doi:10.1152/jn.01071.2011.
 
-**The reusable method.** For any two decision-time distributions, ask which
-of three things the difference is — a fixed delay, a proportional stretch,
-or a genuine shape change — using:
+### Ready at session start
 
-1. **Quantile deltas vs. ratios.** Is Δ constant across quantiles (delay)?
-   Is the ratio constant (stretch)? Test Δq90 vs Δq10 and log-ratio q90 vs
-   q10 as paired t-tests.
-2. **The per-subject KS ladder** — the decisive one. Count subjects whose
-   two distributions differ (a) raw, (b) after subtracting each side's
-   median, (c) after dividing by it. A delay collapses (b) to chance; a
-   stretch collapses (c). Chance is 0.05 x n_subjects. This is also Cisek's
-   own idiom (2009 Fig. 3C reports "20 of 22 subjects").
-3. **Spread.** A delay leaves SD alone and drives CV down; a stretch scales
-   SD and leaves CV alone. Compare observed against each model's per-subject
-   prediction.
-4. **For any null**, report a TOST/equivalence bound, never "no difference".
+The local derivatives already contain a complete first-pass two-model run:
 
-Session 2 implemented all of this as throwaway scripts against the real
-derivatives (`shift_vs_scale.py`, `norm.py`, `rescale.py`, `cv_vs_skew.py`,
-`cv_persubject.py`, `ks_check.py`, `audit_f05_f06.py`). They lived in a
-session-scoped scratchpad and are **probably gone by the time you read
-this** — they were ~40 lines each reading
-`sub-group_task-tokens_desc-trialfeatures_beh.tsv` and
-`...desc-dtdistribution_beh.tsv` directly with pandas/scipy, so rewriting
-them is quicker than hunting for them. If this audit becomes routine, the
-right move is to promote the KS ladder into `behavior/analyses/` as a real
-derivative rather than keep rewriting it.
+- `ssmcomparison`: 192/192 converged cells (32 subjects x all/Fast/Slow x
+  bounded integrator/urgency);
+- `ssmcomparisonstats`: per-subject AIC/BIC comparisons and urgency parameter
+  contrasts;
+- `ssmtrialpredictions`: 65,276 trial-model prediction rows; and
+- `ssmtimecourse`: 208,960 rows containing criteria, predicted/observed
+  decision-time densities, and noise-free decision-variable trajectories.
 
-**Nothing in F01-F03 or F14-F26 has had this treatment.** Given the hit rate
-so far, assume those write-ups contain the same class of error until checked.
+The present code already drives both models with each trial's token-by-token
+evidence path, fixes the token-task filter time constant at 200 ms, and compares
+the Thura et al. bounded integrator with multiplicative urgency gating. This is
+enough to prototype a figure locally without fitting anything.
 
-## Rejected: merging F04 and F05
+Do not yet treat the derivatives as definitive. Their sidecars identify the
+cluster inputs but do not record a Git commit or the complete fit settings.
+Moreover, 14/96 urgency-scale estimates are within 1% of the upper parameter
+bound, 5/96 urgency-onset estimates approach their upper bound, and standard
+errors are missing for 38/96 urgency-scale and 41/96 urgency-onset cells. The
+first session task is therefore provenance and identifiability audit, not
+immediate publication interpretation.
 
-Prototyped at `scratchpad/merged_f04_f05.py` (self-contained, reads the real
-derivatives, writes a PNG). One raincloud panel — Fast, Slow, dashed
-divider, Easy, Ambiguous, Misleading — plus one panel with all five quantile
-functions, conditions dashed.
+### What the 2012 paper adds
 
-It works and looks good as an *overview*, but the user chose to keep F04 and
-F05 separate, and the reasons are worth recording:
+The paper is not a replacement formula for the descriptive criterion plot.
+It proposes a mechanistic account: sensory evidence is represented through a
+short low-pass/novelty-sensitive process, multiplied by a growing urgency
+signal, and compared with a fixed neural threshold. Its decisive comparison
+uses stimuli whose evidence changes within a trial, because constant evidence
+makes urgency gating and bounded integration difficult to distinguish.
 
-- Both findings are about the gap between two specific curves, and both
-  become unreadable among five. F04's stretch and F05's
-  ambiguous-vs-misleading convergence are shown by their own figures and
-  merely asserted by the merged one.
-- Conditions and classes are **not disjoint** — every class trial is also a
-  Fast or Slow trial — so one axis invites a Fast-vs-Easy read that is not a
-  contrast. Dashed-vs-solid mitigates but does not prevent it.
-- Cisek keeps them separate too (2009 Fig. 3 = condition, Fig. 4 = class,
-  identical grammar, two figures).
+The paper's random-dot implementation used a 100-ms filter and a linear
+urgency example. Those values are not constants of nature. Our tokens arrive
+every 200 ms and remain visible, so the filter time constant and urgency form
+must be estimated or tested over a prespecified grid rather than copied.
 
-Two implementation gotchas found there, if anyone revives it: `raincloud`
-connects subjects across *adjacent* categories, so a single five-position
-axis draws a meaningless connector from each subject's Slow mean to their
-Easy mean (use two sub-axes sharing a y-scale); and `errorbar` puts the
-series label on the `ErrorbarContainer`, not the `Line2D`, so
-`ax.get_lines()` reports every curve as `_nolegend_`.
+### Models to compare
 
-## Conventions established across both sessions (apply to F08+ too)
+Fit all models to the same eligible trials, response definition, motor-time
+correction, likelihood, and validation folds:
 
-These aren't one-off fixes — they're patterns that showed up more than once
-and should be the starting point for every remaining figure, not
-rediscovered from scratch.
+1. **Bounded integration:** accumulate all signed evidence samples until a
+   fixed bound is crossed.
+2. **Urgency gating:** apply a short low-pass filter to the current/novel
+   evidence signal, multiply by an evidence-independent urgency function
+   (start with `u(t) = b + mt`), and cross a fixed threshold.
+3. **Collapsing/adaptive bound:** accumulate evidence while allowing the
+   decision bound to fall with time. This is required because it can mimic the
+   same declining behavioral criterion.
+4. **Additive urgency sensitivity:** include or formally discuss an additive
+   urgency variant. The 2012 paper itself did not conclusively identify
+   multiplicative over additive urgency.
 
-**Style (`meg_tokens/reports/style.py`)**
-- Fonts are bigger than the original design across the board: `font.size`
-  13, `axes.labelsize` 16, `axes.titlesize` 18, tick labels 13, legend 13
-  (all in `_PUBLICATION_RC`). `panel_label` (A/B/C letters) at fontsize 17.
-  `annotate_stat_block`'s default text size is 9 (`annotations.py`).
-- Tick *marks* are removed globally (`xtick.major.size`/`ytick.major.size`
-  = 0) but numeric tick *labels* are always kept — declutter by reducing
-  *how many* ticks (usually 2–3 per axis), never by hiding the numbers.
-- `SAVEFIG_DPI` (400) must be passed explicitly to every `fig.savefig()`
-  call outside `apply_publication_style()`'s context — the rc value doesn't
-  survive past the `with` block. Already fixed centrally in
-  `behavior_summary.py`; don't reintroduce a bare `fig.savefig(path)` call
-  anywhere in the reporting pipeline.
-- `style.figure_grid`'s `width` param accepts `"single"`, `"double"`, or a
-  raw float (inches) for one-off widths that don't fit either preset.
-- Default `panel_height_in` (2.85) is usually too short at these font
-  sizes — most figures touched this session bumped it to 3.4–4.6 depending
-  on content. Check the real render before assuming the default is enough.
+Use held-out predictive likelihood as the primary comparison when feasible;
+retain BIC as a secondary summary for compatibility with existing
+derivatives. Perform simulation-based model recovery before interpreting a
+winner. Report parameter uncertainty and per-subject model preferences, not
+only a group mean.
 
-**Annotation**
-- **The standard convention for any bracket/comparison annotation is
-  `Δ = value [unit] marker`** (marker from `significance_marker()`, e.g.
-  `***`/`n.s.`) — never spelled-out `t(df) = …, p = …` text on the figure
-  itself. Hit the same bug three separate times (F04 panel B, F05 panel A,
-  F06) before this became the fixed rule: full stat text is wide enough to
-  collapse `constrained_layout`'s axes to zero width on anything narrower
-  than a full double-width panel. The exact t/p/dz values still live in the
-  derivative table and the JSON sidecar — they don't need to be spelled out
-  on the plot.
-- Any multi-line or long annotation string must be wrapped/shortened to fit
-  the *specific panel's actual column width*, not the full figure width.
-  This is the single most common bug this session — an unwrapped long line
-  doesn't just visually overflow, it distorts `constrained_layout`'s space
-  allocation for that axes (can happen vertically *or* horizontally
-  depending on where the text sits).
-- Non-essential methodological detail (e.g. "unclassified trials excluded",
-  "validated_15row only, all_logged still used elsewhere") belongs in the
-  `FigureSpec.caveat` field, not the plotted title — it still reaches
-  `--list-figures` and the JSON sidecar.
-- Before placing a legend or text box in a corner, check what's *actually*
-  empty for that specific chart's data shape — don't assume any corner is
-  safe by default. "Lower right" was safe for F04 (paired scatter, two fixed
-  x-positions) but clipped curves on F05 (rising quantile functions) and F06
-  (rising cumulative curves with a wide legend). A legend's own footprint
-  (more entries or longer labels = bigger box) can intrude into a corner
-  that's nominally empty of data.
-- Two-color "direction" line convention (`paired_slope`, `raincloud` in
-  `panels.py`): gray (`style.SUBJECT_LINE`) = consistent with the group's
-  direction, red (`style.CONDITION_COLORS["fast"]`, reused deliberately to
-  stay inside an already-validated color scope rather than introducing a
-  new one) = against it. For `raincloud` this is per *leg* (each pair of
-  adjacent categories), not per subject overall.
+### Ordered work for the next session
 
-**Scientific claims (added session 2)**
-- Never describe a set of numbers with a word the numbers do not support.
-  Before writing "the same", "unchanged", "identical", or "shift", compute
-  the comparison that word implies and cite its p-value.
-- A statistic that is invariant under the hypotheses being compared is not
-  evidence for either. Skewness cannot separate a delay from a stretch; CV
-  can. Check that the statistic *moves* under one hypothesis and not the
-  other before it goes in a figure or a Result paragraph.
-- `p > .05` is never "no effect". Report an equivalence bound (TOST, or the
-  90% CI) so the claim is "we exclude effects larger than X", which is
-  checkable.
-- Group-level significance and per-subject consistency are different claims.
-  Report both when they diverge: ambiguous-vs-misleading is p = 7e-6 at the
-  group level and detectable in only 5/32 individual subjects, and a reader
-  seeing only the first would infer the wrong thing.
-- Cross-references rot. When a finding is rewritten, grep for every other
-  section that describes it ("shape-invariant shift", "same signature as
-  ...") and fix those too.
+**Stage A - audit and prototype from existing derivatives**
 
-**Process**
-- Real bugs only show up on real data. After any change: run
-  `uv run pytest tests/reports/`, then regenerate the actual figure
-  (`uv run meg-tokens --config tokens.toml report behavior --figures <key>`),
-  then `Read` the resulting PNG — and crop closely around anything
-  suspicious (legends, brackets, corners) rather than trusting a full-figure
-  thumbnail glance.
-- When a builder stops reading a derivative or column, remove it from that
-  `FigureSpec`'s `requires` tuple and the metadata's `columns_read` — keep
-  the registry honest.
-- When two "views"/panels look redundant, *check they actually agree*
-  numerically before dropping one (done for F06's `all_logged` vs.
-  `validated_15row`) — don't assume redundancy from a visual glance alone.
-- `docs/behavior.md` → "## Findings" is the **only** place Result/
-  Interpretation write-ups with real numbers belong (bold **Result.** /
-  **Interpretation.** paragraphs, ending with `Figure: <key> (F0X).`).
-  `docs/behavior_reporting_plan.md` is design/plan documentation only
-  (Reads/Layout/Chart-type justification/Annotation) — keep it in sync with
-  what actually shipped when it drifts, but never duplicate the Results
-  numbers there, not even as a cross-reference pointer (that doc is
-  transitional and will eventually go away — for F06 its whole section was
-  deleted outright, not pointer-trimmed, once the finding had a home in
-  `behavior.md`). `docs/behavior_roadmap_results.md` is being trimmed of
-  duplicated narrative the same way as it's found.
+1. Confirm the cluster commit and constants that generated the local SSM
+   tables (`FILTER_TAU_S`, parameter bounds, solver step, contaminant, seed,
+   eligibility, and motor-time definition). If provenance cannot be recovered,
+   regard the tables as a visual prototype only.
+2. Audit boundary hits, missing Hessian standard errors, subject-level model
+   wins, and whether the large BIC advantage is driven by a few cells.
+3. Regenerate the existing model-comparison and model-internals figures
+   locally. Use them to choose the first 2012 composition, not as the final
+   result.
+4. First figure draft: (A) fixed integrator criterion versus urgency-equivalent
+   falling criterion, (B) observed and predicted correct/error decision-time
+   densities, (C) model decision-variable trajectories by trial class, and
+   (D) per-subject predictive or information-criterion difference. Every
+   repeated field in `ssmtimecourse` must be de-duplicated before averaging.
 
-## Status: layout reviewed vs. science audited
+**Stage B - make the comparison scientifically discriminating**
 
-| Figure | Key | Layout | Science |
-|---|---|---|---|
-| F01 | `ssmcomparison-deltabic` | not reviewed | **not audited** — source of the H1 numbers cited in F04 |
-| F02 | `ssmcomparison-urgencyscale` | not reviewed | **not audited** — source of the H2 numbers cited in F04 |
-| F03 | `ssmcomparison-urgencyparams` | not reviewed | **not audited** |
-| **F04** | `dtdistribution-condition` | done (relaid out session 2) | **audited & rewritten** — proportional stretch |
-| **F05** | `dtdistribution-class` | done | **audited & rewritten** — shape change, not a shift |
-| **F06** | `spdcumulative-class` | done, one panel/view | **audited & rewritten** — equivalence bound |
-| F07 | — | **removed** | figure, analysis layer, tests and plan section all deleted |
-| **F08** | `conditionclass-anova` | done (CI95 bands, no traces) | **audited & rewritten** — log-scale interaction; separability |
-| **F09** | `choiceside-asymmetry` | done (3 difference panels, was 3x3) | **audited & corrected** — no reliable side bias after hand-specific motor baselines |
-| ~~F12~~ | `lapses-quality` | **removed** | merged into F13 panel E; finding kept in `behavior.md` |
-| **F10** | `timeontask-drift` | done (CI bands, within-block deciles) | **audited & rewritten** — drift bounded; class-scheduling confound |
-| **F11** | `conditionorder-balance` | done (widened, compact stats) | **audited & rewritten** — within-group tests; null bounded |
-| **F13** | `summary-cohort` | done (5 panels, shared subject axis; broken-axis QC in E) | **audited** — cohort composition + quality census |
-| F14–F26 | see `docs/behavior_reporting_plan.md` | not reviewed | **not audited** |
+5. Specify the collapsing/adaptive-bound and additive-urgency alternatives
+   before looking at their performance. Fit every model to identical trials
+   and response coding.
+6. Add deterministic train/test folds or another prespecified held-out
+   scheme. Keep BIC only as a compatibility summary; use held-out predictive
+   likelihood for the primary comparison when feasible.
+7. Run parameter recovery and model recovery. Widen or reparameterize bounds
+   only on the basis of that recovery audit, not because a preferred model
+   loses.
+8. Persist model diagnostics, fold-level scores, recovery results, and new
+   predictions as derivatives.
 
-Registry is 24 figures after F07's removal and F12's merge into F13
-(`--list-figures` to confirm).
+**Stage C - paper-specific behavioral diagnostic**
 
-## Practical pointers
+9. Create a prespecified matched-sequence derivative for early bias followed
+   by neutralized/reversed late evidence. Report sequence counts and subject
+   coverage before testing behavior.
+10. Compare choices, decision-time distributions, and evidence at commitment
+    between matched histories, then compare each fitted model's prediction of
+    the same contrast.
+11. Treat reward-rate optimality as a separate optional panel. The local
+    trial-feature table does not contain the full payoff/intertrial timing
+    schedule. Recover those details from the cluster raw logs and task
+    specification first; otherwise label the result a mechanistic comparison,
+    not an optimality test.
+12. Run all refits through Slurm on a compute node. Local work is limited to
+    derivative inspection, figure prototyping, and tests until `pyddm` is
+    deliberately installed.
 
-- Laptop data root: `tokens.toml` →
-  `data_root = "/Users/hamzaabdelhedi/Projects/data/meg-tokens"`.
-  Derivatives live under `<data_root>/BIDS/derivatives/sub-group/{beh,fig}/`.
-- Regenerate one figure: `uv run meg-tokens --config tokens.toml report behavior --figures <key>`.
-- Regenerate the distributional/design derivatives (not the expensive SSM
-  fits, which are pooled from a prior `behavior ssm-fit` run, not
-  recomputed): `uv run meg-tokens --config tokens.toml behavior characterization`.
-- List all figure keys/groups: `uv run meg-tokens --config tokens.toml report behavior --list-figures`.
-- Report test suite: `uv run pytest tests/reports/ -q` (57 passed, all
-  synthetic-fixture based).
-- Behavior analysis test suite: `uv run pytest tests/behavior/ -q`
-  (422 passed, 5 skipped).
-- **Known-failing, unrelated:** `tests/test_batch_erp_parcellation.py` has 6
-  failures in the MEG/ERP path (`workflows/erp.py` -> `behavior/tables.py`
-  -> `schema.py`, "Token directions must contain only 1 and 2" — a bad test
-  fixture). Confirmed pre-existing by stashing the behavior-module changes
-  and re-running. Do not chase these from the reporting side.
-- After changing anything upstream of `dt_ms` (e.g. the motor baseline),
-  rerun `behavior analyze` *then* `behavior characterization` — the first
-  rebuilds `trialfeatures`, the second everything derived from it.
+### Token-task diagnostic analogous to the 2012 experiment
+
+Construct matched sequence families in the stimulus/correct-target frame:
+
+- sequences with an early bias that is later neutralized or reversed;
+- matched sequences with the opposite early bias but comparable late evidence;
+- decisions made only after the histories converge enough for the models to
+  make different predictions.
+
+Then compare decision-time distributions, choices/accuracy, and evidence at
+commitment. A long-timescale integrator predicts a persistent influence of
+the early samples; a short-filter urgency model predicts that sufficiently old
+evidence contributes little once the later evidence is matched. Matching must
+be declared before looking at the behavioral difference, and the analysis
+must check trial counts and subject coverage before testing.
+
+### Reward-rate analysis
+
+The 2012 optimality claim concerns reward rate, not merely a better curve fit.
+Reconstruct the actual payoff and timing schedule for Fast and Slow blocks,
+including decision time, movement/nondecision time, remaining-token time, and
+intertrial interval. Compare the best fixed criterion with a time-varying
+criterion under the empirical sequence distribution. If any payoff or timing
+component is unavailable, label the result a mechanistic fit rather than an
+optimality test.
+
+### Acceptance criteria
+
+- Prespecified eligibility and matching rules.
+- Identical observation model and validation data across candidate models.
+- Parameter-recovery and model-recovery simulations.
+- Subject-level and population-level predictive comparisons.
+- Posterior-predictive checks for decision-time distributions, accuracy,
+  condition effects, and early-bias sequence families.
+- Explicit statement of what is identified: urgency-like time dependence is
+  not automatically proof of multiplicative urgency or of reward-rate
+  optimality.
+- A plain-language result entry in `docs/behavior.md` only after the audit is
+  complete.
+
+## Execution rules
+
+- Run lightweight report regeneration locally from the copied group
+  derivatives.
+- Run characterization or model fitting against the full cluster data through
+  Slurm on a compute node, never on a login node.
+- Cluster command pattern:
+  `uv run meg-tokens --config tokens.toml <command>` inside `~/meg-tokens`.
+- Regenerate a report figure with:
+  `uv run meg-tokens --config tokens.toml report behavior --figures <key>`.
+- Before syncing code, inspect `git status`; do not overwrite unrelated user
+  changes in the cluster checkout.
+- Persist every inferential result to a derivative before plotting it. The
+  plotting layer may compute display summaries only.
+
+## Current review boundary
+
+| Figure family | Layout/science state |
+| :--- | :--- |
+| F01-F03 | Pooled derivatives are local and can be plotted; provenance, parameter identifiability, and science are not audited. Refits are cluster-only. |
+| F04-F06 | Audited and rewritten. |
+| F07 | Removed. |
+| F08-F11 | Audited and rewritten. |
+| F12 | Removed after merging its quality census into F13. |
+| F13 | Audited. |
+| Exact-posterior and later behavioral figures | Not audited; follow the protocols above rather than trusting current prose. |
+
+Known unrelated issues should not derail the reporting work:
+
+- Optional `pyddm` is absent locally, so some sequential-sampling prediction
+  tests cannot run until that dependency is deliberately installed.
+- `tests/test_batch_erp_parcellation.py` has pre-existing MEG/ERP fixture
+  failures around token-direction validation. Do not treat these as evidence
+  of a behavior-report regression.
+- Before every cluster sync, inspect both local and remote `git status` and
+  preserve unrelated changes. Submit all characterization/model jobs through
+  Slurm on a compute node, never directly on the login node.

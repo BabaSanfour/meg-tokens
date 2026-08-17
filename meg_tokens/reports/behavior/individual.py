@@ -16,7 +16,7 @@ from meg_tokens.reports.panels import correlation_heatmap, forest, scatter_fit
 
 _PROFILE_MEASURES = (
     "mean_dt_ms", "sat_adjustment_ms", "urgency_slope_per_second",
-    "criterion_slope_per_token", "accuracy_log_odds_per_unit",
+    "criterion_slope_sum_log_lr_per_second", "accuracy_log_odds_per_unit",
     "percent_correct", "lapse_rate",
 )
 
@@ -65,10 +65,10 @@ def build_individualcorrelations_matrix(tables: BehaviorTableSet) -> tuple[Figur
 
 _SCATTER_PAIRS = (
     ("mean_dt_ms", "accuracy_log_odds_per_unit"),
-    ("mean_dt_ms", "criterion_slope_per_token"),
+    ("mean_dt_ms", "criterion_slope_sum_log_lr_per_second"),
     ("mean_dt_ms", "urgency_slope_per_second"),
     ("mean_dt_ms", "percent_correct"),
-    ("urgency_slope_per_second", "criterion_slope_per_token"),
+    ("urgency_slope_per_second", "criterion_slope_sum_log_lr_per_second"),
     ("sat_adjustment_ms", "mean_dt_ms"),
 )
 
@@ -113,7 +113,7 @@ def build_individualprofile_scatter(tables: BehaviorTableSet) -> tuple[Figure, d
 _SPECIESCOMPARISON_FACETS = (
     ("Milliseconds", ["decision_time_easy_ms", "decision_time_ambiguous_ms", "decision_time_misleading_ms"]),
     ("Probability", ["success_probability_at_decision_easy", "success_probability_at_decision_ambiguous", "success_probability_at_decision_misleading"]),
-    ("Log odds per token", ["criterion_slope_log_odds_per_token"]),
+    ("SumLogLR per second", ["criterion_slope_sum_log_lr_per_second"]),
     ("BIC", ["urgency_minus_integrator_bic"]),
     ("Criterion-seconds", ["urgency_scale_criterion_seconds", "urgency_scale_fast_minus_slow"]),
 )
@@ -129,7 +129,7 @@ _COMPARABLE_TO = {
     "success_probability_at_decision_easy": "SP at decision by class (Thura et al. 2012)",
     "success_probability_at_decision_ambiguous": "SP at decision by class (Thura et al. 2012)",
     "success_probability_at_decision_misleading": "SP at decision by class (Thura et al. 2012)",
-    "criterion_slope_log_odds_per_token": "evidence at commitment (Thura et al. 2012)",
+    "criterion_slope_sum_log_lr_per_second": "evidence at commitment (Cisek et al. 2009)",
     "urgency_minus_integrator_bic": "urgency gating preferred over integration (Cisek 2009; Thura 2012)",
     "urgency_scale_criterion_seconds": "urgency signal fit (Thura & Cisek 2014; Carland et al. 2019)",
     "urgency_scale_fast_minus_slow": "urgency differs Fast/Slow (Cisek et al. 2009)",

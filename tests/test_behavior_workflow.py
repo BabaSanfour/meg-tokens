@@ -383,7 +383,10 @@ def test_analyze_behavior_characterization_writes_every_analysis_table(tmp_path)
     cells = pd.read_csv(layout.behavior_analysis("conditionclass"), sep="\t")
     assert set(cells["subject"]) == {"H01", "H02", "H03"}
     criterion = pd.read_csv(layout.behavior_analysis("criteriondecline"), sep="\t")
-    assert set(criterion["response"]) == {"logged_spd", "logged_spd_log_odds"}
+    assert set(criterion["response"]) == {
+        "chosen_sum_log_lr_first_order_at_decision"
+    }
+    assert set(criterion["predictor"]) == {"dt_ms"}
 
 
 def test_sequential_sampling_fits_are_written_one_table_per_subject(tmp_path):

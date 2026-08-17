@@ -6,9 +6,11 @@ detailed Phase 1 tests (including the dt_ms-not-rawRT regression guard).
 """
 
 import matplotlib.pyplot as plt
+import numpy as np
 import pytest
 
 from meg_tokens.io import DerivativeLayout
+from meg_tokens.reports import style
 from meg_tokens.reports.behavior import design, evidence, individual, modeling, sequential
 from meg_tokens.reports.behavior._tables import BehaviorTableSet
 
@@ -181,13 +183,49 @@ def test_summary_cohort(design_tables):
     assert "Nothing is removed" in metadata["caveat"]
 
 
-# --- evidence.py (F14-F18) --------------------------------------------------
+# --- evidence.py ------------------------------------------------------------
 
 
-def test_criteriondecline_tokens(design_tables):
-    figure, metadata = evidence.build_criteriondecline_tokens(design_tables)
-    _assert_basic_figure(figure, metadata, min_axes=4)
+def test_criteriondecline_sumloglr(design_tables):
+    figure, metadata = evidence.build_criteriondecline_sumloglr(design_tables)
+    _assert_basic_figure(
+        figure, metadata, min_axes=2, require_stat_text=False
+    )
+    assert metadata["kind"] == "first_order_criterion"
+    assert "design_time_alignment_valid" in metadata["eligibility"]
+    assert "decision_token_index > 0" in metadata["eligibility"]
+    assert "display-only" in metadata["method"]
+    assert metadata["display_window_s"][0] == 0.0
+    assert metadata["display_window_s"][1] > 0.0
+    assert metadata["display_min_subjects_per_200ms_bin"] >= 1
+    assert isinstance(metadata["n_eligible_trials_after_3s"], int)
+    assert isinstance(metadata["n_eligible_trials_beyond_display"], int)
+    assert isinstance(metadata["clipped_slope_outliers"], list)
     assert metadata["caveat"] is not None
+    ax_data, ax_slopes = figure.axes
+    errorbar_segments = [
+        segment
+        for collection in ax_data.collections
+        if hasattr(collection, "get_segments")
+        for segment in collection.get_segments()
+        if len(segment)
+    ]
+    errorbar_ends = np.concatenate(errorbar_segments)[:, 1]
+    assert ax_data.get_ylim()[0] <= errorbar_ends.min()
+    assert ax_data.get_ylim()[1] >= errorbar_ends.max()
+    assert ax_data.get_yticks() == pytest.approx([0.0, 0.5, 1.0, 1.5])
+    assert ax_slopes.get_ylim()[0] == pytest.approx(-0.5)
+    assert ax_slopes.get_ylim()[1] > max(
+        point.get_offsets()[:, 1].max()
+        for point in ax_slopes.collections
+        if len(point.get_offsets())
+    )
+    assert any(
+        line.get_color() == style.SUBJECT_LINE for line in ax_data.lines
+    )
+    assert [tick.get_text() for tick in ax_slopes.get_xticklabels()] == [
+        "Fast", "Slow"
+    ]
 
 
 def test_urgency_decisiontime(design_tables):

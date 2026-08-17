@@ -94,14 +94,16 @@ def test_urgency_and_criterion_slopes_are_joined_under_distinct_names():
             "slope", [-0.05, -0.04, -0.03, -0.01], response="logged_spd"
         ),
         criterion=_condition_table(
-            "slope", [-0.02, -0.03, -0.01, -0.04], response="logged_spd"
+            "slope",
+            [-0.02, -0.03, -0.01, -0.04],
+            response="chosen_sum_log_lr_first_order_at_decision",
         ),
     )
 
     assert profile["urgency_slope_per_second"].tolist() == pytest.approx(
         [-0.05, -0.04, -0.03, -0.01]
     )
-    assert profile["criterion_slope_per_token"].tolist() == pytest.approx(
+    assert profile["criterion_slope_sum_log_lr_per_second"].tolist() == pytest.approx(
         [-0.02, -0.03, -0.01, -0.04]
     )
 
@@ -321,16 +323,18 @@ def test_each_measure_carries_its_own_one_sample_summary():
     assert row["mean"] == pytest.approx(summary["mean_easy_dt_ms"].mean())
 
 
-def test_the_criterion_slope_is_summarized_on_the_log_odds_scale():
-    """The monkey work reports the accuracy criterion as cumulative log
-    likelihood, so the probability-scale fit is not the comparable one."""
+def test_the_criterion_slope_uses_first_order_sum_log_lr():
+    """The comparable monkey measure is first-order chosen-target SumLogLR,
+    not exact posterior log odds."""
     criterion = pd.concat(
         [
             _condition_table(
                 "slope", [-0.05, -0.04, -0.03, -0.01], response="logged_spd"
             ),
             _condition_table(
-                "slope", [-0.5, -0.4, -0.3, -0.1], response="logged_spd_log_odds"
+                "slope",
+                [-0.5, -0.4, -0.3, -0.1],
+                response="chosen_sum_log_lr_first_order_at_decision",
             ),
         ],
         ignore_index=True,
@@ -339,7 +343,7 @@ def test_the_criterion_slope_is_summarized_on_the_log_odds_scale():
     statistics = comparison_statistics(
         _subject_summary(), criterion=criterion
     ).set_index("measure")
-    row = statistics.loc["criterion_slope_log_odds_per_token"]
+    row = statistics.loc["criterion_slope_sum_log_lr_per_second"]
 
     assert row["n_subjects"] == 4
     assert row["mean"] == pytest.approx(np.mean([-0.5, -0.4, -0.3, -0.1]))
@@ -348,7 +352,9 @@ def test_the_criterion_slope_is_summarized_on_the_log_odds_scale():
 def test_the_criterion_row_is_absent_when_no_fit_is_supplied():
     statistics = comparison_statistics(_subject_summary())
 
-    assert "criterion_slope_log_odds_per_token" not in set(statistics["measure"])
+    assert "criterion_slope_sum_log_lr_per_second" not in set(
+        statistics["measure"]
+    )
 
 
 def _sequential_sampling_fits() -> pd.DataFrame:

@@ -12,9 +12,12 @@ from meg_tokens.behavior.analyses.evidence import (
     criterion_decline,
     criterion_decline_statistics,
     evidence_at_decision_responses,
+    first_order_chosen_sum_log_lr,
+    first_order_criterion_decline,
     reverse_correlation,
     reverse_correlation_statistics,
 )
+from meg_tokens.behavior.math.evidence import FIRST_ORDER_TOKEN_LOG_LR
 
 from tests.behavior.factories import TOKEN_DIRECTIONS, trial_features
 
@@ -109,6 +112,36 @@ def test_both_evidence_scales_are_fitted_against_the_same_predictor():
     slopes = fits.loc[fits["condition"] == "all"].set_index("response")["slope"]
     assert slopes["logged_spd"] < 0 and slopes["logged_spd_log_odds"] < 0
     assert slopes["logged_spd"] != pytest.approx(slopes["logged_spd_log_odds"])
+
+
+def test_first_order_criterion_uses_continuous_time_and_valid_alignments():
+    features = trial_features(
+        dt_ms=[-50, 400, 800, 1200, 1600],
+        decision_token_index=[0, 2, 4, 6, 8],
+        token_lead_at_decision=[0, 4, 3, 99, 1],
+        design_time_alignment_valid=[True, True, True, False, True],
+    )
+
+    fits = first_order_criterion_decline(features)
+    overall = _pooled(fits).iloc[0]
+
+    assert overall["n_trials"] == 3
+    assert overall["predictor"] == "dt_ms"
+    assert overall["slope"] == pytest.approx(-2.5 * FIRST_ORDER_TOKEN_LOG_LR)
+
+
+def test_first_order_sum_log_lr_reverses_errors_into_the_chosen_frame():
+    features = trial_features(
+        token_lead_at_decision=[2, 2],
+        isCorrect=[True, False],
+    )
+
+    values = first_order_chosen_sum_log_lr(features)
+
+    assert values.tolist() == pytest.approx([
+        2 * FIRST_ORDER_TOKEN_LOG_LR,
+        -2 * FIRST_ORDER_TOKEN_LOG_LR,
+    ])
 
 
 def _criterion_fits(n_subjects=4):

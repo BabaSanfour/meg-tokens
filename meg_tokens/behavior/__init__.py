@@ -50,6 +50,10 @@ _EXPORTS = {
     "robust_post_error_slowing": ("meg_tokens.behavior.analyses.sequential", "robust_post_error_slowing"),
     "spd_cumulative_distributions": ("meg_tokens.behavior.analyses.distributions", "spd_cumulative_distributions"),
     "sum_log_lr_profile": ("meg_tokens.behavior.math.evidence", "sum_log_lr_profile"),
+    "first_order_sum_log_lr_profile": (
+        "meg_tokens.behavior.math.evidence",
+        "first_order_sum_log_lr_profile",
+    ),
     "task_trials": ("meg_tokens.behavior.trials", "task_trials"),
     "time_on_task": ("meg_tokens.behavior.analyses.design_effects", "time_on_task"),
     "time_on_task_statistics": ("meg_tokens.behavior.analyses.design_effects", "time_on_task_statistics"),
