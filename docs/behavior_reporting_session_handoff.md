@@ -453,3 +453,855 @@ Known unrelated issues should not derail the reporting work:
 - Before every cluster sync, inspect both local and remote `git status` and
   preserve unrelated changes. Submit all characterization/model jobs through
   Slurm on a compute node, never directly on the login node.
+
+## Thura et al. (2012) mechanistic analysis: live continuation handoff
+
+This section is the durable source of truth for the unfinished F27 analysis.
+It was updated while production fitting was running on 2026-08-17. Do not
+replace the production outputs with the older pooled SSM derivatives, a
+one-start smoke fit, or a local prototype. Do not commit or push any of this
+work before Karim reviews it.
+
+### Verified repository, data, software, and literature state
+
+- The required starting commit is present locally and on the cluster:
+  `df783f5fe31a2800bb0319cbc4a3280ab86973f4` (`df783f5`,
+  `feat(behavior): finalize first-order criterion analysis`) on `main`.
+- Local checkout: `/home/karim/Projects/meg-tokens`. The only unrelated local
+  untracked file is `uv.lock`; preserve it.
+- Cluster checkout: `fir:~/meg-tokens`. Preserve the unrelated cluster
+  `logs/`, `scripts/render_figs.sh`, and `scripts/rerun_behavior.sh`. The
+  checkout was deliberately fast-forwarded from `302c342` to `df783f5` before
+  production work. Never use `rsync --delete`.
+- Cluster data root: `/scratch/hamza97/meg-tokens`; the data are not on the
+  external drive for fitting. The local configured data root remains
+  `/media/karim/Hamza/meg-tokens` for retrieved final derivatives/reporting.
+- The original 208 active SSM derivative files were copied before fitting to
+  `/scratch/hamza97/meg-tokens/thura2012_preanalysis_ssm_20260817`. Treat those
+  files as historical only: their generating commit/settings could not be
+  established.
+- A wrong-base cluster sync was detected and cancelled before execution. Its
+  preserved diagnostic patch is
+  `/scratch/hamza97/meg-tokens/thura_sync_wrongbase_20260817.patch`.
+- Cluster environment: Python 3.11.4, PyDDM 0.9.0, NumPy
+  2.4.2+computecanada, pandas 3.0.0+computecanada, SciPy
+  1.17.0+computecanada, and Slurm 24.11.6. There are 32 eligible subject IDs.
+- `2022.06.14.494674v1.full.pdf` was not present locally. The primary paper,
+  Thura et al. (2012), DOI `10.1152/jn.01071.2011`, was read directly. Cite
+  Thura et al. (2012) and the 2009 paper directly; never call either analysis
+  “Paul's method.”
+
+### Implemented model equations and conventions
+
+The explicit four-model API is in
+`meg_tokens/behavior/analyses/sequential_sampling.py`, selected with
+`behavior ssm-fit --model-set mechanistic`:
+
+1. `ddm`: fixed-bound, un-leaky evidence integration baseline.
+2. `urgency`: the primary Thura et al. (2012) reproduction. Token evidence is
+   low-pass/leaky filtered with fixed `FILTER_TAU_S = 0.2`, multiplied by a
+   linearly increasing urgency signal, and compared with a fixed threshold.
+   The equivalent criterion is hyperbolically declining, `T / (b + m t)`.
+3. `collapsing`: an un-leaky evidence integrator with a hyperbolically
+   collapsing/adaptive bound, included as an alternative explanation.
+4. `additive_urgency`: a sensitivity model with time-growing drive toward the
+   current evidence-preference sign. A common additive drive to two race
+   channels cancels in a signed difference, so this label-symmetric
+   parameterization is explicitly not claimed to be the 2012 mechanism.
+
+Shared numerical/statistical conventions are explicit and persisted:
+
+- 200-ms token interval; decision time is relative to the first token jump;
+  evidence is held after the final token in the baseline fits;
+- PyDDM absorbing finite-grid first passage with `dt = 0.01`, `dx = 0.01`, and
+  no separate boundary-overshoot correction;
+- 2% uniform contaminant/lapse mixture (`MIXTURE_COEF = 0.02`);
+- hand-specific motor-corrected nondecision time, fitted per
+  subject × condition × model cell;
+- the same canonical `primary_analysis_eligible` trials used elsewhere, with
+  all exclusions/counts persisted rather than silently changed;
+- maximum-likelihood fitting with three deterministic starts for production
+  full-data fits, start objectives/convergence recorded, optimizer and
+  boundary diagnostics persisted, and finite-difference observed-information
+  Hessian SEs only for final full-data fits;
+- condition cells are `all`, `fast`, and `slow`, with parameters fit separately
+  by subject, condition, and model.
+
+The 2009 chosen-target SumLogLR result is a model-light first-order behavioral
+measurement. This 2012 analysis is a mechanistic process-model comparison.
+That distinction is implemented in the code and must remain explicit in the
+figure text and interpretation.
+
+### Implemented restartable workflows and checks
+
+- `behavior ssm-aggregate` rejects stale one-start/smoke derivatives, requires
+  exact 32 × 3 × 4 coverage (384 rows), three start diagnostics per row,
+  sidecars, uniform source hash/commit, and pools subject derivatives only
+  after those gates pass.
+- `behavior ssm-evaluate` and the evaluation array implement deterministic,
+  response-stratified three-fold held-out evaluation. Expected coverage is
+  32 × 3 folds × 4 models × 3 conditions = 1,152 rows. Failed cells remain
+  explicit. Per-trial predictions, weighted held-out statistics, fitted
+  correct/error decision-time quantiles, accuracy, condition contrasts,
+  boundary/SE/convergence audits, and subject/group posterior-predictive checks
+  are persisted.
+- Recovery is a restartable 12-repetition array. Each repetition uses a unique
+  deterministic interior Latin-hypercube-like truth point for every model
+  parameter and two fit starts. It produces 15 parameter-recovery and 16
+  model-recovery rows per repetition, followed by an aggregate/confusion stage.
+- Robustness is a 192-task subject × configuration array, not a monolithic
+  login-node job. Six configurations are fit: baseline, `tau100`, `tau300`,
+  `solver20`, `post_horizon_evidence_zero`, and `expanded_bounds`. The
+  post-horizon configuration is an evidence-horizon test, not an overshoot
+  correction. Expected merged fit coverage is 2,304 rows.
+- Exclusion robustness refits the strict subset
+  `primary & token_log_rows == 15 & design_time_alignment_valid` with two
+  starts for all 32 subjects. The verified real-data census is 10,961 strict
+  trials versus 16,324 primary trials, with 32 subjects, 64 Fast/Slow cells,
+  minimum 56 trials/cell, and no cell below 50. The complete-token and timing
+  masks are identical on current data, so no duplicate second refit is run.
+  The aggregate compares within-population model contrasts rather than raw BIC
+  values across different sample sizes. H20 leave-one-subject group
+  sensitivity remains a separate exclusion diagnostic.
+- Every new sidecar records the base commit, dirty status, deterministic source
+  SHA-256, stage/eligibility scope, software versions, parameter ranges, and
+  solver/timing conventions. Slurm logs record command, host, environment,
+  commit, dirty state, start/end time, and output paths.
+- The current F27 builder requires the held-out group statistics and creates a
+  publication-quality four-panel figure: criterion comparison; observed versus
+  predicted correct/error decision-time distributions; decision-variable
+  trajectories; and per-subject held-out model comparison. It deduplicates
+  repeated time-course fields and uses subject-balanced summaries.
+
+Local validation before production submission:
+
+- broad behavior/report suite: 516 passed, 5 skipped;
+- workflow/CLI suite: 51 passed, 1 skipped;
+- latest focused audit: 51 passed, 1 skipped;
+- `compileall`, every Thura shell-script syntax check, and `git diff --check`
+  passed. Rerun the broad relevant suites after retrieving real results and
+  after the final documentation/figure fixes.
+
+### Frozen matched-sequence diagnostic
+
+The matching rule was frozen before inspecting outcomes and never matches on
+the final response:
+
+- represent stimuli in the correct-target frame;
+- require opposite early evidence signs at jump 3 with identical absolute
+  lead;
+- require equal lead at jump 6 (600 ms/three filter time constants later);
+- require maximum trajectory distance ≤ 2 over jumps 6–15;
+- globally sort candidates by trajectory RMSE and stable trial IDs, then greedily
+  form deterministic one-to-one pairs from stimulus information only;
+- analyze the response subset only after pairing, requiring both decisions to
+  occur after jump 6, and compute model predictions conditional on first
+  passage after convergence.
+
+The real-data census check retained 1,955 stimulus-only pairs and 614
+post-convergence response pairs across 29 subjects: Fast 310 pairs/27 subjects,
+Slow 304 pairs/28 subjects. Early and convergence evidence mean differences
+were exactly zero. These counts are implementation validation only until the
+Slurm-generated evaluation derivatives are merged. Treat this as a
+complementary behavioral diagnostic, never proof of a unique urgency mechanism.
+
+### Reward-rate/optimality decision
+
+Do not run or claim a reward-rate optimum from the present data contract. The
+repository/acquisition material inspected so far does not verify the reward
+values, error/timeout penalties, full movement/nondecision contribution, or
+the complete remaining-token/intertrial timing schedule needed for a defensible
+reward-rate calculation. The existing ITI fingerprint code is not a reward
+schedule. If authoritative acquisition/task code supplying every missing value
+is later found, document it and then add the analysis; otherwise the final
+report must explicitly omit the optimality claim.
+
+### Cluster job ledger and current state
+
+Cancelled before producing accepted results:
+
+- `55221612`: wrong-base attempt, caught/cancelled before execution;
+- `55224933`: obsolete metadata-correction attempt, cancelled before execution.
+
+Diagnostic smoke:
+
+- `55225675_0`: H01 one-start smoke, completed in 17:26 and validated the
+  cluster pathway. It is intentionally rejected by the production aggregator
+  and is not an accepted production fit.
+
+Production primary fit:
+
+- parent array `55227660`, submitted as
+  `sbatch --array=0-31%8 scripts/thura2012_fit_array.sh tokens.toml 3`;
+- requested resources: eight CPUs/task, 8-hour limit; logs are
+  `fir:~/meg-tokens/logs/thura12-fit-55227660_%a.out`;
+- exact generating source hash:
+  `979b517caf2427d424aa541226f04e2a10948ab7957066981d4d0494f2fc1d2f`;
+- tasks 0–7 (H01–H08) completed with exit 0 in 36:51–58:15 and passed row,
+  three-start, optimizer, convergence, fit-error, and source-hash checks;
+- task 11 (H12) completed with exit 0 in 34:02 and passed the same checks;
+- all 32 tasks subsequently completed with exit 0. Task runtimes were
+  31:24--1:13:38. The accepted aggregate contains 384 rows (32 subjects x
+  three conditions x four models), exactly three starts per cell, 384/384
+  optimizer successes, 384/384 converged fits, no fit errors, and uniform
+  source/commit provenance.
+
+The exact primary source was archived before any downstream resync:
+
+- patch:
+  `/scratch/hamza97/meg-tokens/thura2012_primary_source_979b517caf2427d424aa541226f04e2a10948ab7957066981d4d0494f2fc1d2f.patch`
+  (SHA-256
+  `5ae35e093a9d886619e5e2a6fdd91ab4aad3223cb983a9a24bc34ccd2b24cdb4`);
+- source tarball:
+  `/scratch/hamza97/meg-tokens/thura2012_primary_source_979b517caf2427d424aa541226f04e2a10948ab7957066981d4d0494f2fc1d2f.tar.gz`
+  (SHA-256
+  `21da0b73fa38d4fd59934f2018e5660dcd9fb54dc2a29083fd4051afa12214b8`).
+
+The first eight subjects already show why recovery/expanded-bound work cannot
+be skipped: all 24 urgency cells converged, but 12/24 urgency-scale SEs and
+12/24 urgency-onset SEs were missing; several urgency-scale estimates were at
+or near 2.0. Most generic `boundary_hit` flags also include a nondecision-time
+lower-bound flag, so final reporting must separate upper urgency-bound hits,
+nondecision lower-bound hits, optimizer convergence, and Hessian uncertainty
+failure. Do not interpret this partial cohort as a scientific result.
+
+### Authoritative stop point for the next model (2026-08-18)
+
+This section supersedes the earlier live snapshots. The current model is being
+stopped at the user's request. Do not restart completed primary or held-out
+fits. Do not cancel the active recovery array. There has been no commit or
+push. No agent-side monitoring loop or scheduled wait remains active in this
+session; the recovery array continues independently under Slurm. The next
+session must inspect Slurm directly before acting on the snapshot below.
+
+Repository and synchronization state:
+
+- local repository: `/home/karim/Projects/meg-tokens`, branch `main`, HEAD
+  `df783f5fe31a2800bb0319cbc4a3280ab86973f4`;
+- cluster repository: `fir:~/meg-tokens`, same HEAD; data root
+  `/scratch/hamza97/meg-tokens`;
+- all Thura implementation and Slurm files needed by the active recovery array
+  are already on the cluster. Do **not** sync either documentation or code
+  while recovery tasks remain queued: every recovery task must see the same
+  frozen source tree and source hash;
+- preserve local unrelated `uv.lock` and cluster unrelated/untracked `logs/`,
+  `scripts/render_figs.sh`, and `scripts/rerun_behavior.sh`. Never use a
+  deleting rsync, reset, overwrite, commit, or push.
+
+Completed production jobs and failures that must remain in the audit trail:
+
+- primary array `55227660`:
+  `sbatch --array=0-31%8 scripts/thura2012_fit_array.sh tokens.toml 3`; all 32
+  tasks completed with exit 0 (31:24--1:13:38). Its aggregate job `55262390`
+  completed with exit 0 in 1:52;
+- initial held-out array `55272741` was deliberately cancelled after about two
+  hours because the original four-hour limit could not accommodate observed
+  progress (only 11--18/36 fits per task). It produced no accepted outputs.
+  `scripts/thura2012_evaluate_array.sh` now has a 12-hour limit;
+- replacement held-out array `55290226`:
+  `sbatch --array=0-31%16 scripts/thura2012_evaluate_array.sh tokens.toml`; all
+  32 tasks completed with exit 0 (2:48:44--4:59:26), and all 1,152 held-out
+  cells converged without fit errors;
+- first evaluation merge `55342091` failed with exit 2 after 1:36 because
+  legitimate empty subject TSVs (subjects with no post-convergence matched
+  pairs) raised `pandas.errors.EmptyDataError`. The merger now skips empty raw
+  contributions and recomputes pooled summaries; no fits were affected;
+- corrected evaluation merge `55350240` completed with exit 0 in 1:29;
+- earlier cancelled/diagnostic jobs remain: `55221612` wrong-base attempt,
+  `55224933` obsolete metadata attempt, and successful one-start H01 smoke
+  `55225675_0`, which the production aggregator correctly rejects.
+
+Accepted provenance hashes:
+
+- primary subject fits:
+  `979b517caf2427d424aa541226f04e2a10948ab7957066981d4d0494f2fc1d2f`;
+- primary group aggregation:
+  `0e2969b86181ec1ab8bc42d8f6e7bbad8def5683729a05d6323e05255f8f5fc1`;
+- held-out subject outputs:
+  `ccb5dc49929c85cb3c6d23050069dc7c59696992fc508be9701bff7250344fa8`;
+- evaluation group outputs:
+  `4b8e6b1725d653bdc43adee82cf0be5f113a1ba2c02a0f5b8fea8434c83691bc`.
+
+The exact primary patch and tarball remain under the cluster data root at the
+paths and checksums recorded above. The recovery source hash must be read from
+its outputs after the first task finishes and must be identical across all 12
+tasks.
+
+Validated primary aggregate:
+
+- `ssmcomparison`: 384 x 35, 32 subjects, three conditions, four models;
+- `ssmtimecourse`: 419,920 x 12, with no exact duplicate rows. Repeated key
+  values across `trial_class` are intentional and must not be collapsed across
+  that field;
+- `ssmtrialpredictions`: 130,560 x 9;
+- `ssmcomparisonstats`: 28 rows; `ssmexclusionsensitivity`: 18 rows;
+  `ssmpopulation`: 1,257 rows; `ssmpopulationstats`: 45 rows.
+
+In-sample candidate-minus-DDM BIC contrasts (negative favors the candidate):
+
+- multiplicative urgency: all -239.600 (30/32 subjects, p=3.39e-9), fast
+  -132.214 (30/32, p=8.46e-9), slow -117.375 (30/32, p=1.26e-9);
+- collapsing bound: all -169.036 (31/32, p=1.42e-11), fast -94.944 (30/32,
+  p=1.01e-11), slow -77.216 (31/32, p=1.40e-11);
+- additive urgency: all -18.999 (16/32, p=.191), fast -8.025 (17/32,
+  p=.343), slow -9.626 (16/32, p=.250).
+
+The accepted boundary audit has 96 cells per model and all 384 optimizer fits
+converged, but generic boundary flags are frequent and must be decomposed:
+
+- multiplicative urgency: 19/96 urgency-scale estimates near the upper bound,
+  6/96 urgency-onset estimates near the upper bound, 47/96 missing SEs for
+  each of urgency scale and onset, and 96/96 nondecision estimates near the
+  lower bound;
+- collapsing bound: 36/96 bound estimates near the upper bound, 3/96 collapse
+  rates near the lower and 2/96 near the upper bound, with 94/96 nondecision
+  estimates near the lower bound;
+- additive urgency: 39/96 additive-scale estimates near the upper bound and
+  89/96 nondecision estimates near the lower bound;
+- fixed DDM: 90/96 nondecision estimates near the lower bound.
+
+Therefore optimizer convergence does not establish parameter identification.
+Expanded-bound robustness and recovery are mandatory before interpreting the
+urgency parameters. Missing Hessian SEs may be numerical/identifiability
+failures rather than optimizer failures.
+
+Validated evaluation aggregate:
+
+- eligibility audit 256 x 9; exclusion robustness 3 x 15; boundary audit
+  12 x 28; mechanistic statistics 18 x 14;
+- held-out fits 1,152 x 25 with exact subject x condition x model x fold
+  coverage, 384-row fold audit, all fits converged, and no errors;
+- held-out predictions 130,560 x 10 with no duplicate key;
+- distribution checks 11,520 x 15, covering 32 subjects, all three conditions,
+  four models, and both outcomes. Observed quantiles are exact raw-trial
+  quantiles. Predicted densities/quantiles reuse `ssmtimecourse` on its 20-ms
+  grid; integrated decision mass ranges 0.818704--1.001748, with the slight
+  value above one attributable to numerical grid integration. Do not claim
+  greater precision than this representation supports;
+- matched-sequence outputs: 3,910 stimulus rows = 1,955 pairs, 64 audit rows,
+  4,896 model-prediction rows = 612 post-convergence pairs x two trials x four
+  models, 29 represented subjects, four observed-stat rows, and 16
+  model-stat rows. Exact early/convergence balance is zero by construction.
+
+Held-out candidate-minus-DDM per-trial log-likelihood contrasts (positive
+favors the candidate):
+
+- multiplicative urgency: all 0.2442, 95% CI [0.1825, 0.3059], 30/32 subjects,
+  p=4.03e-9; fast 0.2512 [0.1848, 0.3176], 30/32, p=1.06e-8; slow 0.2695
+  [0.2067, 0.3324], 30/32, p=7.12e-10;
+- collapsing bound: all 0.1739 [0.1391, 0.2086], 31/32, p=1.93e-11; fast
+  0.1850 [0.1472, 0.2229], 32/32, p=3.43e-11; slow 0.1838 [0.1469,
+  0.2207], 32/32, p=2.18e-11;
+- additive urgency: all 0.0092 [-0.0197, 0.0381], 13/32, p=.521; fast 0.0122
+  [-0.0248, 0.0491], 17/32, p=.507; slow 0.0120 [-0.0344, 0.0584], 13/32,
+  p=.601.
+
+Thus both multiplicative urgency and collapsing bounds outperform the fixed
+integrator in held-out prediction; additive urgency does not. A direct,
+subject-paired urgency-versus-collapsing held-out contrast should be computed
+before stating which flexible mechanism predicts better. Recovery and
+robustness remain outstanding, so these are not yet final causal/mechanistic
+conclusions.
+
+Matched-sequence diagnostic:
+
+- Fast: 310 post-convergence pairs across 27 subjects; observed
+  against-minus-for decision time +22.9 ms (p=.488) and accuracy -0.0198
+  (p=.674);
+- Slow: 302 pairs across 28 subjects; decision time -55.1 ms (p=.326) and
+  accuracy -0.0912 (p=.142).
+
+No observed matched effect is statistically established. Some fitted-model
+contrasts are significant (for example urgency-predicted accuracy differences
+of +0.0306 Fast and +0.0230 Slow), but these do not turn a null behavioral
+diagnostic into proof of urgency gating. Treat the diagnostic as complementary,
+not mechanism-identifying.
+
+Implementation fix made after the first evaluation attempt: raw trial labels
+`Fast`/`Slow` did not match normalized fit labels `fast`/`slow`, and direct
+equality could not produce the pooled `all` cell, leaving old distribution
+tables empty. `fitted_distribution_checks()` now uses canonical condition
+groups, preserves exact observed quantiles, and reuses primary time-course
+densities rather than refitting. The aggregate merger also recomputes the group
+exclusion audit and tolerates legitimate empty subject matched-prediction files
+(H03, H15, H26). Focused tests now pass 45/45 with one skipped; the broad
+behavior/report suite passes 519 tests with five skipped and 109 warnings.
+Compile, shell syntax, and `git diff --check` checks pass.
+
+Active cluster work at stop time:
+
+- recovery parent `55358783`, submitted as
+  `sbatch --array=0-11%4 scripts/thura2012_recovery_array.sh tokens.toml 12`;
+- at the final query on 2026-08-18, tasks 0, 2, and 3 had completed with exit
+  0 in 32:07--32:28; task 1 was still running at 32:30; tasks 4--11 were
+  pending only because of the `%4` throttle. No task had failed. Actual
+  first-wave job IDs are 55359093--55359096;
+- do not cancel and do not sync any changed file to `fir:~/meg-tokens` until all
+  12 tasks are terminal. The next session should query `squeue`, `sacct`, and
+  the task logs when it starts rather than assuming this snapshot is current.
+  Validate each replicate has 15 parameter rows, 16 model-recovery rows,
+  exactly two starts, one unique truth design, no errors, and identical source
+  hash. Resubmit only failed indices after diagnosis;
+- after successful validation, submit
+  `sbatch scripts/thura2012_recovery_aggregate.sh tokens.toml 12`; require 180
+  parameter rows, 192 model rows, parameter-recovery summaries, and a complete
+  model-confusion table.
+
+### Remaining steps, in exact order
+
+1. Finish and aggregate recovery as specified immediately above. Record final
+   task states, runtimes, logs, environment, commit, source hash, commands, and
+   output paths. Only after the recovery array is entirely terminal may the
+   source tree be synchronized again.
+2. Re-check `git status --short --branch` locally and on `fir`. Deliberately
+   sync only required changed Thura files, with no deletion and no `uv.lock`.
+   Preserve all unrelated files. Lightweight validation may run on the login
+   node; every substantial analysis must use Slurm compute nodes.
+3. Run robustness:
+   `sbatch --array=0-191%8 scripts/thura2012_robustness_array.sh tokens.toml 1`,
+   monitor as appropriate in the new session, validate exactly 2,304 rows
+   across baseline, tau100, tau300,
+   solver20, `post_horizon_evidence_zero`, and expanded bounds, then submit
+   `sbatch scripts/thura2012_robustness_aggregate.sh tokens.toml`. The
+   post-horizon configuration is not an overshoot manipulation; describe it
+   precisely. Compare configurations with subject-paired contrasts.
+4. Run strict-exclusion sensitivity:
+   `sbatch --array=0-31%8 scripts/thura2012_exclusion_array.sh tokens.toml`, then
+   `sbatch scripts/thura2012_exclusion_aggregate.sh tokens.toml`. The strict
+   mask is primary eligibility plus `token_log_rows == 15` plus valid design
+   alignment. Its frozen census is 10,961 trials versus 16,324 primary trials,
+   32 subjects, 64 Fast/Slow cells, minimum 56 trials, and no cell below 50.
+   Compare models within the same retained population; do not silently change
+   exclusions.
+5. Audit recovery/confusion, robustness, strict-exclusion, exact direct
+   urgency-versus-collapsing held-out contrasts, subject-level results,
+   convergence, boundary hits, and uncertainty. State that model comparison
+   distinguishes predictive accounts but cannot uniquely prove a neural
+   mechanism. Reward-rate optimality remains omitted because verified payoff,
+   reward/error penalties, complete ITI, and task timing are missing; do not
+   invent them.
+
+   **Get the strict-exclusion population relationship right, in the code and
+   in any write-up.** The primary population (16,324 trials) already pools
+   both complete 15-row and anomalous 14-row token logs with no distinction -
+   the model fit itself never reads `token_log_rows` (only
+   `exclusion_robustness_audit` does; the fitting path uses the designed
+   `token_directions` sequence and continuous `dt_ms`, which do not depend on
+   acquisition-log completeness). The strict population (10,961 trials) is
+   not a second, independently assembled 15-row-only sample added alongside
+   primary - it is `primary_analysis_eligible AND token_log_rows==15 AND
+   design_time_alignment_valid`, a pure subset carved out of the same 16,324
+   primary trials (10,961 + 5,363 dropped 14-row trials = 16,324 exactly).
+   Never describe this as "ran with 14+15, then added 15" or as two separate
+   populations - it is one population (primary) versus a strict narrowing of
+   it (drop the 14-row third), which is exactly why the paired
+   `strict_delta_bic_minus_primary_delta_bic` contrast in
+   `ssmexclusionrobustnessstats` is a clean within-subject, same-underlying-
+   trials-where-retained comparison. State this explicitly wherever the
+   strict-exclusion result is interpreted, including the eventual F27
+   write-up in `docs/behavior.md` (step 9).
+
+   **Direct urgency-vs-collapsing held-out contrast: done, persisted as a
+   real derivative (2026-08-18).** `heldout_model_statistics` only ever
+   contrasted each candidate against `ddm`; two candidates that both beat
+   `ddm` are not thereby shown to differ from each other. Added
+   `heldout_pairwise_model_statistics` to
+   `meg_tokens/behavior/analyses/sequential_sampling.py`, refactored to
+   share `_heldout_subject_scores` (the weighted-by-`n_test` subject score)
+   and `_paired_score_contrast` (the one-sample-vs-zero CI/favouring-count
+   logic) with the existing `heldout_model_statistics` rather than
+   duplicating either - both were extracted from what was previously
+   `heldout_model_statistics`'s own body, so this is a pure refactor for the
+   existing function, not a behavior change (confirmed by two passing
+   pre-existing tests plus two new ones,
+   `tests/behavior/test_analyses_sequential_sampling.py`). Wired into
+   `aggregate_mechanistic_evaluation` in `thura2012.py` as a new persisted
+   derivative `ssmheldoutpairwise` (added to `_EVALUATION_TABLES` and the
+   `recomputed` set, since it's computed at merge time from the already-
+   collected `ssmheldout` table, not per-subject). Local suites: 521 passed,
+   5 skipped, no regressions. Synced the three changed files
+   (`sequential_sampling.py`, `thura2012.py`, the test file) to `fir` -
+   safe, since nothing was queued on the cluster at that point - smoke-
+   tested the new function directly against the cluster's numpy
+   2.4.2/pandas 3.0.0/scipy 1.17.0 stack (pytest itself is not installed in
+   the cluster venv), then reran only the merge job:
+   `sbatch scripts/thura2012_evaluate_aggregate.sh tokens.toml` -> job
+   `55454191`, completed exit `0` in 33s (cheap, since it recomputes only
+   from the already-collected per-subject `ssmheldout` array outputs, no
+   refitting). `ssmheldoutpairwise` now has 18 rows (6 model pairs x 3
+   conditions), and its `collapsing`-vs-`urgency` row matches the earlier
+   ad-hoc script's number exactly (mean -0.0703 for `condition=all`, sign
+   flipped from "urgency vs collapsing" to "collapsing vs urgency").
+   **Result, now on the record as a persisted, reproducible derivative
+   rather than an ad-hoc script:** urgency significantly outpredicts
+   collapsing directly in every condition (all: mean=+0.0703, t=4.87,
+   p=3.1e-5, 28/32 subjects favoring urgency; fast: p=2.1e-4; slow:
+   p=6.9e-6). Both urgency and collapsing directly and decisively beat
+   additive_urgency in every condition too (p<3e-8 throughout, 30-31/32
+   subjects), consistent with additive_urgency's weak showing everywhere
+   else in this analysis.
+6. Retrieve only accepted group derivatives from
+   `/scratch/hamza97/meg-tokens/BIDS/derivatives/sub-group/beh` to
+   `/media/karim/Hamza/meg-tokens` with explicit non-deleting rsync paths.
+7. **Regenerate and re-audit F01-F03 before touching F27.** The retrieved
+   `ssmcomparison` file is the *same filename* the headline two-model figures
+   (`ssmcomparison-deltabic`, `ssmcomparison-urgencyscale`,
+   `ssmcomparison-urgencyparams`) already read from, and it was overwritten in
+   place by the mechanistic production fit: it now holds 384 rows (32
+   subjects x 3 conditions x 4 models, `n_starts=3`, commit `df783f5`,
+   `stage=thura2012_mechanistic_evaluation`) instead of the 192-row two-model
+   file currently on the laptop, whose sidecar has no `models`, `n_starts`,
+   `git_commit`, or `source_tree_sha256` at all (it predates that provenance
+   convention; its start count is unknown). The `ddm`/`urgency` rows were
+   therefore refit, not merely carried over, when the mechanistic set was
+   fitted. Before rendering F27: regenerate F01-F03 against the retrieved
+   file, diff their `ddm`/`urgency` parameter estimates, deltaBIC, and
+   urgency-scale Fast-vs-Slow contrast against the numbers currently reported
+   for H1/H2 in `docs/behavior.md`, and flag any material change to Karim
+   before silently overwriting that prose. Do not skip this because the file
+   already exists locally under the same name. "Regenerate" means re-run the
+   local report build (`report behavior --figures
+   ssmcomparison-deltabic,ssmcomparison-urgencyscale,ssmcomparison-urgencyparams`)
+   against the retrieved derivatives, not a new PyDDM fit: each model's fit is
+   independent of which other models were requested in the same
+   `ssm-fit` call (`_fit_all_cells` tasks one `(cell, model)` pair at a time),
+   so the `ddm`/`urgency` rows already sitting in the retrieved 384-row file
+   are the correct refit numbers to use - do not re-run `ssm-fit` with
+   `models=SSM_MODELS` separately, since its default `n_starts=1` would not
+   match the `n_starts=3` the mechanistic set was fit with and would silently
+   introduce a second, non-comparable pair of `ddm`/`urgency` estimates.
+   H1/H2 numbers are not confined to the F01-F03 panels - the same ΔBIC and
+   `urgency_scale` values are separately quoted as corroborating evidence in
+   two other Findings sections that must be updated in the same pass:
+     - "Fast vs. Slow stretches decision time proportionally..." currently
+       states `ΔBIC = -238.9, t(31) = -8.12, p = 3.6e-9, 30/32 subjects` and
+       `urgency_scale Δ = -0.108, t(31) = -2.52, p = .017`. Replace both with
+       the values read from the regenerated `ssmcomparisonstats` (the same
+       table the figures read, so the prose and the figure cannot disagree).
+     - The confidence-at-commitment finding ("Success probability at
+       decision...") references "H1 (model comparison)" without repeating
+       numbers - no edit needed there beyond confirming the qualitative
+       direction (urgency favored) still holds.
+   Also cross-check whichever ΔBIC F27's own write-up (step 9) reports for
+   `urgency` vs `ddm`, `condition=all` - it must be numerically identical to
+   what F01-F03 and the two Findings citations above now report, since all
+   four are the same fitted rows from the same retrieved file. Two different
+   numbers for the same comparison anywhere in `docs/behavior.md` is a bug to
+   catch here, not something to reconcile later.
+8. Render the registered `ssmcomparison-mechanistic` F27 on a Slurm compute
+   node.
+   Produce final PDF, PNG, JSON/statistical sidecars, and required TSVs. Its
+   core panels are criterion comparison, observed/predicted correct/error RT
+   distributions, decision-variable trajectories, and per-subject model
+   comparison; extend with held-out/recovery/matched results only where clear.
+   Use subject-balanced summaries and deduplicate time-course rows using all
+   semantically relevant fields. Rasterize the PDF at high resolution, inspect
+   it visually, fix clipping/spacing/legends/annotations/alignment, and rerender
+   until final.
+9. Finish the accessible F27 interpretation in `docs/behavior.md`, then replace
+   this live handoff section with the final job ledger, outputs, numerical
+   conclusions, limitations, and remaining decisions. Preserve the F16
+   instructions below.
+10. Run the full relevant local tests with retrieved derivatives, compile and
+    shell checks, `git diff --check`, and a requirement-by-requirement A--G
+    audit. List all changed files and exact output paths. Do not commit or push
+    until the user has reviewed the work.
+11. **Deferred: reorder the figure registry to match the scientific act map.**
+    Not part of this analysis and must not block it; do only after step 10 and
+    after Karim has reviewed the F27 work. `ssmcomparison-mechanistic` was
+    given F27 (2026-08-18) as a minimal, non-colliding placeholder — the
+    registry's F-numbers currently follow historical implementation order
+    (module-by-module: F01-F03/F21/F22/F27 in `modeling.py`, F04-F06 in
+    `distributions.py`, F08-F13 in `design.py`, F14-F18 in `evidence.py`,
+    F19-F20 in `sequential.py`, F23-F26 in `individual.py`), not the
+    "Scientific act map" order documented above (foundation -> commitment
+    policy -> mechanistic adjudication -> sequential adaptation -> individual
+    differences). A full reorder means renumbering every figure to read in
+    that narrative order and updating every place an F-number appears: the
+    `REGISTRY` tuple order in `meg_tokens/reports/behavior/__init__.py`,
+    every module/function docstring F-number in
+    `meg_tokens/reports/behavior/*.py`, `docs/behavior_reporting_plan.md`
+    (itself already stale - it jumps from F05 straight to F15 and never
+    labeled F06/F08-F14 with `####` headers), `docs/behavior.md`, and any
+    script/comment referencing a specific number. Treat retired numbers
+    (F07, F12) as permanently retired, not reusable, consistent with how
+    this document already preserves them as historical record rather than
+    silently renumbering into their slots. Do this as one deliberate pass,
+    not incrementally, so no file is left with a stale number mid-way.
+
+    **Also fold in: retire the old F21 in favor of F27, and let F27 become
+    the new F21 (decided with Karim, 2026-08-18).** `ssmtimecourse-fit`
+    (`build_ssmtimecourse_fit` in `modeling.py`) is limited to
+    `style.MODEL_ORDER = ("urgency", "ddm")` and its three panels - criterion
+    time course, observed/predicted correct/error densities, urgency
+    decision-variable trajectory - use flat pooled means with no uncertainty
+    band. `ssmcomparison-mechanistic`/F27 (`build_ssmcomparison_mechanistic`)
+    reproduces those same three panels for all four models with proper
+    subject-balanced within-subject 95% CI bands, and adds a fourth
+    (held-out per-subject model comparison) that F21 never had. F21 is
+    therefore not a companion figure to F27, it is a strict, worse subset of
+    it - unlike F07 (content removed, no replacement) this is a genuine
+    upgrade-in-place, so unlike the "retired numbers are not reusable" rule
+    above, F21's *number* should be kept and now refer to the *new* content
+    (mirroring how F12 was folded into F13, i.e. absorb the superseded
+    figure's slot rather than leaving two entries). Concretely, in the same
+    deliberate pass:
+      - Delete the `FigureSpec(key="ssmtimecourse-fit", ...)` entry from
+        `meg_tokens/reports/behavior/__init__.py` and the
+        `build_ssmtimecourse_fit` function from
+        `meg_tokens/reports/behavior/modeling.py` entirely - do not leave it
+        as unused dead code.
+      - Rename `build_ssmcomparison_mechanistic`'s F-number from F27 to F21
+        in the `modeling.py` module docstring and everywhere else F27 is
+        used as this figure's number (this handoff, `docs/behavior.md`,
+        `docs/behavior_reporting_plan.md`'s F21 entry, and the "Current
+        review boundary" table). The FigureSpec `key`
+        (`ssmcomparison-mechanistic`) and function name
+        (`build_ssmcomparison_mechanistic`) do not change - only the F-number
+        label changes, since the key already correctly matches its own
+        `analysis`/`view` fields.
+      - Update or remove the test for the old F21
+        (`tests/reports/test_modeling.py`), and re-run the full report test
+        suite afterward.
+      - Verify no other file/derivative/script depends on the
+        `ssmtimecourse-fit` key specifically (only on the `ssmtimecourse`
+        derivative table, which F27 already reads) before deleting it.
+12. **Deferred: consolidate SSM modeling workflow code into a new
+    `meg_tokens/workflows/sequential_sampling.py` (decided with Karim,
+    2026-08-18).** Separate task from step 11 - this is a code-architecture
+    change, not a reporting/figure-numbering one, and should be done as its
+    own deliberate pass. Not part of this analysis and must not block it; do
+    only after step 10 and Karim's review, and not before `thura2012.py` is
+    safe to touch (frozen while any array task is queued, same as always).
+    Motivation: `_package_version`, `_source_tree_sha256`
+    (`_ssm_source_tree_sha256` in `behavior_characterization.py`), and
+    `_selected_features` are each duplicated near-identically between
+    `meg_tokens/workflows/behavior_characterization.py` and
+    `meg_tokens/workflows/thura2012.py` - same logic, written independently
+    twice, already at risk of silently drifting apart. The split also
+    doesn't match what the two files actually contain: `thura2012.py`
+    already holds every *downstream* SSM stage (aggregate, evaluate,
+    recovery, robustness, exclusion), while the *primary* fit
+    (`fit_subject_sequential_sampling`, driven by the `ssm-fit` CLI command)
+    is stranded inside `behavior_characterization.py` alongside many
+    unrelated lightweight behavioral analyses (cohort, distributions, SPD,
+    criterion, sequential effects, individual differences) that have
+    nothing to do with sequential-sampling modeling. Plan:
+      - Create `meg_tokens/workflows/sequential_sampling.py`, mirroring the
+        existing `meg_tokens/behavior/analyses/sequential_sampling.py`
+        naming convention for this concern.
+      - Move `fit_subject_sequential_sampling` and its provenance helpers
+        (`_ssm_fit_metadata`, `_ssm_source_tree_sha256`, `_package_version`)
+        out of `behavior_characterization.py` into the new file.
+      - Move everything currently in `thura2012.py` into the same new file
+        (or rename `thura2012.py` itself and fold the fit function in - either
+        way, end with exactly one file), keeping `thura2012.py`'s versions of
+        `_selected_features`/`_package_version`/`_source_tree_sha256` since
+        they already correctly use the shared `require_file()` helper that
+        `behavior_characterization.py`'s copy does not.
+      - End with exactly one `_selected_features`, one `_package_version`,
+        one `_source_tree_sha256`, and one provenance-metadata builder,
+        shared by every SSM stage (fit, aggregate, evaluate, recovery,
+        robustness, exclusion) - no duplication by construction.
+      - Update `meg_tokens/cli/main.py`'s import of
+        `fit_subject_sequential_sampling` (currently imported from
+        `behavior_characterization.py`) to the new module.
+      - Move/update the corresponding tests, and re-run the full
+        workflow/CLI and behavior test suites afterward.
+13. **Deferred: deduplicate the paired-contrast favouring-count boilerplate
+    in `sequential_sampling.py` (decided with Karim, 2026-08-18).** Separate,
+    smaller cleanup than steps 11/12; do whenever convenient, no ordering
+    dependency on them. The 3-line pattern
+    `int((differences < 0).sum())` / `int((differences > 0).sum())`
+    immediately after an `one_sample_statistics(differences)` call is
+    copy-pasted independently 6 times across 4 functions, each just
+    relabelling the two ends: `model_comparison_statistics` (original
+    2-model in-sample BIC, feeds F01-F03), `mechanistic_model_statistics`
+    (4-model in-sample BIC), `robustness_statistics` (twice in the same
+    function), and `exclusion_robustness_statistics` (the strict-vs-primary
+    comparison from step 4). This is the same shape of duplication as the
+    held-out favouring-count logic that step 5 already extracted into
+    `_paired_score_contrast` - extend or reuse that helper (it currently
+    returns `n_subjects_favoring_a`/`n_subjects_favoring_b` plus the CI, so
+    each call site would just relabel those two keys as it already does in
+    `heldout_model_statistics`/`heldout_pairwise_model_statistics`) rather
+    than adding a second, differently-named generic helper. Note
+    `_paired_score_contrast` also computes a 95% CI half-width via
+    `stats.t.ppf`, which none of these 4 in-sample functions currently do
+    (they only report the favouring counts and the `one_sample_statistics`
+    summary) - confirm whether they should gain a CI too as part of this
+    pass, or whether the helper needs a CI-optional variant. Re-run the full
+    behavior test suite afterward; this changes internal structure only, so
+    no test's asserted values should change.
+
+### Session continuation (2026-08-18, after the stop point)
+
+This section records what happened in the session that resumed from the
+"Authoritative stop point" above. It supersedes the "Active cluster work at
+stop time" snapshot for recovery; that snapshot is preserved above only as a
+historical record. Do not commit or push any of this work before Karim
+reviews it.
+
+**Step 1 (recovery) - complete and validated.**
+
+- Recovery array `55358783` (all 12 tasks, `%4` throttle) finished with all
+  12 tasks `COMPLETED`, exit `0:0`, runtimes 21:56-34:03.
+- Per-replicate validation passed for all 12 reps: exactly 15 parameter-
+  recovery rows and 16 model-recovery rows each; `n_starts=2` and
+  `converged=True` on every row; zero `fit_error` rows; one unique
+  `truth_design_index` per replicate (0-11, all distinct, matching
+  `recovery_repetition_indices`); identical `source_tree_sha256`
+  (`4b8e6b1725d653bdc43adee82cf0be5f113a1ba2c02a0f5b8fea8434c83691bc`) and
+  `git_commit` (`df783f5...`) across all 24 sidecars.
+- Aggregate job `55383746`
+  (`sbatch scripts/thura2012_recovery_aggregate.sh tokens.toml 12`) completed
+  exit `0`, elapsed `1:44`. Merged outputs validated: `ssmparameterrecovery`
+  180 rows, `ssmmodelrecovery` 192 rows, `ssmparameterrecoverystats` 15 rows,
+  `ssmmodelrecoverystats` (the model-confusion table) 16 rows (full 4x4
+  true-vs-selected matrix).
+- **Model recovery is perfect**: every model (`ddm`, `urgency`, `collapsing`,
+  `additive_urgency`) is selected in all 12/12 repetitions when it is the true
+  generating model; 100% on-diagonal, 0% off-diagonal everywhere. Model
+  *selection* from this design is trustworthy.
+- **Parameter recovery is uneven and confirms the boundary/SE concerns already
+  flagged from the real-data fits.** Most parameters recover well (r = 0.79-
+  0.999: `bound`, `drift_scale`, `collapse_rate`, `nondecision_s` across all
+  four models, boundary-hit rate 0.0 except as noted below). Two `urgency`
+  parameters recover poorly: `urgency_scale` r=0.444, bias -0.083;
+  `urgency_onset_s` r=0.325, bias -0.221. `additive_urgency`'s `additive_scale`
+  also recovers weakly (r=0.463, bias +0.399) with a 0.25 boundary-hit rate,
+  versus 0.0 for every other model's parameters. This must be stated
+  explicitly wherever the fitted urgency-scale/urgency-onset or additive-scale
+  point estimates are interpreted: model comparison/selection is reliable,
+  but those specific mechanistic parameter values are only weakly identified
+  by this design and should not be over-interpreted individually.
+
+**Step 2 (git sync) - complete, code required no sync.**
+
+- Re-checked `git status --short --branch` locally and on `fir`: identical
+  sets of modified/untracked Thura-related paths on both sides.
+- Verified with `sha256sum` on all 21 changed/untracked Thura implementation,
+  workflow, and shell-script files: every one was already byte-identical
+  between local and cluster. The frozen source tree the recovery array
+  validated against was already correct; no code sync was necessary.
+- The only divergent file was `docs/behavior_reporting_session_handoff.md`
+  itself (cluster was 756 lines/pre-stop-point, local was 920 lines). Synced
+  only that single file with `rsync --checksum` (no deletion, nothing else
+  touched); post-sync hashes match
+  (`70f20309f915e55da383de0ae1a2bb4062af2b368370bdba4d98307a79a26186`).
+  `uv.lock` (local-only) and `logs/`, `scripts/render_figs.sh`,
+  `scripts/rerun_behavior.sh` (cluster-only, unrelated) were preserved
+  untouched on both sides.
+
+**Step 3 (robustness) - complete and validated.**
+
+- Submitted `sbatch --array=0-191%8 scripts/thura2012_robustness_array.sh
+  tokens.toml 1` -> parent array `55386493` (192 tasks: 32 subjects x 6
+  configurations - `baseline`, `tau_100ms`, `tau_300ms`, `solver_20ms`,
+  `post_horizon_evidence_zero`, `expanded_bounds`).
+- At Karim's request the throttle was raised live, without cancelling the
+  job, via `scontrol update ArrayTaskThrottle=192 JobId=55386493`, removing
+  the self-imposed concurrency limit early in the run.
+- All 192 tasks finished `COMPLETED`, exit `0:0` (elapsed 4:16-22:41). No
+  task failed or needed resubmission.
+- Per-file validation passed: 32 subjects x 6 configurations x 12 rows
+  (3 conditions x 4 models) = exactly 2,304 rows, no missing files, no
+  `fit_error` rows, identical `source_tree_sha256`
+  (`25475454af3be95035f9a7021d7557ee4fcfcb0c7dd816d3ce2858240f1cf997`) and
+  `git_commit` (`df783f5...`) across all 192 sidecars, `n_starts=[1]` as
+  submitted.
+- Aggregate job `55428328`
+  (`sbatch scripts/thura2012_robustness_aggregate.sh tokens.toml`) completed
+  exit `0`, elapsed `1:33`. Merged outputs validated: `ssmrobustness` 2,304
+  rows; `ssmrobustnessstats` 132 rows, covering both an `ssm_robustness_summary`
+  view (`delta_bic` per configuration/condition/model) and an
+  `ssm_robustness_paired_sensitivity` view (`delta_bic_change_vs_baseline`,
+  the actual subject-paired sensitivity test against the baseline
+  configuration).
+- **Result: the primary comparison is robust across every configuration.**
+  For `condition=all`: `urgency` beats `ddm` by delta-BIC -230 to -247 across
+  all six configurations (p<1e-8, 30/32 subjects favoring urgency in every
+  configuration); `collapsing` beats `ddm` by -169 to -170 (p~1e-11, 31/32
+  subjects in every configuration - and identical to machine precision across
+  `baseline`/`tau_100ms`/`tau_300ms`, exactly as expected since the
+  collapsing-bound model does not use the filter time constant, a useful
+  internal-consistency check). `additive_urgency` is never significant in any
+  configuration (p=0.09-0.54, 14-18/32 subjects - near chance throughout),
+  consistent with the held-out result. The paired-vs-baseline table shows a
+  few statistically detectable shifts under some configurations (e.g.
+  `urgency` under `tau_300ms`, p=4.3e-6) but they are small in magnitude
+  (single-digit delta-BIC points) against effects of ~150-250 points, i.e.
+  real but scientifically negligible. `expanded_bounds` in particular does
+  not change which models win, even though many individual urgency-scale/
+  urgency-onset point estimates sit near the original parameter bound -
+  model *selection* is robust to that even though (per the recovery audit
+  above) the individual parameter values are only weakly identified.
+- Do not sync code or resync the source tree while any exclusion-sensitivity
+  task (step 4, next) remains non-terminal, for the same frozen-source-tree
+  reason recovery and robustness required it.
+
+**Step 4 (strict-exclusion sensitivity) - complete and validated.**
+
+- Before submitting, re-checked `git status --short --branch` on both sides:
+  the fitting-relevant files (`sequential_sampling.py`, `thura2012.py`, both
+  exclusion shell scripts) were already identical by `sha256sum`; only the
+  report-layer F-number/key/title fixes and this handoff doc had diverged, so
+  those three files were synced with `rsync --checksum` (verified matching
+  hashes after) before submission.
+- Submitted `sbatch --array=0-31%8 scripts/thura2012_exclusion_array.sh
+  tokens.toml` -> parent array `55431692` (32 tasks, one per subject, strict
+  mask = primary eligibility + `token_log_rows == 15` + valid design
+  alignment; frozen census 10,961 strict trials vs. 16,324 primary trials, 32
+  subjects, 64 Fast/Slow cells, minimum 56 trials/cell, no cell below 50).
+- All 32 tasks finished `COMPLETED`, exit `0:0`. No task failed.
+- Per-file validation passed: 32 subjects x 12 rows (3 conditions x 4 models)
+  = exactly 384 rows in `ssmexclusioncompletetokenlogalignment`, no missing
+  files, no `fit_error` rows, identical `source_tree_sha256`
+  (`ab1168542cf8afb28b9d01c739651f7d209acd19ab5b6a66dc9784aca436de58`) and
+  `git_commit` (`df783f5...`) across all 32 sidecars, `n_starts=(2,)` as
+  submitted.
+- Aggregate job `55450044`
+  (`sbatch scripts/thura2012_exclusion_aggregate.sh tokens.toml`) completed
+  exit `0`, elapsed `1:40`. Merged outputs validated: `ssmexclusionrefit` 384
+  rows; `ssmexclusionrobustnessstats` 9 rows (3 conditions x 3 candidate
+  models), confirming `mask_equivalent=True` and the exact frozen census
+  (`n_complete_token_log`/`n_alignment_valid`/`n_mask_intersection` = 10,961,
+  `n_mask_symmetric_difference` = 0) - no duplicate refit was needed, as
+  expected. All 32/32 subjects converged in every row.
+- **Result: direction holds, magnitude shrinks, and a real audit item
+  surfaces.** `urgency` and `collapsing` still strongly beat `ddm` under the
+  strict subset; `additive_urgency` is still never significant (p=.08-.52
+  across conditions, unchanged qualitative picture). But the strict-subset
+  delta-BIC is measurably *less negative* than the full-population
+  delta-BIC (`strict_delta_bic_minus_primary_delta_bic`): urgency's
+  separation from `ddm` shrinks by ~62-73 points (`condition=all`: mean
+  61.5, p=4.6e-8, cohens_dz=1.27; similar in fast/slow), collapsing's by
+  ~40-48 points (`condition=all`: mean 39.7, p=4.0e-9, cohens_dz=1.43) -
+  real, well-powered shifts (not a mere trend), plausibly reflecting the
+  ~33% smaller trial count changing the BIC complexity penalty and/or
+  per-subject variance. Not enough to overturn the headline comparison, but
+  not negligible either, unlike the robustness-configuration shifts in step
+  3 which were small relative to their own effect size. **Boundary-hit
+  rates are also notably high under this smaller, stricter subset**: 91-100%
+  across urgency/collapsing/additive_urgency (`n_boundary_hit`/`n_subjects`
+  in the stats table), well above what the primary/robustness fits showed.
+  Step 5's audit must treat this as a real finding to reconcile, not a
+  clean pass to wave through.
+
+## Next figure F16 instructions
+
+F16 is `reversecorrelation-kernel`, not a second mechanistic-fit figure. Build
+it only after the corrected derivatives and F27 are audited. Use the canonical
+`reversecorrelation`/`reversecorrelationstats` tables, preserve the
+correct-target stimulus frame, and do not infer mechanism from the kernel
+alone. Plot subject-balanced token-jump weights with within-subject uncertainty
+and an explicit Fast-minus-Slow contrast; show unseen-after-commitment coding
+and the number of eligible subjects/trials. Keep the first-order chosen-target
+SumLogLR criterion (F14) distinct from the 2012 process model.
+
+Persist the inferential table before plotting, regenerate PDF/PNG/JSON sidecar,
+render the PDF at high resolution, and inspect panel alignment, zero line,
+legend, token labels, and uncertainty. Add tests for token-0/unseen coding,
+subject balancing, and sidecar columns. Do not reuse pooled SSM time-course
+fields or call F16 evidence that additive/multiplicative urgency is uniquely
+identified.

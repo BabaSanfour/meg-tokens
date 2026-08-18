@@ -69,6 +69,13 @@ REGISTRY: tuple[FigureSpec, ...] = (
         requires=("ssmpopulation", "ssmpopulationstats"),
         builder=modeling.build_ssmpopulation_shrinkage,
     ),
+    FigureSpec(
+        key="ssmcomparison-mechanistic", analysis="ssmcomparison", view="mechanistic",
+        title="Model comparison: criterion, fit quality, held-out prediction",
+        kind="mechanistic_model_summary", groups=("modeling",),
+        requires=("ssmcomparison", "ssmcomparisonstats", "ssmtimecourse", "ssmheldout", "ssmheldoutstats"),
+        builder=modeling.build_ssmcomparison_mechanistic,
+    ),
     # --- Core / distributions (behavior/analyses/distributions.py) ---
     FigureSpec(
         key="dtdistribution-condition", analysis="dtdistribution", view="condition",

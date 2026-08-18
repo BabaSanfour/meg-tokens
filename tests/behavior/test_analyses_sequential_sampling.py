@@ -17,16 +17,45 @@ import pandas as pd
 import pytest
 
 from meg_tokens.behavior.analyses.sequential_sampling import (
+    MECHANISTIC_MODELS,
     MODEL_PARAMETERS,
+    PARAMETER_RANGES,
+    MIXTURE_COEF,
     TIME_COURSE_STEP_S,
     TOKEN_INTERVAL_S,
+    _additive_drive,
+    _build_model,
     _evidence,
+    empirical_lead_paths,
+    exclusion_robustness_audit,
+    _recovery_truth_values,
     _lead_path,
     fit_sequential_sampling_models,
+    eligibility_audit,
+    matched_sequence_diagnostic,
+    matched_sequence_audit,
+    matched_sequence_statistics,
+    mechanistic_model_statistics,
+    heldout_model_statistics,
+    heldout_pairwise_model_statistics,
+    heldout_model_evaluation,
+    heldout_fold_audit,
     fitted_predictions,
     model_comparison_statistics,
+    model_recovery_confusion,
+    parameter_recovery_statistics,
+    parameter_recovery,
+    model_recovery,
+    robustness_statistics,
+    exclusion_robustness_statistics,
+    fitted_distribution_checks,
     population_parameters,
     urgency_condition_contrast,
+)
+from meg_tokens.workflows.thura2012 import (
+    _analysis_scope,
+    _validate_heldout_coverage,
+    _validate_primary_fit_diagnostics,
 )
 
 from tests.behavior.factories import trial_features
@@ -98,6 +127,162 @@ def test_a_cell_with_too_few_trials_is_reported_rather_than_fitted():
     assert fits["drift_scale"].isna().all()
     assert fits.loc[fits["condition"] == "all", "n_trials"].eq(4).all()
     assert fits.loc[fits["condition"] == "slow", "n_trials"].eq(0).all()
+
+
+def test_complete_model_set_has_explicit_four_model_schema():
+    features = trial_features(dt_ms=[900.0, 1000.0, 1100.0, 1200.0])
+    fits = fit_sequential_sampling_models(features, models=MECHANISTIC_MODELS)
+    assert set(fits["model"]) == set(MECHANISTIC_MODELS)
+    assert len(fits) == 12
+    assert {"collapse_rate", "additive_scale"}.issubset(fits.columns)
+    assert {
+        "n_starts", "best_start", "optimizer_success", "boundary_hit",
+        "boundary_parameters", "start_objectives", "start_converged", "fit_error",
+    }.issubset(fits.columns)
+    assert fits.loc[fits["model"] == "ddm", "fit_error"].eq("insufficient_trials").all()
+    assert not fits["converged"].any()
+
+
+def test_all_model_builders_use_the_explicit_lapse_overlay():
+    """The PyDDM lapse coefficient is part of the reproducible model policy."""
+    assert MIXTURE_COEF == pytest.approx(0.02)
+    for model_name, parameters in MODEL_PARAMETERS.items():
+        values = {
+            parameter: sum(PARAMETER_RANGES[parameter]) / 2
+            for parameter in parameters
+        }
+        model = _build_model(model_name, 3.0, values)
+        overlays = model.get_dependence("overlay").overlays
+        assert overlays[-1].name == "easy_mixture_model"
+
+
+def test_eligibility_audit_preserves_primary_trial_counts():
+    features = trial_features(
+        dt_ms=[900.0, np.nan, -10.0],
+        primary_analysis_eligible=[True, False, True],
+        has_choice=[True, False, True],
+        is_started=[True, True, True],
+    )
+    audit = eligibility_audit(features).set_index("criterion")
+    assert audit.loc["all_feature_rows", "n_rows"] == 3
+    assert audit.loc["primary_analysis_eligible", "n_rows"] == 2
+    assert audit.loc["positive_dt_for_first_passage", "n_rows"] == 1
+    assert "diagnostic_short_token_log" in audit.index
+
+
+def test_subject_fit_provenance_labels_state_grid_units_not_seconds(tmp_path):
+    from meg_tokens.workflows.behavior_characterization import _ssm_fit_metadata
+
+    metadata = _ssm_fit_metadata(
+        models=MECHANISTIC_MODELS,
+        n_jobs=8,
+        n_starts=3,
+        features_path=tmp_path / "trialfeatures.tsv",
+        excluded=set(),
+    )
+    assert metadata["solver"]["state_grid_units"] == "decision-variable/noise units (not seconds)"
+    assert "dx_s" not in metadata["solver"]
+    assert metadata["n_jobs"] == 8
+    assert metadata["n_starts"] == 3
+    assert metadata["source_tree_sha256"]
+
+
+def test_primary_fit_aggregation_rejects_stale_one_start_diagnostics():
+    table = pd.DataFrame(
+        {
+            "n_starts": [3],
+            "optimizer_success": [True],
+            "boundary_hit": [False],
+            "boundary_parameters": [""],
+            "start_objectives": ['{"0": 1.0, "1": 2.0, "2": 3.0}'],
+            "start_converged": ['{"0": true, "1": true, "2": true}'],
+            "fit_error": [""],
+        }
+    )
+    _validate_primary_fit_diagnostics(table, subject="H01")
+
+    stale = table.copy()
+    stale.loc[0, "n_starts"] = 1
+    with pytest.raises(ValueError, match="n_starts=3"):
+        _validate_primary_fit_diagnostics(stale, subject="H01")
+
+    incomplete = table.copy()
+    incomplete.loc[0, "start_objectives"] = '{"0": 1.0}'
+    with pytest.raises(ValueError, match="start_objectives has 1 starts"):
+        _validate_primary_fit_diagnostics(incomplete, subject="H01")
+
+
+def test_thura_sidecar_scope_labels_population_and_simulation_stages():
+    assert _analysis_scope("ssmcomparison")[0] == "thura2012_mechanistic_evaluation"
+    assert "complete-log" not in _analysis_scope("ssmexclusionrefit")[1]
+    assert "token_log_rows==15" in _analysis_scope("ssmexclusionrefit")[1]
+    assert "synthetic simulations" in _analysis_scope("ssmparameterrecovery")[1]
+    assert "robustness configuration" in _analysis_scope("ssmrobustnessstats")[1]
+
+
+def test_heldout_coverage_rejects_duplicate_or_missing_fold_cells():
+    rows = [
+        {"subject": "H01", "condition": condition, "model": model, "fold": fold}
+        for condition in ("all", "fast", "slow")
+        for model in MECHANISTIC_MODELS
+        for fold in range(3)
+    ]
+    table = pd.DataFrame(rows)
+    _validate_heldout_coverage(table, subjects=["H01"], folds=3)
+    with pytest.raises(ValueError, match="held-out coverage is incomplete"):
+        _validate_heldout_coverage(table.iloc[:-1], subjects=["H01"], folds=3)
+
+
+def test_fitted_distribution_checks_normalizes_conditions_and_reuses_timecourse():
+    features = trial_features(
+        subject=["H01"] * 6,
+        condition=["Fast", "Fast", "Fast", "Slow", "Slow", "Slow"],
+        dt_ms=[100.0, 200.0, 300.0, 400.0, 500.0, 600.0],
+        isCorrect=[True, False, True, False, False, True],
+    )
+    fits = pd.DataFrame({
+        "subject": ["H01"] * 3,
+        "condition": ["all", "fast", "slow"],
+        "model": ["ddm"] * 3,
+        "converged": [True] * 3,
+    })
+    timecourse_rows = []
+    for condition in ("all", "fast", "slow"):
+        for trial_class in ("all", "easy"):
+            for time_s, correct_density, error_density in (
+                (0.0, 0.0, 0.0),
+                (0.1, 2.0, 1.0),
+                (0.2, 2.0, 1.0),
+                (0.3, 0.0, 0.0),
+            ):
+                timecourse_rows.append({
+                    "subject": "H01",
+                    "condition": condition,
+                    "model": "ddm",
+                    "trial_class": trial_class,
+                    "time_s": time_s,
+                    "predicted_density_correct": correct_density,
+                    "predicted_density_error": error_density,
+                })
+    checks = fitted_distribution_checks(
+        features, fits, timecourse=pd.DataFrame(timecourse_rows)
+    )
+    assert not checks.empty
+    assert set(checks["condition"]) == {"all", "fast", "slow"}
+    assert set(checks["outcome"]) == {"correct", "error"}
+    assert set(checks["trial_class"]) == {"all", "easy"}
+    assert checks["prediction_source"].eq("ssmtimecourse").all()
+    all_correct_median = checks.loc[
+        (checks["condition"] == "all")
+        & (checks["trial_class"] == "all")
+        & (checks["outcome"] == "correct")
+        & (checks["quantile"] == 0.5)
+    ].iloc[0]
+    assert all_correct_median["n_observed"] == 3
+    assert all_correct_median["observed_rt_s"] == pytest.approx(0.3)
+    assert all_correct_median["predicted_correct_mass"] == pytest.approx(0.4)
+    assert all_correct_median["predicted_error_mass"] == pytest.approx(0.2)
+    assert np.isfinite(all_correct_median["predicted_rt_s"])
 
 
 def test_trials_sharing_a_token_sequence_are_counted_once():
@@ -278,6 +463,364 @@ def test_the_comparison_is_reported_for_every_condition():
 
     assert set(statistics["condition"]) == {"all", "fast", "slow"}
     assert set(statistics["criterion"]) == {"aic", "bic"}
+
+
+def test_mechanistic_comparison_reports_each_alternative_against_ddm():
+    base = _fits(model=["ddm"] * 2, delta_bic=[0.0, 0.0], delta_aic=[0.0, 0.0])
+    alternatives = pd.concat(
+        [
+            _fits(model=[model] * 2, delta_bic=[-2.0, 2.0], delta_aic=[-3.0, 3.0])
+            for model in MECHANISTIC_MODELS if model != "ddm"
+        ],
+        ignore_index=True,
+    )
+    stats_table = mechanistic_model_statistics(pd.concat([base, alternatives]))
+    assert set(stats_table["model"]) == set(MECHANISTIC_MODELS) - {"ddm"}
+    assert set(stats_table["criterion"]) == {"aic", "bic"}
+
+
+def test_mechanistic_comparison_is_condition_stratified_and_subject_paired():
+    baseline = _fits(
+        model=["ddm"] * 4,
+        condition=["fast", "fast", "slow", "slow"],
+        subject=["H01", "H02", "H01", "H02"],
+        aic=[100.0] * 4,
+        bic=[100.0] * 4,
+    )
+    urgency = _fits(
+        model=["urgency"] * 4,
+        condition=["fast", "fast", "slow", "slow"],
+        subject=["H01", "H02", "H01", "H02"],
+        aic=[90.0] * 4,
+        bic=[90.0] * 4,
+    )
+    stats_table = mechanistic_model_statistics(pd.concat([baseline, urgency]))
+    assert set(stats_table["condition"]) == {"fast", "slow"}
+    assert stats_table["n_subjects"].eq(2).all()
+
+
+def test_matched_sequence_diagnostic_does_not_match_on_outcome():
+    # Opposite early histories converge at jump 4, share the same post-
+    # convergence suffix, and are decided after the prespecified jump 6.
+    suffix = "11111122222"
+    features = trial_features(
+        dt_ms=[900.0] * 10,
+        token_directions=["1122" + suffix] * 5 + ["2211" + suffix] * 5,
+        nCorrectChoice=[1] * 10,
+        decision_token_index=[np.nan, 4] + [7] * 8,
+        isCorrect=[True, False] * 5,
+    )
+    matched = matched_sequence_diagnostic(features, early_jumps=3, min_trials=1)
+    assert set(matched["early_bias"]) == {"for", "against"}
+    assert matched["n_trials"].min() >= 1
+    assert matched["pair_id"].nunique() == 5
+    assert matched["convergence_jump"].eq(6).all()
+    assert matched["decision_after_convergence"].eq(
+        matched["post_convergence_eligible"]
+    ).all()
+    assert matched["decision_token_index"].isna().any()
+    assert matched["matching_rule"].str.startswith("stimulus_only").all()
+    statistics = matched_sequence_statistics(matched)
+    assert statistics["n_subjects"].eq(1).all()
+    audit = matched_sequence_audit(matched, features)
+    assert audit.iloc[0]["n_stimulus_pairs"] == 5
+    assert audit.iloc[0]["n_post_convergence_pairs"] == 3
+    assert audit.iloc[0]["post_convergence_pair_fraction"] == pytest.approx(0.6)
+
+
+def test_additive_urgency_drive_is_symmetric_under_target_relabeling():
+    path = _lead_path("112212212212212", correct_target=1)
+    mirrored = tuple(-value for value in path)
+    times = np.linspace(0.2, 2.0, 10)
+    assert all(
+        _additive_drive(float(time), path, 0.7)
+        == pytest.approx(-_additive_drive(float(time), mirrored, 0.7))
+        for time in times
+    )
+
+
+def test_empirical_recovery_paths_use_each_trial_actual_correct_target():
+    directions = ["112211221122112", "112211221122112"]
+    features = trial_features(
+        dt_ms=[900.0, 900.0],
+        token_directions=directions,
+        nCorrectChoice=[1, 2],
+    )
+    paths = empirical_lead_paths(features)
+    assert paths[0] == _lead_path(directions[0], correct_target=1)
+    assert paths[1] == tuple(-value for value in paths[0])
+    assert all(isinstance(path, tuple) for path in paths)
+
+
+def test_heldout_statistics_are_subject_paired_and_condition_stratified():
+    rows = []
+    for subject, offset in (("H01", 0.1), ("H02", -0.1)):
+        for condition in ("fast", "slow"):
+            for fold in (0, 1):
+                n_test = 1 if fold == 0 else 3
+                rows.extend([
+                    {
+                        "subject": subject, "condition": condition,
+                        "model": "ddm", "fold": fold,
+                        "n_test": n_test,
+                        "heldout_log_likelihood": -1.0 * n_test,
+                        "heldout_log_likelihood_per_trial": -1.0,
+                    },
+                    {
+                        "subject": subject, "condition": condition,
+                        "model": "urgency", "fold": fold,
+                        "n_test": n_test,
+                        "heldout_log_likelihood": (-1.0 + offset) * n_test,
+                        "heldout_log_likelihood_per_trial": -1.0 + offset,
+                    },
+                ])
+    stats_table = heldout_model_statistics(pd.DataFrame(rows))
+    assert set(stats_table["condition"]) == {"fast", "slow"}
+    assert stats_table["n_subjects"].eq(2).all()
+    assert stats_table["criterion"].eq("heldout_log_likelihood_per_trial").all()
+
+
+def test_heldout_statistics_weight_fold_scores_by_test_trial_count():
+    rows = pd.DataFrame([
+        {"subject": "H01", "condition": "fast", "model": "ddm", "fold": 0,
+         "n_test": 1, "heldout_log_likelihood": -1.0,
+         "heldout_log_likelihood_per_trial": -1.0},
+        {"subject": "H01", "condition": "fast", "model": "ddm", "fold": 1,
+         "n_test": 3, "heldout_log_likelihood": -6.0,
+         "heldout_log_likelihood_per_trial": -2.0},
+        {"subject": "H01", "condition": "fast", "model": "urgency", "fold": 0,
+         "n_test": 1, "heldout_log_likelihood": -0.5,
+         "heldout_log_likelihood_per_trial": -0.5},
+        {"subject": "H01", "condition": "fast", "model": "urgency", "fold": 1,
+         "n_test": 3, "heldout_log_likelihood": -3.0,
+         "heldout_log_likelihood_per_trial": -1.0},
+    ])
+    stats_table = heldout_model_statistics(rows)
+    # Candidate score is -3.5/4, baseline is -7/4: Δ = 0.875.
+    assert stats_table.iloc[0]["mean"] == pytest.approx(0.875)
+
+
+def test_heldout_pairwise_statistics_compares_two_candidates_directly():
+    rows = []
+    for subject, offset in (("H01", 0.1), ("H02", -0.1)):
+        for condition in ("fast", "slow"):
+            for fold in (0, 1):
+                n_test = 1 if fold == 0 else 3
+                rows.extend([
+                    {
+                        "subject": subject, "condition": condition,
+                        "model": "ddm", "fold": fold,
+                        "n_test": n_test,
+                        "heldout_log_likelihood": -1.0 * n_test,
+                        "heldout_log_likelihood_per_trial": -1.0,
+                    },
+                    {
+                        "subject": subject, "condition": condition,
+                        "model": "urgency", "fold": fold,
+                        "n_test": n_test,
+                        "heldout_log_likelihood": (-1.0 + offset) * n_test,
+                        "heldout_log_likelihood_per_trial": -1.0 + offset,
+                    },
+                    {
+                        "subject": subject, "condition": condition,
+                        "model": "collapsing", "fold": fold,
+                        "n_test": n_test,
+                        "heldout_log_likelihood": -1.0 * n_test,
+                        "heldout_log_likelihood_per_trial": -1.0,
+                    },
+                ])
+    pairwise = heldout_pairwise_model_statistics(pd.DataFrame(rows))
+    # Every unordered pair among {ddm, urgency, collapsing} in both
+    # conditions: 3 pairs x 2 conditions.
+    assert len(pairwise) == 6
+    assert set(zip(pairwise["model_a"], pairwise["model_b"])) == {
+        ("collapsing", "ddm"), ("collapsing", "urgency"), ("ddm", "urgency"),
+    }
+    urgency_vs_collapsing = pairwise.loc[
+        (pairwise["model_a"] == "collapsing") & (pairwise["model_b"] == "urgency")
+    ]
+    assert urgency_vs_collapsing["n_subjects"].eq(2).all()
+    assert urgency_vs_collapsing["criterion"].eq("heldout_log_likelihood_per_trial").all()
+    # collapsing is identical to ddm here, so ddm-vs-urgency and
+    # collapsing-vs-urgency must give the same contrast, just with the sign
+    # flipped by which model is "a".
+    ddm_vs_urgency = pairwise.loc[
+        (pairwise["model_a"] == "ddm") & (pairwise["model_b"] == "urgency")
+    ].set_index("condition")["mean"]
+    collapsing_vs_urgency_mean = urgency_vs_collapsing.set_index("condition")["mean"]
+    pd.testing.assert_series_equal(
+        ddm_vs_urgency.sort_index(), collapsing_vs_urgency_mean.sort_index(),
+        check_names=False,
+    )
+
+
+def test_heldout_pairwise_statistics_weight_fold_scores_by_test_trial_count():
+    rows = pd.DataFrame([
+        {"subject": "H01", "condition": "fast", "model": "ddm", "fold": 0,
+         "n_test": 1, "heldout_log_likelihood": -1.0,
+         "heldout_log_likelihood_per_trial": -1.0},
+        {"subject": "H01", "condition": "fast", "model": "ddm", "fold": 1,
+         "n_test": 3, "heldout_log_likelihood": -6.0,
+         "heldout_log_likelihood_per_trial": -2.0},
+        {"subject": "H01", "condition": "fast", "model": "urgency", "fold": 0,
+         "n_test": 1, "heldout_log_likelihood": -0.5,
+         "heldout_log_likelihood_per_trial": -0.5},
+        {"subject": "H01", "condition": "fast", "model": "urgency", "fold": 1,
+         "n_test": 3, "heldout_log_likelihood": -3.0,
+         "heldout_log_likelihood_per_trial": -1.0},
+    ])
+    pairwise = heldout_pairwise_model_statistics(rows)
+    # Same weighted scores as the ddm-baseline test: urgency -3.5/4,
+    # ddm -7/4, Δ(urgency - ddm) = 0.875.
+    row = pairwise.loc[
+        (pairwise["model_a"] == "ddm") & (pairwise["model_b"] == "urgency")
+    ].iloc[0]
+    assert row["mean"] == pytest.approx(-0.875)
+    assert row["n_subjects_favoring_model_b"] == 1
+    assert row["n_subjects_favoring_model_a"] == 0
+
+
+def test_heldout_evaluation_persists_failed_small_cells_and_fold_audit():
+    features = trial_features(dt_ms=[900.0, 1000.0, 1100.0, 1200.0])
+    heldout = heldout_model_evaluation(
+        features, models=("ddm",), folds=3, n_starts=1
+    )
+    assert len(heldout) == 9  # all/fast/slow × model × three folds
+    assert not heldout["converged"].any()
+    assert heldout["fit_error"].eq("insufficient_train_or_test_trials").all()
+    audit = heldout_fold_audit(heldout, expected_folds=3)
+    assert audit["folds_complete"].all()
+    assert audit["n_failed"].eq(3).all()
+
+
+def test_recovery_truth_design_varies_interior_parameters_deterministically():
+    first, first_fractions = _recovery_truth_values(
+        "urgency", repetition=0, repetitions=4, seed=0
+    )
+    second, second_fractions = _recovery_truth_values(
+        "urgency", repetition=1, repetitions=4, seed=0
+    )
+    assert any(first[name] != second[name] for name in first)
+    assert first_fractions != second_fractions
+    for parameter, value in first.items():
+        lower, upper = PARAMETER_RANGES[parameter]
+        assert lower < value < upper
+
+
+def test_recovery_truth_design_is_a_permutation_at_production_size():
+    designs = [
+        _recovery_truth_values("urgency", repetition=index, repetitions=12, seed=0)[0]
+        for index in range(12)
+    ]
+    for parameter in MODEL_PARAMETERS["urgency"]:
+        values = {design[parameter] for design in designs}
+        assert len(values) == 12
+
+
+def test_recovery_array_repetition_index_has_complete_machine_rows(monkeypatch):
+    import meg_tokens.behavior.analyses.sequential_sampling as sequential_sampling
+
+    monkeypatch.setattr(
+        sequential_sampling,
+        "_synthetic_frame",
+        lambda *args, **kwargs: pd.DataFrame({"rt": [0.5] * 20}),
+    )
+
+    def fake_fit(model, frame, **kwargs):
+        return {
+            **{parameter: 1.0 for parameter in MODEL_PARAMETERS[model]},
+            "log_likelihood": -10.0,
+            "optimizer_success": True,
+            "boundary_hit": False,
+        }
+
+    monkeypatch.setattr(sequential_sampling, "_fit_one", fake_fit)
+    parameter = parameter_recovery(
+        repetitions=12, repetition_indices=[7], truth_design_repetitions=12,
+    )
+    model = model_recovery(
+        repetitions=12, repetition_indices=[7], truth_design_repetitions=12,
+    )
+    assert len(parameter) == sum(len(values) for values in MODEL_PARAMETERS.values())
+    assert len(model) == len(MECHANISTIC_MODELS) ** 2
+    assert set(parameter["repetition"]) == {7}
+    assert set(model["repetition"]) == {7}
+
+
+def test_robustness_statistics_preserves_config_condition_model_and_paired_change():
+    rows = []
+    for subject in ("H01", "H02"):
+        for configuration, offset in (("baseline", 0.0), ("expanded_bounds", -1.0)):
+            for condition in ("all", "fast", "slow"):
+                for model in MECHANISTIC_MODELS:
+                    rows.append({
+                        "subject": subject, "configuration": configuration,
+                        "condition": condition, "model": model,
+                        "delta_bic": offset if model == "urgency" else 0.0,
+                        "converged": True, "boundary_hit": False,
+                        "boundary_parameters": "",
+                        "urgency_scale": 2.0 if model == "urgency" else np.nan,
+                        "urgency_scale_lower_bound": 0.01,
+                        "urgency_scale_upper_bound": 2.0,
+                        "nondecision_s": 0.0,
+                        "nondecision_s_lower_bound": 0.0,
+                        "nondecision_s_upper_bound": 1.0,
+                    })
+    summary = robustness_statistics(pd.DataFrame(rows))
+    assert set(summary["analysis"]) == {
+        "ssm_robustness_summary", "ssm_robustness_paired_sensitivity",
+    }
+    assert summary["configuration"].isin({"baseline", "expanded_bounds"}).all()
+    assert "urgency_scale_near_upper" in summary
+
+
+def test_exclusion_statistics_compare_within_population_delta_bic():
+    primary = _fits(
+        model=["ddm", "urgency"], subject=["H01", "H01"],
+        condition=["all", "all"], delta_bic=[0.0, -2.0],
+        boundary_hit=[False, False],
+    )
+    strict = primary.copy()
+    strict["delta_bic"] = [0.0, -3.0]
+    summary = exclusion_robustness_statistics(strict, primary)
+    assert set(summary["model"]) == {"urgency"}
+    assert summary.iloc[0]["mean"] == pytest.approx(-1.0)
+
+
+def test_recovery_summaries_are_machine_readable():
+    parameter = pd.DataFrame([
+        {"true_model": "ddm", "parameter": "bound", "true_value": 1.0,
+         "estimated_value": 1.1, "converged": True, "boundary_hit": False},
+        {"true_model": "ddm", "parameter": "bound", "true_value": 1.0,
+         "estimated_value": 0.9, "converged": True, "boundary_hit": True},
+    ])
+    summary = parameter_recovery_statistics(parameter)
+    assert {"bias", "rmse", "correlation", "convergence_rate", "boundary_rate"}.issubset(summary.columns)
+    model = pd.DataFrame([
+        {"repetition": 0, "true_model": "ddm", "fitted_model": "ddm", "selected_model": "ddm"},
+        {"repetition": 0, "true_model": "ddm", "fitted_model": "urgency", "selected_model": "ddm"},
+        {"repetition": 1, "true_model": "ddm", "fitted_model": "ddm", "selected_model": "urgency"},
+    ])
+    confusion = model_recovery_confusion(model)
+    assert confusion["n_repetitions"].eq(2).all()
+    assert confusion["n_selected"].sum() == 2
+
+
+def test_exclusion_robustness_audit_reports_retention_and_minimum_cells():
+    features = trial_features(
+        dt_ms=[900.0, 900.0, 900.0],
+        token_log_rows=[15, 14, 15],
+        design_time_alignment_valid=[True, False, True],
+    )
+    audit = exclusion_robustness_audit(features)
+    assert set(audit["rule"]) == {
+        "complete_token_log", "canonical_alignment_valid",
+        "complete_token_log_alignment_equivalence",
+    }
+    assert audit["n_primary_task_trials"].eq(3).all()
+    assert audit.loc[
+        audit["rule"] == "complete_token_log_alignment_equivalence", "equivalent"
+    ].item()
 
 
 # --- Fast versus Slow urgency -------------------------------------------------

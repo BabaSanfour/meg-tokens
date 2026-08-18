@@ -14,6 +14,10 @@ the rest of the output.
 from __future__ import annotations
 
 from pathlib import Path
+import hashlib
+from importlib.metadata import PackageNotFoundError, version
+import subprocess
+import sys
 from typing import Optional, Sequence
 
 import pandas as pd
@@ -59,6 +63,17 @@ from meg_tokens.behavior.analyses.sequential import (
     robust_post_error_slowing,
 )
 from meg_tokens.behavior.analyses.sequential_sampling import (
+    EVIDENCE_AFTER_LAST,
+    FILTER_TAU_S,
+    FIT_SEED,
+    HESSIAN_STEP,
+    MINIMUM_FIT_TRIALS,
+    MIXTURE_COEF,
+    MODEL_PARAMETERS,
+    PARAMETER_RANGES,
+    SOLVER_STEP_S,
+    TIME_COURSE_STEP_S,
+    TOKEN_INTERVAL_S,
     fit_sequential_sampling_models,
     fitted_predictions,
     model_comparison_statistics,
@@ -68,6 +83,99 @@ from meg_tokens.behavior.analyses.sequential_sampling import (
 from meg_tokens.behavior.tables import read_trial_features
 from meg_tokens.core import ProjectConfig, WorkflowResult, normalize_subject_id
 from meg_tokens.io import DerivativeLayout, load_table, require_file, save_table
+
+
+def _ssm_source_tree_sha256() -> str:
+    """Hash source/scripts/docs because cluster analysis is uncommitted."""
+    root = Path(__file__).resolve().parents[2]
+    paths = [
+        path
+        for base in (root / "meg_tokens", root / "scripts")
+        if base.exists()
+        for path in base.rglob("*")
+        if path.is_file() and path.suffix in {".py", ".sh"}
+    ]
+    paths.extend(
+        path for path in (
+            root / "docs" / "behavior.md",
+            root / "docs" / "behavior_reporting_session_handoff.md",
+        ) if path.is_file()
+    )
+    digest = hashlib.sha256()
+    for path in sorted(set(paths)):
+        digest.update(str(path.relative_to(root)).encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(path.read_bytes())
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
+def _package_version(name: str) -> str:
+    try:
+        return version(name)
+    except PackageNotFoundError:
+        return "unavailable"
+
+
+def _ssm_fit_metadata(
+    *,
+    models: tuple[str, ...],
+    n_jobs: int,
+    n_starts: int,
+    features_path: Path,
+    excluded: set[str],
+) -> dict[str, object]:
+    """Return complete reproducibility metadata for subject-level SSM fits."""
+    return {
+        "stage": "behavior_characterization_analysis",
+        "analysis": "ssm mechanistic model fit",
+        "models": list(models),
+        "model_parameters": {model: list(names) for model, names in MODEL_PARAMETERS.items()},
+        "parameter_ranges": {name: list(bounds) for name, bounds in PARAMETER_RANGES.items()},
+        "condition_parameterization": "separate subject × condition × model cells",
+        "input_files": [str(features_path)],
+        "excluded_subjects": sorted(excluded),
+        "timing": {
+            "token_interval_s": TOKEN_INTERVAL_S,
+            "decision_time_origin": "first token jump; dt_ms is motor-baseline-corrected",
+            "evidence_after_last_token": EVIDENCE_AFTER_LAST,
+        },
+        "filter_tau_s": FILTER_TAU_S,
+        "solver": {
+            "dt_s": SOLVER_STEP_S,
+            "state_grid_step": SOLVER_STEP_S,
+            "state_grid_units": "decision-variable/noise units (not seconds)",
+            "timecourse_dt_s": TIME_COURSE_STEP_S,
+            "boundary": "absorbing finite-grid first passage",
+            "overshoot_correction": "none; numerical grid only",
+        },
+        "likelihood": {
+            "loss": "PyDDM LossLikelihood",
+            "mixture_coef": MIXTURE_COEF,
+            "mixture_distribution": "uniform contaminant",
+        },
+        "minimum_fit_trials": MINIMUM_FIT_TRIALS,
+        "fit_seed": FIT_SEED,
+        "n_jobs": n_jobs,
+        "n_starts": n_starts,
+        "uncertainty": {
+            "final_full_data": "finite-difference observed-information Hessian",
+            "hessian_step": HESSIAN_STEP,
+            "outside_final_full_data": "disabled for held-out/recovery/robustness",
+        },
+        "git_commit": subprocess.run(
+            ["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=False
+        ).stdout.strip(),
+        "git_dirty": bool(subprocess.run(
+            ["git", "status", "--porcelain"], capture_output=True, text=True, check=False
+        ).stdout.strip()),
+        "source_tree_sha256": _ssm_source_tree_sha256(),
+        "python": sys.version,
+        "software": {
+            name: _package_version(name)
+            for name in ("pyddm", "numpy", "pandas", "scipy")
+        },
+    }
 
 
 def _selected_features(
@@ -153,6 +261,8 @@ def fit_subject_sequential_sampling(
     *,
     subjects: Optional[Sequence[str]] = None,
     n_jobs: int = 1,
+    models: tuple[str, ...] = ("ddm", "urgency"),
+    n_starts: int = 1,
 ) -> WorkflowResult:
     """Fit the sequential-sampling models and write one table per subject.
 
@@ -187,7 +297,9 @@ def fit_subject_sequential_sampling(
     """
     layout = DerivativeLayout(project.bids_root, task=project.task)
     features, features_path, excluded = _selected_features(project, layout, subjects)
-    fits = fit_sequential_sampling_models(features, n_jobs=n_jobs)
+    fits = fit_sequential_sampling_models(
+        features, n_jobs=n_jobs, models=models, n_starts=n_starts
+    )
     time_courses, trial_predictions = fitted_predictions(features, fits)
 
     written = {
@@ -195,6 +307,13 @@ def fit_subject_sequential_sampling(
         "ssmtimecourse": time_courses,
         "ssmtrialpredictions": trial_predictions,
     }
+    provenance = _ssm_fit_metadata(
+        models=models,
+        n_jobs=n_jobs,
+        n_starts=n_starts,
+        features_path=features_path,
+        excluded=excluded,
+    )
     outputs = []
     for subject in sorted(fits["subject"].astype(str).unique()):
         for name, table in written.items():
@@ -208,15 +327,13 @@ def fit_subject_sequential_sampling(
                 output_path,
                 rows.reset_index(drop=True),
                 metadata={
-                    "stage": "behavior_characterization_analysis",
+                    **provenance,
                     "analysis": name,
                     "subjects": [subject],
-                    "excluded_subjects": sorted(excluded),
                     "inference": (
                         "maximum-likelihood fit per subject, condition and "
-                        "model; pooled by 'behavior characterization'"
+                        "model; pooled by dedicated Thura et al. aggregation"
                     ),
-                    "input_files": [str(features_path)],
                 },
             )
             outputs.append(output_path)
@@ -227,6 +344,8 @@ def fit_subject_sequential_sampling(
         settings={
             "subjects": sorted(fits["subject"].astype(str).unique()),
             "n_jobs": n_jobs,
+            "models": list(models),
+            "n_starts": n_starts,
             "n_converged_fits": int(fits["converged"].sum()),
         },
     )

@@ -90,6 +90,77 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
 
+    ssm_evaluate = behavior_commands.add_parser(
+        "ssm-evaluate",
+        help="Evaluate complete Thura et al. mechanistic fits (held-out, recovery, matching, diagnostics).",
+    )
+    ssm_evaluate.add_argument("--subjects", nargs="+")
+    ssm_evaluate.add_argument("--folds", type=int, default=3)
+    ssm_evaluate.add_argument("--n-starts", dest="n_starts", type=int, default=1)
+    ssm_evaluate.add_argument("--recovery-repetitions", dest="recovery_repetitions", type=int, default=0)
+    ssm_evaluate_aggregate = behavior_commands.add_parser(
+        "ssm-evaluate-aggregate",
+        help="Validate and merge subject-array held-out/matching/distribution diagnostics.",
+    )
+    ssm_evaluate_aggregate.add_argument("--folds", type=int, default=3)
+    behavior_commands.add_parser(
+        "ssm-aggregate",
+        help="Validate and pool complete subject-level mechanistic SSM outputs only.",
+    )
+    ssm_recovery = behavior_commands.add_parser(
+        "ssm-recovery",
+        help="Run parameter/model recovery simulations for the mechanistic model set.",
+    )
+    ssm_recovery.add_argument("--repetitions", type=int, default=12)
+    ssm_recovery.add_argument("--n-starts", dest="n_starts", type=int, default=2)
+    ssm_recovery.add_argument(
+        "--repetition-index", type=int,
+        help="Run one truth-design repetition for a restartable Slurm array task.",
+    )
+    behavior_commands.add_parser(
+        "ssm-recovery-aggregate",
+        help="Validate and merge all repetition-scoped recovery derivatives.",
+    ).add_argument("--repetitions", type=int, default=12)
+    ssm_robustness = behavior_commands.add_parser(
+        "ssm-robustness",
+        help="Run the prespecified tau, solver, evidence-horizon, and bound robustness grid.",
+    )
+    ssm_robustness.add_argument("--n-jobs", dest="n_jobs", type=int, default=1)
+    ssm_robustness.add_argument("--n-starts", dest="n_starts", type=int, default=1)
+    ssm_robustness.add_argument("--subjects", nargs="+")
+    ssm_robustness.add_argument("--configuration")
+    behavior_commands.add_parser(
+        "ssm-robustness-aggregate",
+        help="Validate and merge subject-by-configuration robustness outputs.",
+    )
+    ssm_exclusion = behavior_commands.add_parser(
+        "ssm-exclusion-robustness",
+        help="Refit the mechanistic set under complete-token-log/alignment sensitivities.",
+    )
+    ssm_exclusion.add_argument("--n-jobs", dest="n_jobs", type=int, default=1)
+    ssm_exclusion.add_argument("--n-starts", dest="n_starts", type=int, default=1)
+    ssm_exclusion.add_argument("--subjects", nargs="+")
+    ssm_exclusion.add_argument(
+        "--rule", choices=("complete_token_log_alignment",)
+    )
+    behavior_commands.add_parser(
+        "ssm-exclusion-robustness-aggregate",
+        help="Validate and merge subject-by-rule exclusion-refit outputs.",
+    )
+    ssm_fit.add_argument(
+        "--model-set",
+        choices=("legacy", "mechanistic"),
+        default="legacy",
+        help="Fit the historical ddm+urgency pair or the complete four-model comparison.",
+    )
+    ssm_fit.add_argument(
+        "--n-starts",
+        dest="n_starts",
+        type=int,
+        default=1,
+        help="Independent seeded optimizer starts per model/cell.",
+    )
+
     behavior_commands.add_parser(
         "subjects",
         help=(
@@ -528,12 +599,76 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             from meg_tokens.workflows.behavior_characterization import (
                 fit_subject_sequential_sampling,
             )
+            from meg_tokens.behavior.analyses.sequential_sampling import (
+                MECHANISTIC_MODELS,
+            )
 
             result = fit_subject_sequential_sampling(
                 project,
                 subjects=args.subjects,
                 n_jobs=args.n_jobs,
+                models=(MECHANISTIC_MODELS if args.model_set == "mechanistic" else ("ddm", "urgency")),
+                n_starts=args.n_starts,
             )
+        elif args.domain == "behavior" and args.behavior_command == "ssm-evaluate":
+            from meg_tokens.workflows.thura2012 import evaluate_thura2012
+
+            result = evaluate_thura2012(
+                project,
+                subjects=args.subjects,
+                folds=args.folds,
+                n_starts=args.n_starts,
+                recovery_repetitions=args.recovery_repetitions,
+            )
+        elif args.domain == "behavior" and args.behavior_command == "ssm-evaluate-aggregate":
+            from meg_tokens.workflows.thura2012 import aggregate_mechanistic_evaluation
+
+            result = aggregate_mechanistic_evaluation(project, folds=args.folds)
+        elif args.domain == "behavior" and args.behavior_command == "ssm-aggregate":
+            from meg_tokens.workflows.thura2012 import aggregate_mechanistic_fits
+
+            result = aggregate_mechanistic_fits(project)
+        elif args.domain == "behavior" and args.behavior_command == "ssm-recovery":
+            from meg_tokens.workflows.thura2012 import run_recovery_stage
+
+            result = run_recovery_stage(
+                project,
+                repetitions=args.repetitions,
+                n_starts=args.n_starts,
+                repetition_index=args.repetition_index,
+            )
+        elif args.domain == "behavior" and args.behavior_command == "ssm-recovery-aggregate":
+            from meg_tokens.workflows.thura2012 import aggregate_recovery_stage
+
+            result = aggregate_recovery_stage(project, repetitions=args.repetitions)
+        elif args.domain == "behavior" and args.behavior_command == "ssm-robustness":
+            from meg_tokens.workflows.thura2012 import run_robustness_stage
+
+            result = run_robustness_stage(
+                project,
+                subject=args.subjects[0] if args.subjects else None,
+                configuration=args.configuration,
+                n_jobs=args.n_jobs,
+                n_starts=args.n_starts,
+            )
+        elif args.domain == "behavior" and args.behavior_command == "ssm-robustness-aggregate":
+            from meg_tokens.workflows.thura2012 import aggregate_robustness_stage
+
+            result = aggregate_robustness_stage(project)
+        elif args.domain == "behavior" and args.behavior_command == "ssm-exclusion-robustness":
+            from meg_tokens.workflows.thura2012 import run_exclusion_robustness_stage
+
+            result = run_exclusion_robustness_stage(
+                project,
+                subject=args.subjects[0] if args.subjects else None,
+                rule=args.rule,
+                n_jobs=args.n_jobs,
+                n_starts=args.n_starts,
+            )
+        elif args.domain == "behavior" and args.behavior_command == "ssm-exclusion-robustness-aggregate":
+            from meg_tokens.workflows.thura2012 import aggregate_exclusion_robustness_stage
+
+            result = aggregate_exclusion_robustness_stage(project)
         elif args.domain == "behavior" and args.behavior_command == "subjects":
             from meg_tokens.workflows.behavior_characterization import (
                 characterization_subjects,

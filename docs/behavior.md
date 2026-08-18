@@ -81,17 +81,50 @@ with the horizon-dependent exact posterior.
 
 ### `behavior/analyses/sequential_sampling.py`
 
-- `ssmcomparison` — the urgency-gating vs. bounded-integrator fits (model
-  specification: the module's own docstring). Both are reported with
-  log-likelihood, AIC, BIC, and the criterion difference against the
-  integrator fit; the group table counts the subjects each model wins,
-  tests that difference across subjects, and carries the paired
-  Fast-minus-Slow contrast on every fitted urgency parameter.
+- `ssmcomparison` — sequential-sampling model fits, one row per subject,
+  condition, and model. The default (historical) call fits the two-model
+  urgency-gating vs. bounded-integrator comparison; passing
+  `--model-set mechanistic` to `behavior ssm-fit` runs the complete Thura et
+  al. (2012) reproduction, doi:10.1152/jn.01071.2011, adding a
+  collapsing-bound integrator and an additive-urgency sensitivity model —
+  four candidates fit to the same canonical `primary_analysis_eligible`
+  trials, hand-specific motor-corrected decision times, token timing
+  (200 ms), finite-difference solver grid, explicit 2% uniform lapse
+  mixture, and first-passage boundary convention, followed by the
+  compute-node-only `behavior ssm-aggregate` and `behavior ssm-evaluate`
+  stages. Every candidate is reported with log-likelihood, AIC, BIC, and the
+  criterion difference against the integrator fit; the group table counts
+  the subjects each model wins, tests that difference across subjects, and
+  carries the paired Fast-minus-Slow contrast on every fitted urgency
+  parameter.
 - `ssmpopulation` — empirical-Bayes population model fitted over the
   subject-level estimates and their observed-information standard errors:
   a population mean, a between-subject standard deviation, and a
   population-informed estimate per subject, shrunk in proportion to that
   subject's own uncertainty.
+
+**The four candidate models.** The primary reproduction is the multiplicative
+urgency-gating model: a 200-ms leaky evidence state is multiplied by a
+linearly growing urgency signal and compared with a fixed threshold. Its
+equivalent behavioral criterion is `T/(b + mt)`, which declines with time.
+The fixed-bound evidence integrator is the baseline. A hyperbolically
+collapsing-bound integrator is an alternative explanation, and additive
+urgency is a sensitivity analysis rather than a claim about the 2012
+mechanism.
+
+The scalar signed-difference representation cannot identify a common additive
+urgency drive: a common input to two race channels cancels in their difference.
+The implemented additive sensitivity therefore adds a time-growing drive in
+the *current evidence-preference* direction, which is odd under target-label
+reversal and never uses the post-hoc correct target. It is explicitly not
+treated as evidence for a unique additive mechanism. The paper itself notes
+that current behavioral paradigms do not conclusively distinguish additive and
+multiplicative urgency (Thura et al., 2012, doi:10.1152/jn.01071.2011).
+
+The mechanistic comparison is not an optimality test unless reward values,
+movement/nondecision timing, and intertrial timing are verified from the
+acquisition/task specification. Those inputs are not part of the current
+trial-feature contract, so no reward-rate claim is made by default.
 
 ### `behavior/analyses/individual.py`
 

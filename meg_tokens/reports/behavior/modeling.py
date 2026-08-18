@@ -1,4 +1,4 @@
-"""Sequential-sampling model figures: F01, F02, F03, F21, F22."""
+"""Sequential-sampling model figures: F01, F02, F03, F21, F22, and F27."""
 
 from __future__ import annotations
 
@@ -15,7 +15,203 @@ from meg_tokens.reports.annotations import (
     stat_from_row,
 )
 from meg_tokens.reports.behavior._tables import BehaviorTableSet
-from meg_tokens.reports.panels import estimation_axis, forest, paired_slope
+from meg_tokens.reports.panels import (
+    estimation_axis,
+    forest,
+    group_line,
+    paired_slope,
+    within_subject_error,
+)
+
+
+def build_ssmcomparison_mechanistic(tables: BehaviorTableSet) -> tuple[Figure, dict[str, Any]]:
+    """Final four-panel mechanistic figure for the complete model set.
+
+    Repeated criterion/observed-density fields in ``ssmtimecourse`` are
+    de-duplicated before subject-balanced averaging.  The figure remains useful
+    with the historical two-model table, while showing collapsing/additive
+    candidates automatically when the complete cluster derivative is present.
+    """
+    fits = tables.analysis("ssmcomparison")
+    courses = tables.analysis("ssmtimecourse")
+    stats_table = tables.analysis("ssmcomparisonstats")
+    heldout = tables.analysis("ssmheldout")
+    heldout_stats = tables.analysis("ssmheldoutstats")
+    pooled = courses.loc[courses["condition"] == "all"].copy()
+    model_colors = {
+        "urgency": style.MODEL_COLORS["urgency"],
+        "ddm": style.MODEL_COLORS["ddm"],
+        "collapsing": "#7a5c3e",
+        "additive_urgency": "#008c95",
+    }
+    model_labels = {
+        "urgency": "Urgency gating",
+        "ddm": "Fixed-bound integrator",
+        "collapsing": "Collapsing bound",
+        "additive_urgency": "Additive urgency",
+    }
+    models = [model for model in ("ddm", "urgency", "collapsing", "additive_urgency") if model in set(fits["model"])]
+
+    def subject_matrix(rows: pd.DataFrame, value: str) -> tuple[np.ndarray, np.ndarray]:
+        """Return a subject × time matrix after explicit within-subject dedup."""
+        if rows.empty:
+            return np.array([]), np.empty((0, 0))
+        grouped = (
+            rows.groupby(["subject", "time_s"], as_index=False)[value]
+            .mean()
+        )
+        wide = grouped.pivot(index="subject", columns="time_s", values=value).sort_index(axis=1)
+        return wide.columns.to_numpy(dtype=float), wide.to_numpy(dtype=float)
+
+    def all_trial_class(rows: pd.DataFrame) -> pd.DataFrame:
+        # The real derivative writes an explicit all-class row.  The fallback
+        # averages classes within subject only for legacy two-model fixtures.
+        if "trial_class" not in rows:
+            return rows
+        if "all" in set(rows["trial_class"].astype(str)):
+            return rows.loc[rows["trial_class"].astype(str) == "all"]
+        return rows.groupby(["subject", "time_s", "model"], as_index=False).mean(numeric_only=True)
+
+    with style.apply_publication_style():
+        fig, axes = style.figure_grid(2, 2, width="double")
+        ax_a, ax_b, ax_c, ax_d = axes[0, 0], axes[0, 1], axes[1, 0], axes[1, 1]
+        for ax, label in zip((ax_a, ax_b, ax_c, ax_d), "ABCD"):
+            style.panel_label(ax, label)
+
+        # A: constant integrator criterion versus declining urgency criterion.
+        criterion_rows = pooled.drop_duplicates(["subject", "condition", "model", "time_s"])
+        for model in models:
+            rows = criterion_rows.loc[criterion_rows["model"] == model]
+            x, matrix = subject_matrix(rows, "criterion")
+            if x.size:
+                group_line(ax_a, x=x, subject_matrix=matrix, color=model_colors[model], label=model_labels[model], error="within_ci95")
+        ax_a.set(xlabel="Time (s)", ylabel="Criterion")
+        ax_a.legend(fontsize=5.5, loc="upper right")
+
+        # B: subject-balanced observed and fitted correct/error densities.
+        observed = all_trial_class(pooled)
+        x, correct_matrix = subject_matrix(observed, "observed_density_correct")
+        _, error_matrix = subject_matrix(observed, "observed_density_error")
+        if x.size:
+            group_line(ax_b, x=x, subject_matrix=correct_matrix, color=style.OBSERVED, label="Observed", error="within_ci95")
+            error_mean = np.nanmean(error_matrix, axis=0)
+            error_ci = within_subject_error(error_matrix, kind="ci95")
+            ax_b.fill_between(x, -(error_mean + error_ci), -(error_mean - error_ci), color=style.OBSERVED, alpha=0.12)
+        for model in models:
+            rows = all_trial_class(pooled.loc[pooled["model"] == model])
+            x_model, correct_matrix = subject_matrix(rows, "predicted_density_correct")
+            _, error_matrix = subject_matrix(rows, "predicted_density_error")
+            if x_model.size:
+                group_line(ax_b, x=x_model, subject_matrix=correct_matrix, color=model_colors[model], label=model_labels[model], error="within_ci95")
+                error_mean = np.nanmean(error_matrix, axis=0)
+                error_ci = within_subject_error(error_matrix, kind="ci95")
+                ax_b.plot(x_model, -error_mean, color=model_colors[model], linewidth=1.1)
+                ax_b.fill_between(x_model, -(error_mean + error_ci), -(error_mean - error_ci), color=model_colors[model], alpha=0.10)
+        ax_b.axhline(0, color=style.INK_MUTED, linewidth=0.6)
+        ax_b.set(xlabel="Decision time (s)", ylabel="Density (correct ↑ / error ↓)")
+        ax_b.legend(fontsize=5.2, loc="upper right")
+
+        # C: urgency trajectories by class, with criterion for reference.
+        urgency = pooled.loc[pooled["model"] == "urgency"]
+        for trial_class, colour in style.CLASS_COLORS.items():
+            rows = urgency.loc[urgency["trial_class"] == trial_class]
+            x, matrix = subject_matrix(rows, "mean_decision_variable")
+            if x.size:
+                group_line(ax_c, x=x, subject_matrix=matrix, color=colour, label=trial_class, error="within_ci95")
+        criterion = criterion_rows.loc[criterion_rows["model"] == "urgency"].groupby("time_s")["criterion"].mean().sort_index()
+        if len(criterion):
+            ax_c.plot(criterion.index, criterion.to_numpy(), color=style.INK, linestyle="--", linewidth=0.9, label="criterion")
+        ax_c.set(xlabel="Time (s)", ylabel="Decision variable")
+        ax_c.legend(fontsize=5.2, loc="center right")
+
+        # D: primary held-out predictive comparison, with BIC secondary.
+        heldout_all = heldout.loc[heldout["condition"] == "all"].copy()
+        score_column = "heldout_log_likelihood_per_trial"
+        display = heldout_all.groupby(["subject", "model"], as_index=False)[score_column].mean().pivot(index="subject", columns="model", values=score_column)
+        positions = np.arange(len(display))
+        for offset, model in enumerate(models):
+            if model == "ddm" or model not in display or "ddm" not in display:
+                continue
+            values = (display[model] - display["ddm"]).to_numpy(dtype=float)
+            finite = np.isfinite(values)
+            ax_d.scatter(positions[finite] + (offset - 1.5) * 0.14, values[finite], s=7, color=model_colors[model], label=model_labels[model], alpha=0.8)
+            # The inferential interval is persisted by the evaluation stage;
+            # do not silently recompute a different fold/subject weighting in
+            # the renderer.
+            stat_rows = heldout_stats.loc[
+                (heldout_stats["condition"] == "all")
+                & (heldout_stats["model"] == model)
+            ]
+            if len(stat_rows):
+                stat = stat_rows.iloc[0]
+                mean = float(stat.get("mean", np.nan))
+                low = float(stat.get("ci95_low", np.nan))
+                high = float(stat.get("ci95_high", np.nan))
+                if np.isfinite(mean) and np.isfinite(low) and np.isfinite(high):
+                    ax_d.errorbar(
+                        [positions[finite].mean() + (offset - 1.5) * 0.14],
+                        [mean], yerr=[[mean - low], [high - mean]],
+                        color=model_colors[model], marker="o", markersize=4,
+                        capsize=2, zorder=3,
+                    )
+        ax_d.axhline(0, color=style.INK_MUTED, linewidth=0.6)
+        ax_d.set(xlabel="Subject", ylabel="Held-out Δ log likelihood/trial vs fixed-bound")
+        if len(display):
+            ax_d.set_xticks(positions[:: max(1, len(positions) // 8)])
+            ax_d.set_xticklabels(display.index[:: max(1, len(display) // 8)], rotation=45, ha="right", fontsize=5)
+        ax_d.legend(fontsize=5.2, loc="best")
+        heldout_annotations = []
+        for model in models:
+            if model == "ddm":
+                continue
+            rows = heldout_stats.loc[
+                (heldout_stats.get("condition", "") == "all")
+                & (heldout_stats.get("model", "") == model)
+            ]
+            if len(rows):
+                row = rows.iloc[0]
+                mean = float(row.get("mean", np.nan))
+                low = float(row.get("ci95_low", np.nan))
+                high = float(row.get("ci95_high", np.nan))
+                if np.isfinite(mean):
+                    interval = (
+                        f" [{low:.2g}, {high:.2g}]"
+                        if np.isfinite(low) and np.isfinite(high)
+                        else ""
+                    )
+                    heldout_annotations.append(
+                        f"{model_labels[model]}: Δ={mean:.2g}{interval}, n={int(row['n_subjects'])}"
+                    )
+        if heldout_annotations:
+            ax_d.text(
+                0.02, 0.98, "\n".join(heldout_annotations),
+                transform=ax_d.transAxes, va="top", fontsize=5.0,
+            )
+        bic_rows = stats_table.loc[
+            (stats_table.get("analysis", "") == "ssm_mechanistic_model_comparison")
+            & (stats_table.get("criterion", "") == "bic")
+            & (stats_table.get("condition", "") == "all")
+        ]
+        if len(bic_rows):
+            ax_d.text(0.02, 0.02, "Primary: held-out prediction; BIC is secondary", transform=ax_d.transAxes, fontsize=5.2, color=style.INK_SECONDARY)
+
+        fig.suptitle("Model comparison: criterion, fit quality, held-out prediction")
+    return fig, {
+        "kind": "mechanistic_model_summary",
+        "title": "Model comparison: criterion, fit quality, held-out prediction",
+        "columns_read": {
+            "ssmcomparison": ["subject", "condition", "model", "delta_bic", "converged"],
+            "ssmtimecourse": ["subject", "condition", "model", "trial_class", "time_s", "criterion", "mean_decision_variable", "predicted_density_correct", "predicted_density_error", "observed_density_correct", "observed_density_error"],
+            "ssmcomparisonstats": ["analysis", "condition", "model", "criterion", "mean", "n_subjects"],
+            "ssmheldout": ["subject", "condition", "model", "fold", "heldout_log_likelihood_per_trial", "predicted_accuracy"],
+            "ssmheldoutstats": ["analysis", "model", "condition", "criterion", "n_subjects", "mean", "ci95_low", "ci95_high", "t", "p", "cohens_dz"],
+        },
+        "statistics_source": "ssmheldoutstats[condition=all] subject-paired across folds; BIC secondary from ssmcomparisonstats",
+        "deduplication": "subject-balanced; explicit trial_class=all used when available; legacy class rows averaged within subject before plotting",
+        "uncertainty": "within-subject 95% CI bands/intervals for time courses and held-out differences",
+        "secondary_bic_source": "ssmcomparisonstats[analysis=ssm_mechanistic_model_comparison,criterion=bic]",
+        "models": models,
+    }
 
 
 def build_ssmcomparison_deltabic(tables: BehaviorTableSet) -> tuple[Figure, dict[str, Any]]:
