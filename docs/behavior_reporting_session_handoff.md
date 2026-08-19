@@ -30,14 +30,14 @@ The next session is planned for the laptop instead. Read this before trusting
 anything else in this document as "current."
 
 - **The Thura2012 work through step 5 is committed locally on the desktop as
-  `c0a7c49` ("feat(behavior): implement Thura et al. (2012) mechanistic
+  `0856a47` ("feat(behavior): implement Thura et al. (2012) mechanistic
   model comparison"), on top of `df783f5`, but it has deliberately NOT been
   pushed to `origin/main`.** Karim will handle getting it to the laptop
   himself (push/pull or another method) rather than this session pushing it.
   **The laptop session must not assume this commit is present** - start by
   running `git log -1 --oneline` and `git status --short --branch` on the
   laptop checkout. If HEAD is still `df783f5` (or anything other than
-  `c0a7c49` or a descendant of it), the sync has not happened yet; stop and
+  `0856a47` or a descendant of it), the sync has not happened yet; stop and
   ask Karim rather than redoing or re-deriving any of the validated
   recovery/robustness/exclusion/held-out-pairwise work above, all of which
   is already committed and does not need to be rerun.
