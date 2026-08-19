@@ -23,6 +23,51 @@ the decisions, failure modes, machine boundaries, and next-analysis protocol.
   session. The attached preprint PDF and `uv.lock` remain deliberately
   untracked and outside that commit.
 
+## Machine transition: desktop -> laptop (2026-08-18)
+
+This session ran on the desktop (`/home/karim/Projects/meg-tokens`, Linux).
+The next session is planned for the laptop instead. Read this before trusting
+anything else in this document as "current."
+
+- **The Thura2012 work through step 5 is committed locally on the desktop as
+  `c0a7c49` ("feat(behavior): implement Thura et al. (2012) mechanistic
+  model comparison"), on top of `df783f5`, but it has deliberately NOT been
+  pushed to `origin/main`.** Karim will handle getting it to the laptop
+  himself (push/pull or another method) rather than this session pushing it.
+  **The laptop session must not assume this commit is present** - start by
+  running `git log -1 --oneline` and `git status --short --branch` on the
+  laptop checkout. If HEAD is still `df783f5` (or anything other than
+  `c0a7c49` or a descendant of it), the sync has not happened yet; stop and
+  ask Karim rather than redoing or re-deriving any of the validated
+  recovery/robustness/exclusion/held-out-pairwise work above, all of which
+  is already committed and does not need to be rerun.
+- **Everything through step 5 is done and validated on the cluster
+  already**, independent of which laptop the next session runs on: recovery
+  (job `55358783`, aggregate `55383746`), robustness (job `55386493`,
+  aggregate `55428328`), strict-exclusion (job `55431692`, aggregate
+  `55450044`), and the new persisted `ssmheldoutpairwise` derivative
+  (evaluate-aggregate rerun `55454191`). None of this needs to be
+  regenerated from the laptop; it is sitting in
+  `/scratch/hamza97/meg-tokens/BIDS/derivatives/sub-group/beh` on the
+  cluster, reachable the same way from any machine with the `fir` SSH alias
+  configured. **Confirm the laptop session actually has that SSH access and
+  alias before assuming any cluster command in this document will work
+  unchanged** - it was not verified from the laptop specifically.
+- **Local data roots differ by machine** and this document has both: laptop
+  `/Users/hamzaabdelhedi/Projects/data/meg-tokens`, desktop
+  `/media/karim/Hamza/meg-tokens`, cluster `/scratch/hamza97/meg-tokens`.
+  Step 6 (retrieve accepted derivatives, next) was deliberately left un-run
+  on the desktop this session specifically so the laptop session can
+  retrieve directly into its own data root without a redundant desktop copy
+  first. Use the laptop path for step 6 and everything after it. `uv.lock`
+  stays untracked on every machine independently; do not commit it from the
+  laptop either.
+- Next action for the laptop session, once the commit sync above is
+  confirmed: **step 6** - retrieve accepted group derivatives, then continue
+  the ordered "Remaining steps" list below from step 7 onward (F01-F03
+  regeneration, F27 rendering, the `docs/behavior.md` write-up, final tests,
+  then the three deferred cleanup steps 11-13).
+
 ## Development and machine history
 
 - Session 1 built and styled F04-F06 and wrote their findings.
@@ -941,8 +986,13 @@ Active cluster work at stop time:
    subjects), consistent with additive_urgency's weak showing everywhere
    else in this analysis.
 6. Retrieve only accepted group derivatives from
-   `/scratch/hamza97/meg-tokens/BIDS/derivatives/sub-group/beh` to
-   `/media/karim/Hamza/meg-tokens` with explicit non-deleting rsync paths.
+   `/scratch/hamza97/meg-tokens/BIDS/derivatives/sub-group/beh` to the local
+   data root of whichever machine this step runs on - `/media/karim/Hamza/
+   meg-tokens` on the desktop, `/Users/hamzaabdelhedi/Projects/data/
+   meg-tokens` on the laptop (see "Machine transition" below; this step was
+   deliberately not yet run on the desktop specifically so the laptop
+   session can do it directly into its own data root without a second
+   redundant copy). Use explicit non-deleting rsync paths either way.
 7. **Regenerate and re-audit F01-F03 before touching F27.** The retrieved
    `ssmcomparison` file is the *same filename* the headline two-model figures
    (`ssmcomparison-deltabic`, `ssmcomparison-urgencyscale`,
