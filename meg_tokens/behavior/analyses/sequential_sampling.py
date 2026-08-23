@@ -61,7 +61,6 @@ import numpy as np
 import pandas as pd
 from scipy import optimize, stats
 
-from meg_tokens.behavior.analyses.evidence import _subject_condition_groups
 from meg_tokens.behavior.math.inference import (
     one_sample_statistics,
     paired_subject_statistics,
@@ -70,7 +69,11 @@ from meg_tokens.behavior.schema import (
     parse_token_directions,
     validate_boolean_values,
 )
-from meg_tokens.behavior.trials import require_columns, task_trials
+from meg_tokens.behavior.trials import (
+    require_columns,
+    subject_condition_groups,
+    task_trials,
+)
 
 
 # Task timing: the tokens jump one by one every 200 ms, and decision time is
@@ -720,7 +723,7 @@ def fit_sequential_sampling_models(
     )
     cells = [
         (subject, condition, _decision_frame(selected))
-        for subject, condition, selected in _subject_condition_groups(trials)
+        for subject, condition, selected in subject_condition_groups(trials)
     ]
     fitted = _fit_all_cells(
         cells,
@@ -820,11 +823,6 @@ def model_comparison_statistics(fits: pd.DataFrame) -> pd.DataFrame:
     This is the species-generalization test: urgency gating beats integration
     in Cisek's monkeys and human subjects on this task, and the same
     comparison is made here on the human decision-time distributions.
-
-    Parameters
-    ----------
-    fits
-        Output of :func:`fit_sequential_sampling_models`.
 
     Returns
     -------
@@ -996,7 +994,7 @@ def heldout_model_evaluation(
     )
     rows = []
     trial_rows = []
-    for subject, condition, selected in _subject_condition_groups(trials):
+    for subject, condition, selected in subject_condition_groups(trials):
         frame = _decision_frame(selected)
         frame = frame.copy()
         if not frame.empty:
@@ -1869,13 +1867,6 @@ def matched_sequence_posterior_predictive(
 ) -> pd.DataFrame:
     """Test each model's matched-sequence prediction against the observed one.
 
-    Parameters
-    ----------
-    predictions
-        Output of :func:`matched_sequence_model_predictions`.
-    matched
-        Output of :func:`matched_sequence_diagnostic`.
-
     Returns
     -------
     pandas.DataFrame
@@ -2138,11 +2129,6 @@ def heldout_contrast_robustness(
 
 def fitted_distribution_check_statistics(checks: pd.DataFrame) -> pd.DataFrame:
     """Summarize absolute fit: observed minus predicted RT at each quantile.
-
-    Parameters
-    ----------
-    checks
-        Output of :func:`fitted_distribution_checks`.
 
     Returns
     -------
@@ -2807,7 +2793,7 @@ def fitted_distribution_checks(
     require_columns(trials, ["subject", "condition", "isCorrect", "dt_ms"])
     frames = {
         (str(subject), str(condition).lower()): _decision_frame(selected)
-        for subject, condition, selected in _subject_condition_groups(trials)
+        for subject, condition, selected in subject_condition_groups(trials)
     }
     timecourse_lookup: dict[tuple[str, str, str, str], pd.DataFrame] = {}
     if timecourse is not None:
@@ -2968,23 +2954,6 @@ def exclusion_robustness_audit(features: pd.DataFrame) -> pd.DataFrame:
         "equivalent": bool(not symmetric_difference.any()),
     })
     return pd.DataFrame(rows)
-
-
-def influential_subject_sensitivity(
-    fits: pd.DataFrame,
-    *,
-    excluded_subject: str = "H20",
-) -> pd.DataFrame:
-    """Recompute group model contrasts after excluding one fitted subject."""
-    require_columns(fits, ["subject", "condition", "model"])
-    filtered = fits.loc[fits["subject"].astype(str) != str(excluded_subject)].copy()
-    result = mechanistic_model_statistics(filtered)
-    if result.empty:
-        return result
-    result.insert(1, "sensitivity_excluded_subject", str(excluded_subject))
-    result.insert(2, "n_subjects_retained", int(filtered["subject"].nunique()))
-    result.insert(3, "analysis_scope", "already_fit_subject_results_no_refit")
-    return result
 
 
 def robustness_grid(
@@ -3453,11 +3422,6 @@ def urgency_condition_contrast(fits: pd.DataFrame) -> pd.DataFrame:
     intercept of evidence at decision against decision time both differed
     between fast and slow blocks.
 
-    Parameters
-    ----------
-    fits
-        Output of :func:`fit_sequential_sampling_models`.
-
     Returns
     -------
     pandas.DataFrame
@@ -3534,7 +3498,7 @@ def fitted_predictions(
     trials = task_trials(features)
     frames = {
         (subject, condition): _decision_frame(selected)
-        for subject, condition, selected in _subject_condition_groups(trials)
+        for subject, condition, selected in subject_condition_groups(trials)
     }
     time_course_rows = []
     trial_rows = []

@@ -27,7 +27,6 @@ from meg_tokens.behavior.analyses.design_effects import (
     condition_order_effects,
     condition_order_statistics,
     extreme_decision_times,
-    lapse_statistics,
     lapse_summary,
     time_on_task,
     time_on_task_statistics,
@@ -49,19 +48,11 @@ from meg_tokens.behavior.analyses.evidence import (
     early_evidence_order_profile,
     early_evidence_order_statistics,
     early_evidence_profile,
-    criterion_decline_statistics,
     criterion_scale_comparison,
     criterion_scale_comparison_statistics,
     criterion_time_profile,
-    discretization_overshoot_fits,
-    discretization_overshoot_statistics,
     evidence_at_decision_responses,
     first_order_criterion_decline,
-    posterior_evidence_criterion_agreement,
-    posterior_evidence_sensitivity,
-    posterior_evidence_sensitivity_statistics,
-    posterior_grid_by_token_index,
-    posterior_grid_step_summary,
     reverse_correlation,
     reverse_correlation_statistics,
 )
@@ -203,12 +194,6 @@ def analyze_behavior_characterization(
     criterion_scale = criterion_scale_comparison(features)
     criterion_profile = criterion_time_profile(features)
     urgency = evidence_at_decision_responses(features, predictor="dt_ms")
-    posterior_evidence_index = evidence_at_decision_responses(
-        features, predictor="decision_token_index"
-    )
-    posterior_grid = posterior_grid_by_token_index()
-    discretization_fits = discretization_overshoot_fits(features)
-    posterior_sensitivity = posterior_evidence_sensitivity(features)
     kernels = reverse_correlation(features)
     accuracy_functions = conditional_accuracy_functions(features)
     evidence = continuous_evidence_effects(features)
@@ -247,35 +232,15 @@ def analyze_behavior_characterization(
         "conditionorder": order,
         "conditionorderstats": condition_order_statistics(order),
         "lapses": lapses,
-        "lapsestats": lapse_statistics(lapses),
         "extremedt": extreme_counts,
         "extremedttrials": extreme_flagged,
         "criteriondecline": criterion,
-        "criteriondeclinestats": criterion_decline_statistics(criterion),
         "criterionscale": criterion_scale,
         "criterionscaleprofile": criterion_profile,
         "criterionscalestats": criterion_scale_comparison_statistics(
             criterion_scale, criterion_profile
         ),
         "urgency": urgency,
-        "urgencystats": criterion_decline_statistics(urgency),
-        "posteriorevidenceindex": posterior_evidence_index,
-        "posteriorevidenceindexstats": criterion_decline_statistics(
-            posterior_evidence_index
-        ),
-        "posteriorgrid": posterior_grid,
-        "posteriorgridstats": posterior_grid_step_summary(posterior_grid),
-        "posteriordiscretization": discretization_fits,
-        "posteriordiscretizationstats": discretization_overshoot_statistics(
-            discretization_fits
-        ),
-        "posteriorevidencesensitivity": posterior_sensitivity,
-        "posteriorevidencesensitivitystats": posterior_evidence_sensitivity_statistics(
-            posterior_sensitivity
-        ),
-        "posteriorevidenceagreement": posterior_evidence_criterion_agreement(
-            urgency_fits=urgency, criterion_fits=criterion
-        ),
         "reversecorrelation": kernels,
         "reversecorrelationstats": reverse_correlation_statistics(kernels),
         "conditionalaccuracy": accuracy_functions,

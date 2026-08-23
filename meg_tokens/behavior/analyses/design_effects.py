@@ -32,6 +32,7 @@ from meg_tokens.behavior.trials import (
     finite_values,
     lapse_trials,
     require_columns,
+    subject_condition_groups,
     task_trials,
 )
 
@@ -113,11 +114,6 @@ def condition_class_cells(features: pd.DataFrame) -> pd.DataFrame:
 
 def condition_class_statistics(cells: pd.DataFrame) -> pd.DataFrame:
     """Test condition, difficulty, and their interaction within subjects.
-
-    Parameters
-    ----------
-    cells
-        Output of :func:`condition_class_cells`.
 
     Returns
     -------
@@ -220,55 +216,37 @@ def choice_side_summary(features: pd.DataFrame) -> pd.DataFrame:
         field="isCorrect",
         optional=True,
     )
-    condition = trials["condition"].astype(str).str.lower()
     correct = trials["isCorrect"].astype("boolean")
     rows = []
-    for subject, subject_trials in trials.groupby("subject", sort=True):
-        subject_condition = condition.loc[subject_trials.index]
-        for name in ("all", *[item.lower() for item in TASK_CONDITIONS]):
-            selection = (
-                pd.Series(True, index=subject_trials.index)
-                if name == "all"
-                else subject_condition == name
+    for subject, name, selected in subject_condition_groups(trials, skip_empty=True):
+        sides = pd.to_numeric(selected["choice_side"], errors="coerce")
+        correct_sides = pd.to_numeric(selected["correct_side"], errors="coerce")
+        row = {
+            "subject": subject,
+            "condition": name,
+            "n_trials": int(len(selected)),
+        }
+        for side, side_name in SIDE_NAMES.items():
+            side_selection = sides == side
+            side_trials = selected.loc[side_selection]
+            dt_values = finite_values(side_trials["dt_ms"])
+            accuracy_values = correct.loc[side_trials.index].dropna().astype(float)
+            row[f"proportion_{side_name}_choices"] = float(side_selection.mean())
+            row[f"proportion_{side_name}_correct_side"] = float(
+                (correct_sides == side).mean()
             )
-            selected = subject_trials.loc[selection]
-            if selected.empty:
-                continue
-            sides = pd.to_numeric(selected["choice_side"], errors="coerce")
-            correct_sides = pd.to_numeric(selected["correct_side"], errors="coerce")
-            row = {
-                "subject": subject,
-                "condition": name,
-                "n_trials": int(len(selected)),
-            }
-            for side, side_name in SIDE_NAMES.items():
-                side_selection = sides == side
-                side_trials = selected.loc[side_selection]
-                dt_values = finite_values(side_trials["dt_ms"])
-                accuracy_values = (
-                    correct.loc[side_trials.index].dropna().astype(float)
-                )
-                row[f"proportion_{side_name}_choices"] = float(side_selection.mean())
-                row[f"proportion_{side_name}_correct_side"] = float(
-                    (correct_sides == side).mean()
-                )
-                row[f"mean_{side_name}_dt_ms"] = (
-                    float(np.mean(dt_values)) if dt_values.size else float("nan")
-                )
-                row[f"accuracy_{side_name}"] = (
-                    float(accuracy_values.mean()) if len(accuracy_values) else float("nan")
-                )
-            rows.append(row)
+            row[f"mean_{side_name}_dt_ms"] = (
+                float(np.mean(dt_values)) if dt_values.size else float("nan")
+            )
+            row[f"accuracy_{side_name}"] = (
+                float(accuracy_values.mean()) if len(accuracy_values) else float("nan")
+            )
+        rows.append(row)
     return pd.DataFrame(rows)
 
 
 def choice_side_statistics(summary: pd.DataFrame) -> pd.DataFrame:
     """Run subject-paired left-versus-right comparisons.
-
-    Parameters
-    ----------
-    summary
-        Output of :func:`choice_side_summary`.
 
     Returns
     -------
@@ -363,11 +341,6 @@ def time_on_task(features: pd.DataFrame) -> pd.DataFrame:
     would absorb the condition difference, because the two conditions are
     interleaved rather than blocked into halves of the session.
 
-    Parameters
-    ----------
-    features
-        Canonical trial-feature table.
-
     Returns
     -------
     pandas.DataFrame
@@ -389,67 +362,47 @@ def time_on_task(features: pd.DataFrame) -> pd.DataFrame:
         ["dt_ms", "run_trial_index", "initial_time_ms", "condition", "run"],
     )
     trials = trials.assign(block_position=_session_block_order(trials))
-    condition = trials["condition"].astype(str).str.lower()
     rows = []
-    for subject, subject_trials in trials.groupby("subject", sort=True):
-        subject_condition = condition.loc[subject_trials.index]
-        for name in ("all", *[item.lower() for item in TASK_CONDITIONS]):
-            selection = (
-                pd.Series(True, index=subject_trials.index)
-                if name == "all"
-                else subject_condition == name
-            )
-            selected = subject_trials.loc[selection]
-            if selected.empty:
-                continue
-            dt = pd.to_numeric(selected["dt_ms"], errors="coerce").to_numpy(dtype=float)
-            block = selected["block_position"].to_numpy(dtype=float)
-            within = pd.to_numeric(selected["run_trial_index"], errors="coerce").to_numpy(
-                dtype=float
-            )
-            columns = [np.ones_like(dt), block, within]
-            selected_condition = subject_condition.loc[selected.index]
-            if selected_condition.nunique() > 1:
-                columns.append((selected_condition == "slow").to_numpy(dtype=float))
-            design = np.column_stack(columns)
-            finite = np.isfinite(dt) & np.all(np.isfinite(design), axis=1)
-            design = design[finite]
-            dt = dt[finite]
-            fit = (
-                sm.OLS(dt, design).fit()
-                if len(dt) > design.shape[1]
-                and np.linalg.matrix_rank(design) == design.shape[1]
-                else None
-            )
-            rows.append(
-                {
-                    "subject": subject,
-                    "condition": name,
-                    "n_trials": len(dt),
-                    "n_blocks": int(selected["block_position"].nunique()),
-                    "dt_per_block_ms": (
-                        float(fit.params[1])
-                        if fit is not None
-                        else float("nan")
-                    ),
-                    "dt_per_within_block_trial_ms": (
-                        float(fit.params[2])
-                        if fit is not None
-                        else float("nan")
-                    ),
-                    "converged": fit is not None,
-                }
-            )
+    for subject, name, selected in subject_condition_groups(trials, skip_empty=True):
+        dt = pd.to_numeric(selected["dt_ms"], errors="coerce").to_numpy(dtype=float)
+        block = selected["block_position"].to_numpy(dtype=float)
+        within = pd.to_numeric(selected["run_trial_index"], errors="coerce").to_numpy(
+            dtype=float
+        )
+        columns = [np.ones_like(dt), block, within]
+        selected_condition = selected["condition"].astype(str).str.lower()
+        if selected_condition.nunique() > 1:
+            columns.append((selected_condition == "slow").to_numpy(dtype=float))
+        design = np.column_stack(columns)
+        finite = np.isfinite(dt) & np.all(np.isfinite(design), axis=1)
+        design = design[finite]
+        dt = dt[finite]
+        fit = (
+            sm.OLS(dt, design).fit()
+            if len(dt) > design.shape[1]
+            and np.linalg.matrix_rank(design) == design.shape[1]
+            else None
+        )
+        rows.append(
+            {
+                "subject": subject,
+                "condition": name,
+                "n_trials": len(dt),
+                "n_blocks": int(selected["block_position"].nunique()),
+                "dt_per_block_ms": (
+                    float(fit.params[1]) if fit is not None else float("nan")
+                ),
+                "dt_per_within_block_trial_ms": (
+                    float(fit.params[2]) if fit is not None else float("nan")
+                ),
+                "converged": fit is not None,
+            }
+        )
     return pd.DataFrame(rows)
 
 
 def time_on_task_statistics(subject_fits: pd.DataFrame) -> pd.DataFrame:
     """Test subject-level session-drift coefficients at group level.
-
-    Parameters
-    ----------
-    subject_fits
-        Output of :func:`time_on_task`.
 
     Returns
     -------
@@ -662,11 +615,6 @@ def within_block_decile_profile(features: pd.DataFrame) -> pd.DataFrame:
     report makes. This resolves the same trials into deciles so those claims
     rest on a derivative instead of the figure code.
 
-    Parameters
-    ----------
-    features
-        Canonical trial-feature table.
-
     Returns
     -------
     pandas.DataFrame
@@ -722,39 +670,26 @@ def within_block_decile_profile(features: pd.DataFrame) -> pd.DataFrame:
         + trials.groupby("subject")["dt_ms"].transform("mean")
     )
 
-    condition = trials["condition"].astype(str).str.lower()
     rows = []
-    for subject, subject_trials in trials.groupby("subject", sort=True):
-        subject_condition = condition.loc[subject_trials.index]
-        for name in ("all", *[item.lower() for item in TASK_CONDITIONS]):
-            selection = (
-                pd.Series(True, index=subject_trials.index)
-                if name == "all"
-                else subject_condition == name
+    for subject, name, selected in subject_condition_groups(trials, skip_empty=True):
+        for decile, cell in selected.groupby("decile", sort=True):
+            classes = cell["class_name"]
+            rows.append(
+                {
+                    "subject": subject,
+                    "condition": name,
+                    "decile": int(decile),
+                    "n_trials": int(len(cell)),
+                    "dt_ms": float(cell["dt_ms"].mean()),
+                    "dt_class_adjusted_ms": float(cell["dt_class_adjusted_ms"].mean()),
+                    **{
+                        f"proportion_{class_name}": float(
+                            (classes == class_name).mean()
+                        )
+                        for class_name in CLASS_NAMES.values()
+                    },
+                }
             )
-            selected = subject_trials.loc[selection]
-            if selected.empty:
-                continue
-            for decile, cell in selected.groupby("decile", sort=True):
-                classes = cell["class_name"]
-                rows.append(
-                    {
-                        "subject": subject,
-                        "condition": name,
-                        "decile": int(decile),
-                        "n_trials": int(len(cell)),
-                        "dt_ms": float(cell["dt_ms"].mean()),
-                        "dt_class_adjusted_ms": float(
-                            cell["dt_class_adjusted_ms"].mean()
-                        ),
-                        **{
-                            f"proportion_{class_name}": float(
-                                (classes == class_name).mean()
-                            )
-                            for class_name in CLASS_NAMES.values()
-                        },
-                    }
-                )
     return pd.DataFrame(rows)
 
 
@@ -769,11 +704,6 @@ def _decile_matrix(profile: pd.DataFrame, condition: str, measure: str) -> np.nd
 
 def within_block_decile_statistics(profile: pd.DataFrame) -> pd.DataFrame:
     """Test the shape of the within-block decile profile.
-
-    Parameters
-    ----------
-    profile
-        Output of :func:`within_block_decile_profile`.
 
     Returns
     -------
@@ -900,11 +830,6 @@ def condition_order_effects(features: pd.DataFrame) -> pd.DataFrame:
     between-subject factor, so this is an independent-samples test on the
     within-subject speed-accuracy adjustment.
 
-    Parameters
-    ----------
-    features
-        Canonical trial-feature table.
-
     Returns
     -------
     pandas.DataFrame
@@ -949,11 +874,6 @@ def condition_order_effects(features: pd.DataFrame) -> pd.DataFrame:
 
 def condition_order_statistics(order_table: pd.DataFrame) -> pd.DataFrame:
     """Compare behavioral means between Fast-first and Slow-first subjects.
-
-    Parameters
-    ----------
-    order_table
-        Output of :func:`condition_order_effects`.
 
     Returns
     -------
@@ -1217,51 +1137,3 @@ def extreme_decision_times(
                 }
             )
     return pd.DataFrame(counts), pd.DataFrame(flagged)
-
-
-def lapse_statistics(summary: pd.DataFrame) -> pd.DataFrame:
-    """Summarize lapse rates across subjects and compare conditions.
-
-    Parameters
-    ----------
-    summary
-        Output of :func:`lapse_summary`.
-
-    Returns
-    -------
-    pandas.DataFrame
-        Across-subject lapse-rate summaries for each subset and a paired
-        Fast-minus-Slow test when both conditions exist. Rows also carry the
-        total number of contributing lapse trials.
-
-    Notes
-    -----
-    Condition summaries use the generic one-sample helper, which reports the
-    mean, SEM, and a two-sided test against zero. No multiplicity correction is
-    applied.
-    """
-    rows = []
-    for condition, group in summary.groupby("condition", sort=True):
-        rows.append(
-            {
-                "analysis": "lapses",
-                "measure": "lapse_rate",
-                "condition": condition,
-                "test": "mean",
-                "n_lapse_trials": int(group["n_lapse_trials"].sum()),
-                **one_sample_statistics(group["lapse_rate"]),
-            }
-        )
-    wide = summary.pivot(index="subject", columns="condition", values="lapse_rate")
-    if "fast" in wide.columns and "slow" in wide.columns:
-        rows.append(
-            {
-                "analysis": "lapses",
-                "measure": "lapse_rate",
-                "condition": "fast_vs_slow",
-                "test": "paired_t_test",
-                "n_lapse_trials": int(summary["n_lapse_trials"].sum()),
-                **paired_subject_statistics(wide["fast"], wide["slow"]),
-            }
-        )
-    return pd.DataFrame(rows)

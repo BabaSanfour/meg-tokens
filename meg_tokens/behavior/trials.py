@@ -8,7 +8,7 @@ instead of being reconstructed independently.
 
 from __future__ import annotations
 
-from typing import Final, Sequence
+from typing import Final, Iterator, Sequence
 
 import numpy as np
 import pandas as pd
@@ -95,11 +95,6 @@ def task_trials(features: pd.DataFrame) -> pd.DataFrame:
     all excluded. Analyses that deliberately need lapses select them with
     :func:`lapse_trials` instead.
 
-    Parameters
-    ----------
-    features
-        Canonical trial-feature table.
-
     Returns
     -------
     pandas.DataFrame
@@ -111,11 +106,6 @@ def task_trials(features: pd.DataFrame) -> pd.DataFrame:
 
 def classified_trials(features: pd.DataFrame) -> pd.DataFrame:
     """Select eligible task trials with a defined difficulty class.
-
-    Parameters
-    ----------
-    features
-        Canonical trial-feature table.
 
     Returns
     -------
@@ -136,11 +126,6 @@ def classified_trials(features: pd.DataFrame) -> pd.DataFrame:
 def lapse_trials(features: pd.DataFrame) -> pd.DataFrame:
     """Select started Fast/Slow trials without a usable choice.
 
-    Parameters
-    ----------
-    features
-        Canonical trial-feature table.
-
     Returns
     -------
     pandas.DataFrame
@@ -155,6 +140,51 @@ def lapse_trials(features: pd.DataFrame) -> pd.DataFrame:
         & features["is_started"].astype(bool)
         & ~features["has_choice"].astype(bool)
     ].copy()
+
+
+def subject_condition_groups(
+    trials: pd.DataFrame,
+    *,
+    skip_empty: bool = False,
+) -> Iterator[tuple[object, str, pd.DataFrame]]:
+    """Yield pooled and condition-specific trials for every subject.
+
+    Parameters
+    ----------
+    trials
+        Task-trial table containing ``subject`` and ``condition`` columns.
+    skip_empty
+        Omit a condition cell holding no rows. The default keeps it, so a
+        subject who never ran a condition still produces a row an analysis can
+        report as empty rather than silently dropping the cell.
+
+    Yields
+    ------
+    tuple[object, str, pandas.DataFrame]
+        Subject identifier, normalized group label, and the corresponding
+        rows. Each subject is yielded once as ``"all"`` and once for every
+        condition declared in :data:`TASK_CONDITIONS`, in that order.
+
+    Notes
+    -----
+    Grouping subject-then-condition this way is the shape every two-stage
+    analysis needs, and stating it once keeps the pooled row defined
+    identically everywhere: ``"all"`` is every task trial of that subject, not
+    the concatenation of the declared conditions.
+    """
+    condition = trials["condition"].astype(str).str.lower()
+    for subject, subject_trials in trials.groupby("subject", sort=True):
+        subject_condition = condition.loc[subject_trials.index]
+        for name in ("all", *(item.lower() for item in TASK_CONDITIONS)):
+            selection = (
+                pd.Series(True, index=subject_trials.index)
+                if name == "all"
+                else subject_condition == name
+            )
+            selected = subject_trials.loc[selection]
+            if skip_empty and selected.empty:
+                continue
+            yield subject, name, selected
 
 
 def finite_values(series: pd.Series) -> np.ndarray:

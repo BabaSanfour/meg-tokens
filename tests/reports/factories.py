@@ -315,7 +315,7 @@ def group_derivatives_from_rich_features(features: pd.DataFrame) -> dict[str, pd
         time_on_task, time_on_task_statistics,
         within_block_decile_profile, within_block_decile_statistics,
         condition_order_effects, condition_order_statistics,
-        lapse_summary, lapse_statistics, extreme_decision_times,
+        lapse_summary, extreme_decision_times,
     )
     from meg_tokens.behavior.analyses.distributions import (
         decision_time_geometry, decision_time_geometry_statistics,
@@ -323,7 +323,6 @@ def group_derivatives_from_rich_features(features: pd.DataFrame) -> dict[str, pd
     )
     from meg_tokens.behavior.analyses.evidence import (
         evidence_at_decision_responses, first_order_criterion_decline,
-        criterion_decline_statistics,
         criterion_scale_comparison, criterion_scale_comparison_statistics,
         criterion_time_profile,
         reverse_correlation, reverse_correlation_statistics,
@@ -369,21 +368,18 @@ def group_derivatives_from_rich_features(features: pd.DataFrame) -> dict[str, pd
         "conditionorder": conditionorder,
         "conditionorderstats": condition_order_statistics(conditionorder),
         "lapses": lapses,
-        "lapsestats": lapse_statistics(lapses),
         "extremedt": extremedt,
         "extremedttrials": extremedttrials,
         "spdcumulative": spd_cumulative_distributions(features),
         "dtgeometry": decision_time_geometry(features),
         "dtgeometrystats": decision_time_geometry_statistics(decision_time_geometry(features)),
         "criteriondecline": criteriondecline,
-        "criteriondeclinestats": criterion_decline_statistics(criteriondecline),
         "criterionscale": criterion_scale_comparison(features),
         "criterionscaleprofile": criterion_time_profile(features),
         "criterionscalestats": criterion_scale_comparison_statistics(
             criterion_scale_comparison(features), criterion_time_profile(features)
         ),
         "urgency": urgency,
-        "urgencystats": criterion_decline_statistics(urgency),
         "reversecorrelation": kernels,
         "reversecorrelationstats": reverse_correlation_statistics(kernels),
         "conditionalaccuracy": caf,

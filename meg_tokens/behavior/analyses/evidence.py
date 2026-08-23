@@ -11,7 +11,7 @@ that retain trials outside the discrete design classes.
 from __future__ import annotations
 
 import warnings
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from itertools import combinations
 from typing import Final
 
@@ -47,8 +47,8 @@ from meg_tokens.behavior.schema import (
 from meg_tokens.behavior.trials import (
     CHANCE_ACCURACY,
     CLASS_NAMES,
-    TASK_CONDITIONS,
     require_columns,
+    subject_condition_groups,
     task_trials,
 )
 
@@ -99,37 +99,6 @@ INVALID_LOGIT_WARNINGS: Final[tuple[type[Warning], ...]] = (
     HessianInversionWarning,
     PerfectSeparationWarning,
 )
-
-
-def _subject_condition_groups(
-    trials: pd.DataFrame,
-) -> Iterator[tuple[object, str, pd.DataFrame]]:
-    """Yield pooled and condition-specific task trials for every subject.
-
-    Parameters
-    ----------
-    trials
-        Task-trial table containing ``subject`` and ``condition`` columns.
-
-    Yields
-    ------
-    tuple[object, str, pandas.DataFrame]
-        Subject identifier, normalized group label, and the corresponding
-        rows. Each subject is yielded once as ``"all"`` and once for every
-        condition declared in :data:`TASK_CONDITIONS`.
-
-    Notes
-    -----
-    Declared condition groups are yielded even when empty. This keeps group
-    construction identical across all evidence analyses and lets each caller
-    decide whether an empty cell should be retained or omitted.
-    """
-    for subject, subject_trials in trials.groupby("subject", sort=True):
-        condition = subject_trials["condition"].astype(str).str.lower()
-        yield subject, "all", subject_trials
-        for name in TASK_CONDITIONS:
-            label = name.lower()
-            yield subject, label, subject_trials.loc[condition == label]
 
 
 def _distinct_levels(values, decimals: int = 12) -> int:
@@ -222,7 +191,7 @@ def criterion_decline(
     require_columns(trials, [predictor, response, "subject", "condition"])
     scale = 1000.0 if predictor == "dt_ms" else 1.0
     rows = []
-    for subject, condition, selected in _subject_condition_groups(trials):
+    for subject, condition, selected in subject_condition_groups(trials):
         x = (
             pd.to_numeric(selected[predictor], errors="coerce").to_numpy(dtype=float)
             / scale
@@ -251,65 +220,6 @@ def criterion_decline(
                 "converged": fit is not None,
             }
         )
-    return pd.DataFrame(rows)
-
-
-def criterion_decline_statistics(subject_fits: pd.DataFrame) -> pd.DataFrame:
-    """Run group tests on subject-level criterion intercepts and slopes.
-
-    Parameters
-    ----------
-    subject_fits
-        Output of :func:`criterion_decline` or
-        :func:`evidence_at_decision_responses`.
-
-    Returns
-    -------
-    pandas.DataFrame
-        One-sample tests against zero for every condition and paired Fast-minus-
-        Slow tests for each predictor, response, and fitted term. Pairing uses
-        subject identifiers and therefore excludes unpaired observations.
-
-    Notes
-    -----
-    Intercepts and slopes are tested separately. No multiplicity correction is
-    applied. Duplicate subject/condition rows cause the pivot operation to
-    raise instead of being aggregated silently.
-    """
-    rows = []
-    for (predictor, response), fits in subject_fits.groupby(
-        ["predictor", "response"], sort=True
-    ):
-        for condition, group in fits.groupby("condition", sort=True):
-            for term in ("intercept", "slope"):
-                rows.append(
-                    {
-                        "analysis": "criterion_decline",
-                        "predictor": predictor,
-                        "response": response,
-                        "term": term,
-                        "condition": condition,
-                        "test": "one_sample_vs_zero",
-                        **one_sample_statistics(group[term]),
-                    }
-                )
-        wide = fits.pivot(index="subject", columns="condition", values=["intercept", "slope"])
-        for term in ("intercept", "slope"):
-            if (term, "fast") not in wide.columns or (term, "slow") not in wide.columns:
-                continue
-            pair = wide[[(term, "fast"), (term, "slow")]].copy()
-            pair.columns = ["fast", "slow"]
-            rows.append(
-                {
-                    "analysis": "criterion_decline",
-                    "predictor": predictor,
-                    "response": response,
-                    "term": term,
-                    "condition": "fast_vs_slow",
-                    "test": "paired_t_test",
-                    **paired_subject_statistics(pair["fast"], pair["slow"]),
-                }
-            )
     return pd.DataFrame(rows)
 
 
@@ -416,360 +326,6 @@ def first_order_criterion_decline(
     )
 
 
-DISCRETIZATION_OVERSHOOT_THRESHOLDS: Final[tuple[float, ...]] = (
-    0.70, 0.75, 0.80, 0.85, 0.90,
-)
-POSTERIOR_EVIDENCE_SENSITIVITY_VARIANTS: Final[tuple[str, ...]] = (
-    "baseline",
-    "token0_excluded",
-    "complete_log_only",
-    "three_second_horizon",
-)
-
-
-def posterior_grid_by_token_index() -> pd.DataFrame:
-    """Enumerate every exact success-probability state reachable at each token index.
-
-    Returns
-    -------
-    pandas.DataFrame
-        One row per ``(token_index, target_tokens)`` state, with
-        ``other_tokens``, ``remaining_tokens``, and the exact
-        :func:`~meg_tokens.behavior.math.probability.success_probability` for
-        that state.
-
-    Notes
-    -----
-    This is the task design's full state space, independent of any subject
-    or trial: it does not read data and is deterministic given the fixed
-    15-token, 8-token-majority rule. It is the reference grid used to
-    quantify how much a fixed evidence criterion's apparent time slope owes
-    to the posterior discretizing as the token horizon shrinks, rather than
-    to a genuine change in the criterion.
-    """
-    rows = []
-    for token_index in range(1, TOTAL_TOKENS + 1):
-        remaining = TOTAL_TOKENS - token_index
-        for target_tokens in range(token_index + 1):
-            other_tokens = token_index - target_tokens
-            rows.append(
-                {
-                    "token_index": token_index,
-                    "target_tokens": target_tokens,
-                    "other_tokens": other_tokens,
-                    "remaining_tokens": remaining,
-                    "success_probability": success_probability(
-                        target_tokens, other_tokens, remaining
-                    ),
-                }
-            )
-    return pd.DataFrame(rows)
-
-
-def posterior_grid_step_summary(grid: pd.DataFrame) -> pd.DataFrame:
-    """Summarize the discrete spacing between reachable posterior states.
-
-    Parameters
-    ----------
-    grid
-        Output of :func:`posterior_grid_by_token_index`.
-
-    Returns
-    -------
-    pandas.DataFrame
-        One row per token index, with the count of distinct reachable
-        success-probability values and the minimum, median, and maximum gap
-        between adjacent ones.
-
-    Notes
-    -----
-    A coarser grid (fewer states, larger gaps) at later token indices is what
-    lets a fixed decision threshold acquire a larger apparent overshoot late
-    in a trial; see :func:`discretization_overshoot_fits` for the
-    counterfactual this motivates.
-    """
-    require_columns(grid, ["token_index", "success_probability"])
-    rows = []
-    for token_index, group in grid.groupby("token_index", sort=True):
-        values = np.sort(group["success_probability"].unique())
-        gaps = np.diff(values)
-        rows.append(
-            {
-                "token_index": int(token_index),
-                "n_reachable_states": int(len(values)),
-                "min_step": float(gaps.min()) if len(gaps) else float("nan"),
-                "median_step": float(np.median(gaps)) if len(gaps) else float("nan"),
-                "max_step": float(gaps.max()) if len(gaps) else float("nan"),
-            }
-        )
-    return pd.DataFrame(rows)
-
-
-def discretization_overshoot_fits(
-    features: pd.DataFrame,
-    *,
-    thresholds: Sequence[float] = DISCRETIZATION_OVERSHOOT_THRESHOLDS,
-) -> pd.DataFrame:
-    """Fit criterion decline to a fixed-threshold replay of each trial's design.
-
-    Parameters
-    ----------
-    features
-        Canonical trial-feature table.
-    thresholds
-        Candidate fixed success-probability thresholds. For each one, every
-        eligible trial's own designed token sequence
-        (:func:`~meg_tokens.behavior.math.probability.success_probability_profile`)
-        is walked token by token until the leading side's exact probability
-        first reaches the threshold; that token index and probability become
-        one synthetic ``(decision_token_index, logged_spd)`` observation.
-        Trials whose design never reaches a threshold contribute no
-        observation for it.
-
-    Returns
-    -------
-    pandas.DataFrame
-        :func:`criterion_decline` output (predictor
-        ``decision_token_index``, response ``logged_spd``) for the synthetic
-        data at every threshold, stacked with a leading ``threshold`` column.
-
-    Notes
-    -----
-    The simulated stopping rule is exactly time-invariant: it reacts only to
-    the current exact probability, never to elapsed time or token count
-    directly. Any slope this analysis returns is therefore attributable
-    entirely to the posterior grid coarsening
-    (:func:`posterior_grid_step_summary`) as the token horizon shrinks, not to
-    a genuine urgency effect. It is a discretization-only counterfactual to
-    compare the real, subject-fitted slope against -- not itself a claim
-    about behavior.
-    """
-    trials = task_trials(features)
-    require_columns(trials, ["token_directions", "subject", "condition"])
-    fit_tables = []
-    for threshold in thresholds:
-        synthetic_rows = []
-        for _, trial in trials.iterrows():
-            try:
-                directions = parse_token_directions(trial["token_directions"])
-            except (TypeError, ValueError):
-                continue
-            if not directions:
-                continue
-            profile = success_probability_profile(directions, target=1)
-            decided = None
-            for token_index, probability in enumerate(profile, start=1):
-                leading = max(probability, 1.0 - probability)
-                if leading >= threshold:
-                    decided = (token_index, leading)
-                    break
-            if decided is None:
-                continue
-            token_index, decided_sp = decided
-            synthetic_rows.append(
-                {
-                    "subject": trial["subject"],
-                    "condition": trial["condition"],
-                    "decision_token_index": token_index,
-                    "logged_spd": decided_sp,
-                    "primary_analysis_eligible": True,
-                }
-            )
-        if not synthetic_rows:
-            continue
-        fits = criterion_decline(
-            pd.DataFrame(synthetic_rows),
-            predictor="decision_token_index",
-            response="logged_spd",
-        )
-        fits.insert(0, "threshold", threshold)
-        fit_tables.append(fits)
-    return pd.concat(fit_tables, ignore_index=True) if fit_tables else pd.DataFrame()
-
-
-def discretization_overshoot_statistics(fits: pd.DataFrame) -> pd.DataFrame:
-    """Run :func:`criterion_decline_statistics` separately for each threshold.
-
-    Parameters
-    ----------
-    fits
-        Output of :func:`discretization_overshoot_fits`.
-
-    Returns
-    -------
-    pandas.DataFrame
-        Group statistics for every threshold, stacked with a leading
-        ``threshold`` column.
-    """
-    require_columns(fits, ["threshold"])
-    stats_tables = []
-    for threshold, group in fits.groupby("threshold", sort=True):
-        group_stats = criterion_decline_statistics(group.drop(columns="threshold"))
-        group_stats.insert(0, "threshold", threshold)
-        stats_tables.append(group_stats)
-    return pd.concat(stats_tables, ignore_index=True) if stats_tables else pd.DataFrame()
-
-
-def posterior_evidence_sensitivity(
-    features: pd.DataFrame,
-    *,
-    predictor: str = "dt_ms",
-    response: str = "logged_spd",
-) -> pd.DataFrame:
-    """Refit the exact-posterior criterion under three deferred sensitivities.
-
-    Parameters
-    ----------
-    features
-        Canonical trial-feature table.
-    predictor, response
-        Forwarded to :func:`criterion_decline` for every variant.
-
-    Returns
-    -------
-    pandas.DataFrame
-        :func:`criterion_decline` output for four variants, stacked with a
-        leading ``sensitivity`` column: ``baseline`` (the unrestricted
-        eligible-trial fit, matching the current ``urgency``/``F10``
-        derivative), ``token0_excluded`` (commitments before the first
-        token removed), ``complete_log_only`` (restricted to trials with a
-        complete 15-row token log), and ``three_second_horizon`` (restricted
-        to ``dt_ms <= 3000``).
-
-    Notes
-    -----
-    These are the three sensitivities the audit plan named as needing to be
-    checked "only when they answer a real ambiguity" -- this function runs
-    all three unconditionally so the comparison is available; whether any of
-    them changes the reported conclusion is an interpretive judgment left to
-    the write-up, not decided here.
-    """
-    require_columns(
-        features,
-        ["decision_token_index", "dt_ms", "design_time_alignment_valid"],
-    )
-    decision_token = pd.to_numeric(features["decision_token_index"], errors="coerce")
-    complete_log = features["design_time_alignment_valid"].astype(bool)
-    dt_ms = pd.to_numeric(features["dt_ms"], errors="coerce")
-    variants = {
-        "baseline": features,
-        "token0_excluded": features.loc[decision_token.gt(0).fillna(False)],
-        "complete_log_only": features.loc[complete_log],
-        "three_second_horizon": features.loc[dt_ms <= 3000.0],
-    }
-    fit_tables = []
-    for name in POSTERIOR_EVIDENCE_SENSITIVITY_VARIANTS:
-        fits = criterion_decline(variants[name], predictor=predictor, response=response)
-        fits.insert(0, "sensitivity", name)
-        fit_tables.append(fits)
-    return pd.concat(fit_tables, ignore_index=True)
-
-
-def posterior_evidence_sensitivity_statistics(fits: pd.DataFrame) -> pd.DataFrame:
-    """Run :func:`criterion_decline_statistics` separately for each sensitivity.
-
-    Parameters
-    ----------
-    fits
-        Output of :func:`posterior_evidence_sensitivity`.
-
-    Returns
-    -------
-    pandas.DataFrame
-        Group statistics for every variant, stacked with a leading
-        ``sensitivity`` column.
-    """
-    require_columns(fits, ["sensitivity"])
-    stats_tables = []
-    for name in POSTERIOR_EVIDENCE_SENSITIVITY_VARIANTS:
-        group = fits.loc[fits["sensitivity"] == name]
-        if group.empty:
-            continue
-        group_stats = criterion_decline_statistics(group.drop(columns="sensitivity"))
-        group_stats.insert(0, "sensitivity", name)
-        stats_tables.append(group_stats)
-    return pd.concat(stats_tables, ignore_index=True) if stats_tables else pd.DataFrame()
-
-
-def posterior_evidence_criterion_agreement(
-    urgency_fits: pd.DataFrame,
-    criterion_fits: pd.DataFrame,
-) -> pd.DataFrame:
-    """Correlate subject-level F10 coefficients against F09 coefficients.
-
-    Parameters
-    ----------
-    urgency_fits
-        Output of :func:`evidence_at_decision_responses` (the ``urgency``
-        derivative), containing both ``logged_spd`` and
-        ``logged_spd_log_odds`` responses.
-    criterion_fits
-        Output of :func:`first_order_criterion_decline` (the
-        ``criteriondecline`` derivative).
-
-    Returns
-    -------
-    pandas.DataFrame
-        One row per ``(response, term)`` pair, with the complete-pair subject
-        count and Pearson/Spearman correlation between the pooled-condition
-        (``condition == "all"``) subject coefficients of the two analyses.
-
-    Notes
-    -----
-    At least three complete subjects and nonzero variance in both measures
-    are required; otherwise the pair is omitted. A correlation here is
-    convergence between two distinct evidence measures, not proof that they
-    are interchangeable -- the exact posterior and the first-order SumLogLR
-    are fitted on different response scales with different eligibility
-    rules.
-    """
-    require_columns(
-        urgency_fits,
-        ["subject", "condition", "response", "converged", "intercept", "slope"],
-    )
-    require_columns(
-        criterion_fits,
-        ["subject", "condition", "converged", "intercept", "slope"],
-    )
-    criterion_pooled = criterion_fits.loc[
-        (criterion_fits["condition"] == "all") & criterion_fits["converged"]
-    ].set_index("subject")
-    rows = []
-    for response, response_fits in urgency_fits.groupby("response", sort=True):
-        urgency_pooled = response_fits.loc[
-            (response_fits["condition"] == "all") & response_fits["converged"]
-        ].set_index("subject")
-        common = urgency_pooled.index.intersection(criterion_pooled.index)
-        for term in ("intercept", "slope"):
-            pair = pd.DataFrame(
-                {
-                    "criterion": criterion_pooled.loc[common, term],
-                    "urgency": urgency_pooled.loc[common, term],
-                }
-            ).apply(pd.to_numeric, errors="coerce").dropna()
-            n_subjects = int(len(pair))
-            if n_subjects < 3:
-                continue
-            values_criterion = pair["criterion"].to_numpy(dtype=float)
-            values_urgency = pair["urgency"].to_numpy(dtype=float)
-            if np.std(values_criterion) == 0 or np.std(values_urgency) == 0:
-                continue
-            pearson = stats.pearsonr(values_criterion, values_urgency)
-            spearman = stats.spearmanr(values_criterion, values_urgency)
-            rows.append(
-                {
-                    "response": response,
-                    "term": term,
-                    "n_subjects": n_subjects,
-                    "pearson_r": float(pearson.statistic),
-                    "pearson_p": float(pearson.pvalue),
-                    "spearman_rho": float(spearman.statistic),
-                    "spearman_p": float(spearman.pvalue),
-                }
-            )
-    return pd.DataFrame(rows)
-
-
 def reverse_correlation(
     features: pd.DataFrame,
     *,
@@ -822,7 +378,7 @@ def reverse_correlation(
     )
     jumps = [f"jump{index:02d}" for index in range(1, n_jumps + 1)]
     rows = []
-    for subject, condition, selected in _subject_condition_groups(trials):
+    for subject, condition, selected in subject_condition_groups(trials):
         if selected.empty:
             continue
         predictors = np.zeros((len(selected), n_jumps), dtype=float)
@@ -895,11 +451,6 @@ def reverse_correlation(
 
 def reverse_correlation_statistics(kernels: pd.DataFrame) -> pd.DataFrame:
     """Run group tests on the psychophysical kernel at every jump.
-
-    Parameters
-    ----------
-    kernels
-        Output of :func:`reverse_correlation`.
 
     Returns
     -------
@@ -1084,7 +635,7 @@ def conditional_accuracy_functions(
     )
 
     rows = []
-    for subject, condition, selected in _subject_condition_groups(trials):
+    for subject, condition, selected in subject_condition_groups(trials):
         if selected.empty:
             continue
         try:
@@ -1398,11 +949,6 @@ def _composition_share_agreement(functions: pd.DataFrame) -> list[dict]:
 def conditional_accuracy_statistics(functions: pd.DataFrame) -> pd.DataFrame:
     """Test conditional accuracy, its trend, and the composition behind it.
 
-    Parameters
-    ----------
-    functions
-        Output of :func:`conditional_accuracy_functions`.
-
     Returns
     -------
     pandas.DataFrame
@@ -1662,7 +1208,7 @@ def continuous_evidence_effects(
     trials = task_trials(features)
     require_columns(trials, ["dt_ms", "isCorrect", *predictors])
     rows = []
-    for subject, condition, selected in _subject_condition_groups(trials):
+    for subject, condition, selected in subject_condition_groups(trials):
         if selected.empty:
             continue
         for predictor, centre in predictors.items():
@@ -1827,7 +1373,7 @@ def early_evidence_order_profile(features: pd.DataFrame) -> pd.DataFrame:
     ]
 
     rows = []
-    for subject, condition, selected in _subject_condition_groups(trials):
+    for subject, condition, selected in subject_condition_groups(trials):
         if selected.empty:
             continue
         for (level, stratum, order), cell in selected.groupby(
@@ -1849,11 +1395,6 @@ def early_evidence_order_profile(features: pd.DataFrame) -> pd.DataFrame:
 
 def early_evidence_order_statistics(order_profile: pd.DataFrame) -> pd.DataFrame:
     """Test what token order does at a fixed evidence level.
-
-    Parameters
-    ----------
-    order_profile
-        Output of :func:`early_evidence_order_profile`.
 
     Returns
     -------
@@ -1989,7 +1530,7 @@ def early_evidence_profile(features: pd.DataFrame) -> pd.DataFrame:
     ]
 
     rows = []
-    for subject, condition, selected in _subject_condition_groups(trials):
+    for subject, condition, selected in subject_condition_groups(trials):
         if selected.empty:
             continue
         for level, cell in selected.groupby("_level", sort=True):
@@ -2293,11 +1834,6 @@ def criterion_scale_comparison(features: pd.DataFrame) -> pd.DataFrame:
     changed. Fitting both on the same trials is what separates a policy change
     from this scale artifact.
 
-    Parameters
-    ----------
-    features
-        Canonical trial-feature table.
-
     Returns
     -------
     pandas.DataFrame
@@ -2326,11 +1862,6 @@ def criterion_scale_comparison(features: pd.DataFrame) -> pd.DataFrame:
 
 def criterion_time_profile(features: pd.DataFrame) -> pd.DataFrame:
     """Bin the criterion by decision time, per subject, on both scales.
-
-    Parameters
-    ----------
-    features
-        Canonical trial-feature table.
 
     Returns
     -------
@@ -2373,13 +1904,6 @@ def criterion_scale_comparison_statistics(
     profile: pd.DataFrame,
 ) -> pd.DataFrame:
     """Group tests for the two-scale criterion comparison.
-
-    Parameters
-    ----------
-    fits
-        Output of :func:`criterion_scale_comparison`.
-    profile
-        Output of :func:`criterion_time_profile`.
 
     Returns
     -------

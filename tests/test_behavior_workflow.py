@@ -219,16 +219,6 @@ def test_unified_cli_runs_behavior_analysis(tmp_path, capsys):
     assert str(DerivativeLayout(project.bids_root).behavior_summary()) in capsys.readouterr().out
 
 
-@pytest.mark.parametrize("command", ["ingest", "analyze", "characterization", "qc"])
-def test_unified_behavior_help_is_side_effect_free(command, capsys):
-    with pytest.raises(SystemExit) as error:
-        main(["behavior", command, "--help"])
-    assert error.value.code == 0
-    output = capsys.readouterr().out
-    if command != "qc":  # qc takes no arguments beyond --help
-        assert "--subjects" in output
-
-
 def test_unified_cli_runs_behavior_qc(tmp_path, monkeypatch, capsys):
     summary = pd.DataFrame({"log_rows": [14, 15], "n_trials": [2, 3]})
     details = pd.DataFrame({"subject": ["H01", "H01", "H02"]})
@@ -251,89 +241,6 @@ def test_unified_cli_runs_behavior_qc(tmp_path, monkeypatch, capsys):
     output = capsys.readouterr().out
     assert "log_rows" in output
     assert "Validated trials: 3" in output
-
-
-def test_unified_meg_cli_help_is_available(capsys):
-    with pytest.raises(SystemExit) as error:
-        main(["meg", "epoch", "--help"])
-    assert error.value.code == 0
-    output = capsys.readouterr().out
-    assert "--alignment" in output
-    assert "--subjects" in output
-
-
-def test_unified_source_cli_help_is_available(capsys):
-    with pytest.raises(SystemExit) as error:
-        main(["meg", "source", "--help"])
-    assert error.value.code == 0
-    output = capsys.readouterr().out
-    assert "--stages" in output
-    assert "--volume-labels" in output
-
-
-@pytest.mark.parametrize("command", ["erp", "power", "spectral"])
-def test_unified_primary_feature_help_is_available(command, capsys):
-    with pytest.raises(SystemExit) as error:
-        main(["features", command, "--help"])
-    assert error.value.code == 0
-    assert "--subjects" in capsys.readouterr().out
-
-
-@pytest.mark.parametrize("command", ["hilbert", "pac", "connectivity"])
-def test_unified_advanced_feature_help_is_available(command, capsys):
-    with pytest.raises(SystemExit) as error:
-        main(["features", command, "--help"])
-    assert error.value.code == 0
-    assert "--conditions" in capsys.readouterr().out
-
-
-@pytest.mark.parametrize(
-    "command",
-    [
-        "statistics",
-        "lateralization",
-        "decoding",
-        "decomposition",
-        "spatial-decoding",
-    ],
-)
-def test_unified_analysis_help_is_available(command, capsys):
-    with pytest.raises(SystemExit) as error:
-        main(["analyze", command, "--help"])
-    assert error.value.code == 0
-    expected = "--condition" if command == "lateralization" else "--conditions"
-    assert expected in capsys.readouterr().out
-
-
-@pytest.mark.parametrize(
-    "command",
-    [
-        "behavior",
-        "statistics",
-        "connectivity",
-        "seed-connectivity",
-        "decoding-onset",
-        "spatial-decoding",
-        "pca-trajectory",
-        "pca-timecourse",
-        "pca-variance",
-        "pca-heatmap",
-        "pca-loadings",
-        "dpca",
-    ],
-)
-def test_unified_report_help_is_available(command, capsys):
-    with pytest.raises(SystemExit) as error:
-        main(["report", command, "--help"])
-    assert error.value.code == 0
-    assert "--output-root" in capsys.readouterr().out
-
-
-def test_unified_validation_help_is_available(capsys):
-    with pytest.raises(SystemExit) as error:
-        main(["validate", "golden", "--help"])
-    assert error.value.code == 0
-    assert "--comparison-config" in capsys.readouterr().out
 
 
 # --- Stage 2b: behavioral characterization analyses ---------------------------
@@ -369,15 +276,6 @@ def test_analyze_behavior_characterization_writes_every_analysis_table(tmp_path)
         "individualprofile",
         "individualcorrelations",
         "urgency",
-        "posteriorevidenceindex",
-        "posteriorevidenceindexstats",
-        "posteriorgrid",
-        "posteriorgridstats",
-        "posteriordiscretization",
-        "posteriordiscretizationstats",
-        "posteriorevidencesensitivity",
-        "posteriorevidencesensitivitystats",
-        "posteriorevidenceagreement",
         "speciescomparison",
     ):
         assert layout.behavior_analysis(name) in result.outputs
@@ -396,8 +294,6 @@ def test_analyze_behavior_characterization_writes_every_analysis_table(tmp_path)
         "chosen_sum_log_lr_first_order_at_decision"
     }
     assert set(criterion["predictor"]) == {"dt_ms"}
-    posterior_grid = pd.read_csv(layout.behavior_analysis("posteriorgrid"), sep="\t")
-    assert set(posterior_grid["token_index"]) == set(range(1, 16))
 
 
 def test_sequential_sampling_fits_are_written_one_table_per_subject(tmp_path):

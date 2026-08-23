@@ -45,7 +45,6 @@ from meg_tokens.behavior.analyses.sequential_sampling import (
     heldout_model_statistics,
     heldout_contrast_robustness,
     heldout_pairwise_model_statistics,
-    influential_subject_sensitivity,
     matched_sequence_diagnostic,
     matched_sequence_audit,
     matched_sequence_model_predictions,
@@ -499,7 +498,6 @@ def evaluate_thura2012(
         "ssmeligibilityaudit": eligibility,
         "ssmexclusionrobustness": exclusion_robustness_audit(features),
         "ssmboundaryaudit": boundary,
-        "ssmmechanisticstats": mechanistic_model_statistics(fits),
         "ssmheldout": aggregate,
         "ssmheldoutfoldaudit": heldout_fold_audit(aggregate, expected_folds=folds),
         "ssmheldoutstats": heldout_model_statistics(aggregate),
@@ -562,7 +560,6 @@ _EVALUATION_TABLES = (
     "ssmeligibilityaudit",
     "ssmexclusionrobustness",
     "ssmboundaryaudit",
-    "ssmmechanisticstats",
     "ssmheldout",
     "ssmheldoutfoldaudit",
     "ssmheldoutstats",
@@ -606,8 +603,7 @@ def aggregate_mechanistic_evaluation(
     recomputed = {
         "ssmexclusionrobustness",
         "ssmboundaryaudit",
-        "ssmmechanisticstats",
-        "ssmheldoutfoldaudit",
+            "ssmheldoutfoldaudit",
         "ssmheldoutstats",
         "ssmheldoutpairwise",
         "ssmdistributionchecks",
@@ -655,7 +651,6 @@ def aggregate_mechanistic_evaluation(
     )
     tables["ssmboundaryaudit"] = boundary_convergence_audit(fits)
     tables["ssmexclusionrobustness"] = exclusion_robustness_audit(features)
-    tables["ssmmechanisticstats"] = mechanistic_model_statistics(fits)
     tables["ssmdistributionchecks"] = fitted_distribution_checks(
         features,
         fits,
@@ -845,17 +840,6 @@ def aggregate_mechanistic_fits(project: ProjectConfig) -> WorkflowResult:
             layout,
             "ssmcomparisonstats",
             stats_table,
-            inputs=inputs,
-            subjects=subjects,
-            excluded=excluded,
-            provenance=accepted_provenance,
-        )
-    )
-    outputs.append(
-        _write(
-            layout,
-            "ssmexclusionsensitivity",
-            influential_subject_sensitivity(fits, excluded_subject="H20"),
             inputs=inputs,
             subjects=subjects,
             excluded=excluded,
