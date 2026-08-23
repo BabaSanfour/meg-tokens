@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 from dataclasses import replace
 from pathlib import Path
-from typing import Optional, Sequence
+from typing import Callable, Optional, Sequence
 
 from meg_tokens import __version__
 from meg_tokens.core import (
@@ -26,6 +26,9 @@ from meg_tokens.core import (
     SpectralConfig,
     StatisticsConfig,
 )
+
+
+Handler = Callable[[ProjectConfig, argparse.Namespace], object]
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -562,604 +565,753 @@ def _project_from_args(args: argparse.Namespace) -> ProjectConfig:
     return replace(project, **updates) if updates else project
 
 
+# argparse names the second-level dest per domain rather than uniformly,
+# so the lookup needs the mapping stated once.
+_COMMAND_DEST: dict[str, str] = {
+    "behavior": "behavior_command",
+    "meg": "meg_command",
+    "features": "feature_command",
+    "analyze": "analysis_command",
+    "report": "report_command",
+    "validate": "validation_command",
+}
+
+
+def _behavior_ingest(project: ProjectConfig, args: argparse.Namespace) -> object:
+    from meg_tokens.workflows.behavior_ingest import ingest_behavior
+
+    return ingest_behavior(
+        project,
+        subjects=args.subjects,
+        dry_run=args.dry_run,
+    )
+
+
+def _behavior_analyze(project: ProjectConfig, args: argparse.Namespace) -> object:
+    from meg_tokens.workflows.behavior_analysis import analyze_behavior
+
+    return analyze_behavior(project, subjects=args.subjects)
+
+
+def _behavior_characterization(project: ProjectConfig, args: argparse.Namespace) -> object:
+    from meg_tokens.workflows.behavior_characterization import (
+        analyze_behavior_characterization,
+    )
+
+    return analyze_behavior_characterization(
+        project,
+        subjects=args.subjects,
+        neural_metrics_path=args.neural_metrics,
+    )
+
+
+def _behavior_ssm_fit(project: ProjectConfig, args: argparse.Namespace) -> object:
+    from meg_tokens.workflows.sequential_sampling import (
+        fit_subject_sequential_sampling,
+    )
+    from meg_tokens.behavior.analyses.sequential_sampling import (
+        MECHANISTIC_MODELS,
+    )
+
+    return fit_subject_sequential_sampling(
+        project,
+        subjects=args.subjects,
+        n_jobs=args.n_jobs,
+        models=MECHANISTIC_MODELS,
+        n_starts=args.n_starts,
+    )
+
+
+def _behavior_ssm_evaluate(project: ProjectConfig, args: argparse.Namespace) -> object:
+    from meg_tokens.workflows.sequential_sampling import evaluate_thura2012
+
+    return evaluate_thura2012(
+        project,
+        subjects=args.subjects,
+        folds=args.folds,
+        n_starts=args.n_starts,
+        recovery_repetitions=args.recovery_repetitions,
+    )
+
+
+def _behavior_ssm_evaluate_aggregate(project: ProjectConfig, args: argparse.Namespace) -> object:
+    from meg_tokens.workflows.sequential_sampling import aggregate_mechanistic_evaluation
+
+    return aggregate_mechanistic_evaluation(project, folds=args.folds)
+
+
+def _behavior_ssm_aggregate(project: ProjectConfig, args: argparse.Namespace) -> object:
+    from meg_tokens.workflows.sequential_sampling import aggregate_mechanistic_fits
+
+    return aggregate_mechanistic_fits(project)
+
+
+def _behavior_ssm_recovery(project: ProjectConfig, args: argparse.Namespace) -> object:
+    from meg_tokens.workflows.sequential_sampling import run_recovery_stage
+
+    return run_recovery_stage(
+        project,
+        repetitions=args.repetitions,
+        n_starts=args.n_starts,
+        repetition_index=args.repetition_index,
+    )
+
+
+def _behavior_ssm_recovery_aggregate(project: ProjectConfig, args: argparse.Namespace) -> object:
+    from meg_tokens.workflows.sequential_sampling import aggregate_recovery_stage
+
+    return aggregate_recovery_stage(project, repetitions=args.repetitions)
+
+
+def _behavior_ssm_robustness(project: ProjectConfig, args: argparse.Namespace) -> object:
+    from meg_tokens.workflows.sequential_sampling import run_robustness_stage
+
+    return run_robustness_stage(
+        project,
+        subject=args.subjects[0] if args.subjects else None,
+        configuration=args.configuration,
+        n_jobs=args.n_jobs,
+        n_starts=args.n_starts,
+    )
+
+
+def _behavior_ssm_robustness_aggregate(project: ProjectConfig, args: argparse.Namespace) -> object:
+    from meg_tokens.workflows.sequential_sampling import aggregate_robustness_stage
+
+    return aggregate_robustness_stage(project)
+
+
+def _behavior_ssm_exclusion_robustness(project: ProjectConfig, args: argparse.Namespace) -> object:
+    from meg_tokens.workflows.sequential_sampling import run_exclusion_robustness_stage
+
+    return run_exclusion_robustness_stage(
+        project,
+        subject=args.subjects[0] if args.subjects else None,
+        rule=args.rule,
+        n_jobs=args.n_jobs,
+        n_starts=args.n_starts,
+    )
+
+
+def _behavior_ssm_exclusion_robustness_aggregate(project: ProjectConfig, args: argparse.Namespace) -> object:
+    from meg_tokens.workflows.sequential_sampling import aggregate_exclusion_robustness_stage
+
+    return aggregate_exclusion_robustness_stage(project)
+
+
+def _behavior_subjects(project: ProjectConfig, args: argparse.Namespace) -> object:
+    from meg_tokens.workflows.sequential_sampling import _selected_features
+
+    _, _, subjects, _ = _selected_features(project, None)
+    for subject in subjects:
+        print(subject)
+    return None
+
+
+def _behavior_qc(project: ProjectConfig, args: argparse.Namespace) -> object:
+    from meg_tokens.validation import run_spd_validation
+
+    summary, details = run_spd_validation(
+        project.behavior_root,
+        ignore_files=project.behavior_ignore_files,
+    )
+    print(summary.to_string(index=False))
+    print(f"Validated trials: {len(details)}")
+    return None
+
+
+def _meg_stage_raw(project: ProjectConfig, args: argparse.Namespace) -> object:
+    from meg_tokens.workflows.raw_staging import plan_raw_staging
+
+    result = plan_raw_staging(project, subjects=args.subjects)
+    for subject, counts in result.settings["summary_by_subject"].items():
+        counts_text = ", ".join(f"{action}={count}" for action, count in sorted(counts.items()))
+        print(f"{subject}: {counts_text}")
+    review_rows = result.settings["review_rows"]
+    if review_rows:
+        print(f"\n{len(review_rows)} row(s) need review before applying:")
+        for row in review_rows:
+            reason = row["note"] or (
+                f"{row['count_agreement']} (MEG start pulses={row['meg_start_pulse_count']}, "
+                f"behavior trials={row['behavior_trial_count']})"
+            )
+            print(f"  {row['subject']} {row['kind']} {row['condition']} {row['run']}: {reason}")
+    print(f"\nManifest: {result.outputs[0]}")
+    print("Review flagged rows, then run `meg-tokens meg apply-raw-staging`.")
+    return None
+
+
+def _meg_apply_raw_staging(project: ProjectConfig, args: argparse.Namespace) -> object:
+    from meg_tokens.workflows.raw_staging import apply_raw_staging
+
+    return apply_raw_staging(
+        project,
+        manifest_path=args.manifest,
+        subjects=args.subjects,
+    )
+
+
+def _meg_preprocess(project: ProjectConfig, args: argparse.Namespace) -> object:
+    from meg_tokens.workflows.preprocessing import preprocess_run
+
+    return preprocess_run(
+        project,
+        RunSpec(
+            subject=args.subject,
+            run=args.run,
+            condition=args.condition,
+        ),
+        raw_path=args.raw_path,
+        settings=PreprocessingConfig(
+            high_pass=args.high_pass,
+            low_pass=args.low_pass,
+            notch_freqs=tuple(args.notch_freqs) if args.notch_freqs else None,
+            run_ica=args.run_ica,
+            ica_exclude=tuple(args.ica_exclude) if args.ica_exclude is not None else None,
+        ),
+    )
+
+
+def _meg_epoch(project: ProjectConfig, args: argparse.Namespace) -> object:
+    from meg_tokens.workflows.preprocessing import epoch_subjects
+
+    return epoch_subjects(
+        project,
+        subjects=args.subjects,
+        settings=EpochingConfig(
+            tmin=args.tmin,
+            tmax=args.tmax,
+            alignment=args.alignment,
+        ),
+        raw_root=args.raw_root,
+        behavior_root=args.behavior_root,
+    )
+
+
+def _meg_source(project: ProjectConfig, args: argparse.Namespace) -> object:
+    from meg_tokens.workflows.sources import reconstruct_sources
+
+    return reconstruct_sources(
+        project,
+        subjects=args.subjects,
+        settings=SourceConfig(
+            stages=tuple(args.stages),
+            spacing=args.spacing,
+            volume_labels=tuple(args.volume_labels) if args.volume_labels else None,
+            volume_pos=args.volume_pos,
+            run=args.run,
+            condition=args.condition,
+            alignment=args.alignment,
+            method=args.method,
+            snr=args.snr,
+        ),
+        epochs_root=args.epochs_root,
+    )
+
+
+def _features_erp(project: ProjectConfig, args: argparse.Namespace) -> object:
+    from meg_tokens.workflows.erp import extract_erp_features
+
+    return extract_erp_features(
+        project,
+        subjects=args.subjects,
+        settings=ERPConfig(
+            run=args.run,
+            condition=args.condition,
+            alignment=args.alignment,
+            source_method=args.source_method,
+            parc=args.parc,
+            feature_space=args.feature_space,
+            hemi=args.hemi,
+            label_subject=args.label_subject,
+            spacing=args.spacing,
+            label_mode=args.label_mode,
+            max_duration_samples=args.max_duration_samples,
+            cutoff_before_enter_ms=args.cutoff_before_enter_ms,
+            min_rt_ms=args.min_rt_ms,
+        ),
+        source_root=args.source_root,
+        behavior_root=args.behavior_root,
+    )
+
+
+def _features_power(project: ProjectConfig, args: argparse.Namespace) -> object:
+    from meg_tokens.workflows.power import extract_power_features, parse_frequency_bands
+
+    parsed_bands = parse_frequency_bands(args.bands) if args.bands else None
+    return extract_power_features(
+        project,
+        subjects=args.subjects,
+        settings=PowerConfig(
+            run=args.run,
+            condition=args.condition,
+            alignment=args.alignment,
+            source_method=args.source_method,
+            method=args.method,
+            bands=(
+                tuple((name, bounds[0], bounds[1]) for name, bounds in parsed_bands.items())
+                if parsed_bands
+                else None
+            ),
+            width=args.width,
+            step=args.step,
+            baseline=tuple(args.baseline) if args.baseline else None,
+            baseline_method=args.baseline_method,
+            n_jobs=args.n_jobs,
+        ),
+        source_root=args.source_root,
+    )
+
+
+def _features_spectral(project: ProjectConfig, args: argparse.Namespace) -> object:
+    from meg_tokens.workflows.spectral import extract_spectral_features
+
+    return extract_spectral_features(
+        project,
+        subjects=args.subjects,
+        settings=SpectralConfig(
+            run=args.run,
+            condition=args.condition,
+            alignment=args.alignment,
+            method=args.method,
+            fmin=args.fmin,
+            fmax=args.fmax,
+            n_fft=args.n_fft,
+            n_overlap=args.n_overlap,
+            n_jobs=args.n_jobs,
+            fit_model=not args.no_specparam,
+        ),
+        epochs_root=args.epochs_root,
+    )
+
+
+def _features_hilbert(project: ProjectConfig, args: argparse.Namespace) -> object:
+    from meg_tokens.features.time_frequency import parse_frequency_bands
+    from meg_tokens.workflows.hilbert import extract_hilbert_features
+
+    parsed_bands = parse_frequency_bands(args.bands) if args.bands else None
+    return extract_hilbert_features(
+        project,
+        subjects=args.subjects,
+        settings=HilbertConfig(
+            conditions=tuple(args.conditions),
+            alignment=args.alignment,
+            source_method=args.source_method,
+            parc=args.parc,
+            labels=tuple(args.labels) if args.labels else None,
+            bands=(
+                tuple((name, bounds[0], bounds[1]) for name, bounds in parsed_bands.items())
+                if parsed_bands
+                else None
+            ),
+            features=tuple(args.feature_types),
+            sfreq=args.sfreq,
+            n_jobs=args.n_jobs,
+        ),
+        feature_root=args.feature_root,
+    )
+
+
+def _features_pac(project: ProjectConfig, args: argparse.Namespace) -> object:
+    from meg_tokens.workflows.pac import extract_pac_features
+
+    return extract_pac_features(
+        project,
+        subjects=args.subjects,
+        settings=PACConfig(
+            conditions=tuple(args.conditions),
+            phase_bands=tuple(args.phase_bands),
+            amplitude_bands=tuple(args.amplitude_bands),
+            alignment=args.alignment,
+            source_method=args.source_method,
+            parc=args.parc,
+            n_bins=args.n_bins,
+            time_window=tuple(args.time_window) if args.time_window else None,
+        ),
+        feature_root=args.feature_root,
+    )
+
+
+def _features_connectivity(project: ProjectConfig, args: argparse.Namespace) -> object:
+    from meg_tokens.workflows.connectivity import _parse_bands, extract_connectivity_features
+
+    names, lower, upper = _parse_bands(args.bands)
+    return extract_connectivity_features(
+        project,
+        subjects=args.subjects,
+        settings=ConnectivityConfig(
+            conditions=tuple(args.conditions),
+            alignment=args.alignment,
+            source_method=args.source_method,
+            parc=args.parc,
+            labels=tuple(args.labels) if args.labels else None,
+            bands=tuple(zip(names, lower, upper)),
+            method=args.method,
+            mode=args.mode,
+            sfreq=args.sfreq,
+            before_window=tuple(args.before_window),
+            after_window=tuple(args.after_window),
+            n_jobs=args.n_jobs,
+        ),
+        feature_root=args.feature_root,
+    )
+
+
+def _analyze_statistics(project: ProjectConfig, args: argparse.Namespace) -> object:
+    from meg_tokens.workflows.statistics import run_group_statistics
+
+    return run_group_statistics(
+        project,
+        subjects=args.subjects,
+        settings=StatisticsConfig(
+            conditions=tuple(args.conditions),
+            alignment=args.alignment,
+            source_method=args.source_method,
+            parc=args.parc,
+            runs_condition_1=tuple(args.runs_condition_1) if args.runs_condition_1 else None,
+            runs_condition_2=tuple(args.runs_condition_2) if args.runs_condition_2 else None,
+            permutations=args.permutations,
+            alpha=args.alpha,
+            tail=args.tail,
+            n_jobs=args.n_jobs,
+        ),
+        feature_root=args.feature_root,
+    )
+
+
+def _analyze_lateralization(project: ProjectConfig, args: argparse.Namespace) -> object:
+    from meg_tokens.workflows.statistics import run_lateralized_statistics
+
+    return run_lateralized_statistics(
+        project,
+        subjects=args.subjects,
+        settings=LateralizedStatisticsConfig(
+            condition=args.condition,
+            alignment=args.alignment,
+            source_method=args.source_method,
+            parc=args.parc,
+            runs=tuple(args.runs) if args.runs else None,
+            permutations=args.permutations,
+            alpha=args.alpha,
+            tail=args.tail,
+            n_jobs=args.n_jobs,
+        ),
+        feature_root=args.feature_root,
+    )
+
+
+def _analyze_decoding(project: ProjectConfig, args: argparse.Namespace) -> object:
+    from meg_tokens.workflows.decoding import run_decoding
+
+    return run_decoding(
+        project,
+        subjects=args.subjects,
+        settings=DecodingConfig(
+            conditions=tuple(args.conditions),
+            input_conditions=tuple(args.input_conditions) if args.input_conditions else None,
+            feature_source=args.feature_source,
+            alignment=args.alignment,
+            source_method=args.source_method,
+            parc=args.parc,
+            band=args.band,
+            power_method=args.power_method,
+            runs=tuple(args.runs) if args.runs else None,
+            labels=tuple(args.labels) if args.labels else None,
+            lateralize=args.lateralize,
+            class_column=args.class_column,
+            class_values=tuple(args.class_values) if args.class_values else None,
+            permutations=args.permutations,
+            n_jobs=args.n_jobs,
+        ),
+        feature_root=args.feature_root,
+    )
+
+
+def _analyze_decomposition(project: ProjectConfig, args: argparse.Namespace) -> object:
+    from meg_tokens.workflows.decomposition import run_decomposition
+
+    return run_decomposition(
+        project,
+        subjects=args.subjects,
+        settings=DecompositionConfig(
+            conditions=tuple(args.conditions),
+            analysis=args.analysis,
+            feature_source=args.feature_source,
+            alignment=args.alignment,
+            source_method=args.source_method,
+            parc=args.parc,
+            band=args.band,
+            power_method=args.power_method,
+            labels=tuple(args.labels) if args.labels else None,
+            lateralize=args.lateralize,
+            average_unit=args.average_unit,
+            transform=args.transform,
+            n_components=args.n_components,
+            min_variance=args.min_variance,
+            fit_time_range=tuple(args.fit_time_range) if args.fit_time_range else None,
+            project_centered=args.project_centered,
+            marginalize_cols=tuple(args.marginalize_cols) if args.marginalize_cols else None,
+            dpca_labels=args.dpca_labels,
+        ),
+        feature_root=args.feature_root,
+    )
+
+
+def _analyze_spatial_decoding(project: ProjectConfig, args: argparse.Namespace) -> object:
+    from meg_tokens.workflows.spatial_decoding import run_spatial_decoding
+
+    return run_spatial_decoding(
+        project,
+        settings=SpatialDecodingConfig(
+            conditions=tuple(args.conditions),
+            permutations=args.permutations,
+            n_jobs=args.n_jobs,
+        ),
+        data_dir=args.data_dir,
+        output_root=args.output_root,
+    )
+
+
+def _report_behavior(project: ProjectConfig, args: argparse.Namespace) -> object:
+    from meg_tokens.reports.behavior_summary import (
+        list_behavior_figures,
+        run_behavior_plotting,
+    )
+
+    if args.list_figures:
+        result = [
+            f"{spec.key}  [{', '.join(spec.groups)}]  "
+            f"requires: {', '.join(spec.requires)}  -- {spec.title}"
+            for spec in list_behavior_figures()
+        ]
+    else:
+        result = run_behavior_plotting(
+            str(args.behavior_root or project.bids_root),
+            str(args.output_root or project.bids_root),
+            subjects_list=args.subjects,
+            figures=tuple(args.figures),
+            formats=tuple(args.formats),
+            skip_missing=args.skip_missing,
+        )
+    return result
+
+
+def _report_statistics(project: ProjectConfig, args: argparse.Namespace) -> object:
+    from meg_tokens.reports.statistics import run_group_statistics_plotting
+
+    return run_group_statistics_plotting(
+        str(args.stats_root or project.bids_root),
+        str(args.output_root or project.bids_root),
+        conditions=args.conditions,
+        align_to=args.alignment,
+        source_method=args.source_method,
+        parc=args.parc,
+        labels=args.labels,
+        top_n=args.top_n,
+        alpha=args.alpha,
+        peak_mode=args.peak_mode,
+        behavior_dir=(
+            str(args.behavior_root or project.bids_root)
+            if args.correlate_behavior
+            else None
+        ),
+        correlate_behavior=args.correlate_behavior,
+    )
+
+
+def _report_connectivity(project: ProjectConfig, args: argparse.Namespace) -> object:
+    from meg_tokens.reports.connectivity import run_batch_plot_connectivity_circle
+
+    return run_batch_plot_connectivity_circle(
+        str(args.feature_root or project.bids_root),
+        str(args.output_root or project.bids_root),
+        args.condition,
+        band=args.band,
+        p_threshold=args.p_threshold,
+        n_permutations=args.permutations,
+        node_names_path=args.node_names,
+    )
+
+
+def _report_seed_connectivity(project: ProjectConfig, args: argparse.Namespace) -> object:
+    from meg_tokens.reports.seed_connectivity import run_batch_plot_seed_connectivity
+
+    return run_batch_plot_seed_connectivity(
+        str(args.feature_root or project.bids_root),
+        str(args.output_root or project.bids_root),
+        args.condition,
+        args.seed_roi,
+        band=args.band,
+        p_threshold=args.p_threshold,
+        n_permutations=args.permutations,
+        node_names_path=args.node_names,
+    )
+
+
+def _report_decoding_onset(project: ProjectConfig, args: argparse.Namespace) -> object:
+    from meg_tokens.reports.decoding import run_batch_plot_decoding_onset
+
+    return run_batch_plot_decoding_onset(
+        args.scores,
+        args.thresholds,
+        args.names,
+        str(args.output_root or project.bids_root),
+        time_offset=args.time_offset,
+        time_step=args.time_step,
+    )
+
+
+def _report_spatial_decoding(project: ProjectConfig, args: argparse.Namespace) -> object:
+    from meg_tokens.reports.spatial_decoding import plot_spatial_decoding_topomap
+
+    return plot_spatial_decoding_topomap(
+        args.score_path,
+        args.info_fif,
+        str(args.output_root or project.bids_root),
+    )
+
+
+def _report_pca_trajectory(project: ProjectConfig, args: argparse.Namespace) -> object:
+    from meg_tokens.reports.decomposition.trajectory import run_batch_plot_pca_trajectory
+
+    return run_batch_plot_pca_trajectory(
+        args.timecourse_path,
+        str(args.output_root or project.bids_root),
+        args.conditions,
+        args.components,
+    )
+
+
+def _report_pca_timecourse(project: ProjectConfig, args: argparse.Namespace) -> object:
+    from meg_tokens.reports.decomposition.timecourse import run_batch_plot_component_timecourse
+
+    return run_batch_plot_component_timecourse(
+        args.timecourse_path,
+        str(args.output_root or project.bids_root),
+        args.components,
+        args.conditions,
+    )
+
+
+def _report_pca_variance(project: ProjectConfig, args: argparse.Namespace) -> object:
+    from meg_tokens.reports.decomposition.variance import run_batch_plot_pca_variance
+
+    return run_batch_plot_pca_variance(
+        args.variance_path,
+        str(args.output_root or project.bids_root),
+    )
+
+
+def _report_pca_heatmap(project: ProjectConfig, args: argparse.Namespace) -> object:
+    from meg_tokens.reports.decomposition.heatmap import run_batch_plot_pca_heatmap
+
+    return run_batch_plot_pca_heatmap(
+        args.data_path,
+        str(args.output_root or project.bids_root),
+        args.rois,
+    )
+
+
+def _report_pca_loadings(project: ProjectConfig, args: argparse.Namespace) -> object:
+    from meg_tokens.reports.decomposition.loadings import run_batch_plot_pca_loadings
+
+    return run_batch_plot_pca_loadings(
+        args.loadings_path,
+        str(args.output_root or project.bids_root),
+        args.subjects_dir or (
+            str(project.subjects_dir) if project.subjects_dir else None
+        ),
+        args.threshold_percentile,
+        args.export_csv,
+        args.save_movie,
+        args.vertices_path,
+        args.volume,
+    )
+
+
+def _report_dpca(project: ProjectConfig, args: argparse.Namespace) -> object:
+    from meg_tokens.reports.decomposition.dpca import run_batch_plot_dpca
+
+    return run_batch_plot_dpca(
+        component_paths=args.component_paths,
+        dpca_dir=args.dpca_root,
+        output_dir=str(args.output_root or project.bids_root),
+        n_components_to_plot=args.n_components,
+    )
+
+
+def _validate_golden(project: ProjectConfig, args: argparse.Namespace) -> object:
+    from meg_tokens.validation import run_golden_validation
+
+    result = run_golden_validation(
+        args.comparison_config,
+        out_tsv=args.out_tsv,
+    )
+    failed = result[result["status"] != "pass"]
+    print(f"Comparisons: {len(result)}; failed: {len(failed)}")
+    if len(failed) and not args.allow_failures:
+        names = ", ".join(failed["name"].astype(str).tolist())
+        raise SystemExit(f"Golden validation failed for: {names}")
+    print(args.out_tsv)
+    return None
+
+
+_HANDLERS: dict[tuple[str, str], Handler] = {
+    ("behavior", "ingest"): _behavior_ingest,
+    ("behavior", "analyze"): _behavior_analyze,
+    ("behavior", "characterization"): _behavior_characterization,
+    ("behavior", "ssm-fit"): _behavior_ssm_fit,
+    ("behavior", "ssm-evaluate"): _behavior_ssm_evaluate,
+    ("behavior", "ssm-evaluate-aggregate"): _behavior_ssm_evaluate_aggregate,
+    ("behavior", "ssm-aggregate"): _behavior_ssm_aggregate,
+    ("behavior", "ssm-recovery"): _behavior_ssm_recovery,
+    ("behavior", "ssm-recovery-aggregate"): _behavior_ssm_recovery_aggregate,
+    ("behavior", "ssm-robustness"): _behavior_ssm_robustness,
+    ("behavior", "ssm-robustness-aggregate"): _behavior_ssm_robustness_aggregate,
+    ("behavior", "ssm-exclusion-robustness"): _behavior_ssm_exclusion_robustness,
+    ("behavior", "ssm-exclusion-robustness-aggregate"): _behavior_ssm_exclusion_robustness_aggregate,
+    ("behavior", "subjects"): _behavior_subjects,
+    ("behavior", "qc"): _behavior_qc,
+    ("meg", "stage-raw"): _meg_stage_raw,
+    ("meg", "apply-raw-staging"): _meg_apply_raw_staging,
+    ("meg", "preprocess"): _meg_preprocess,
+    ("meg", "epoch"): _meg_epoch,
+    ("meg", "source"): _meg_source,
+    ("features", "erp"): _features_erp,
+    ("features", "power"): _features_power,
+    ("features", "spectral"): _features_spectral,
+    ("features", "hilbert"): _features_hilbert,
+    ("features", "pac"): _features_pac,
+    ("features", "connectivity"): _features_connectivity,
+    ("analyze", "statistics"): _analyze_statistics,
+    ("analyze", "lateralization"): _analyze_lateralization,
+    ("analyze", "decoding"): _analyze_decoding,
+    ("analyze", "decomposition"): _analyze_decomposition,
+    ("analyze", "spatial-decoding"): _analyze_spatial_decoding,
+    ("report", "behavior"): _report_behavior,
+    ("report", "statistics"): _report_statistics,
+    ("report", "connectivity"): _report_connectivity,
+    ("report", "seed-connectivity"): _report_seed_connectivity,
+    ("report", "decoding-onset"): _report_decoding_onset,
+    ("report", "spatial-decoding"): _report_spatial_decoding,
+    ("report", "pca-trajectory"): _report_pca_trajectory,
+    ("report", "pca-timecourse"): _report_pca_timecourse,
+    ("report", "pca-variance"): _report_pca_variance,
+    ("report", "pca-heatmap"): _report_pca_heatmap,
+    ("report", "pca-loadings"): _report_pca_loadings,
+    ("report", "dpca"): _report_dpca,
+    ("validate", "golden"): _validate_golden,
+}
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     """Execute one workflow command."""
     parser = build_parser()
     args = parser.parse_args(argv)
+    command = getattr(args, _COMMAND_DEST[args.domain])
     try:
         project = _project_from_args(args)
-        if args.domain == "behavior" and args.behavior_command == "ingest":
-            from meg_tokens.workflows.behavior_ingest import ingest_behavior
-
-            result = ingest_behavior(
-                project,
-                subjects=args.subjects,
-                dry_run=args.dry_run,
-            )
-        elif args.domain == "behavior" and args.behavior_command == "analyze":
-            from meg_tokens.workflows.behavior_analysis import analyze_behavior
-
-            result = analyze_behavior(project, subjects=args.subjects)
-        elif args.domain == "behavior" and args.behavior_command == "characterization":
-            from meg_tokens.workflows.behavior_characterization import (
-                analyze_behavior_characterization,
-            )
-
-            result = analyze_behavior_characterization(
-                project,
-                subjects=args.subjects,
-                neural_metrics_path=args.neural_metrics,
-            )
-        elif args.domain == "behavior" and args.behavior_command == "ssm-fit":
-            from meg_tokens.workflows.sequential_sampling import (
-                fit_subject_sequential_sampling,
-            )
-            from meg_tokens.behavior.analyses.sequential_sampling import (
-                MECHANISTIC_MODELS,
-            )
-
-            result = fit_subject_sequential_sampling(
-                project,
-                subjects=args.subjects,
-                n_jobs=args.n_jobs,
-                models=MECHANISTIC_MODELS,
-                n_starts=args.n_starts,
-            )
-        elif args.domain == "behavior" and args.behavior_command == "ssm-evaluate":
-            from meg_tokens.workflows.sequential_sampling import evaluate_thura2012
-
-            result = evaluate_thura2012(
-                project,
-                subjects=args.subjects,
-                folds=args.folds,
-                n_starts=args.n_starts,
-                recovery_repetitions=args.recovery_repetitions,
-            )
-        elif args.domain == "behavior" and args.behavior_command == "ssm-evaluate-aggregate":
-            from meg_tokens.workflows.sequential_sampling import aggregate_mechanistic_evaluation
-
-            result = aggregate_mechanistic_evaluation(project, folds=args.folds)
-        elif args.domain == "behavior" and args.behavior_command == "ssm-aggregate":
-            from meg_tokens.workflows.sequential_sampling import aggregate_mechanistic_fits
-
-            result = aggregate_mechanistic_fits(project)
-        elif args.domain == "behavior" and args.behavior_command == "ssm-recovery":
-            from meg_tokens.workflows.sequential_sampling import run_recovery_stage
-
-            result = run_recovery_stage(
-                project,
-                repetitions=args.repetitions,
-                n_starts=args.n_starts,
-                repetition_index=args.repetition_index,
-            )
-        elif args.domain == "behavior" and args.behavior_command == "ssm-recovery-aggregate":
-            from meg_tokens.workflows.sequential_sampling import aggregate_recovery_stage
-
-            result = aggregate_recovery_stage(project, repetitions=args.repetitions)
-        elif args.domain == "behavior" and args.behavior_command == "ssm-robustness":
-            from meg_tokens.workflows.sequential_sampling import run_robustness_stage
-
-            result = run_robustness_stage(
-                project,
-                subject=args.subjects[0] if args.subjects else None,
-                configuration=args.configuration,
-                n_jobs=args.n_jobs,
-                n_starts=args.n_starts,
-            )
-        elif args.domain == "behavior" and args.behavior_command == "ssm-robustness-aggregate":
-            from meg_tokens.workflows.sequential_sampling import aggregate_robustness_stage
-
-            result = aggregate_robustness_stage(project)
-        elif args.domain == "behavior" and args.behavior_command == "ssm-exclusion-robustness":
-            from meg_tokens.workflows.sequential_sampling import run_exclusion_robustness_stage
-
-            result = run_exclusion_robustness_stage(
-                project,
-                subject=args.subjects[0] if args.subjects else None,
-                rule=args.rule,
-                n_jobs=args.n_jobs,
-                n_starts=args.n_starts,
-            )
-        elif args.domain == "behavior" and args.behavior_command == "ssm-exclusion-robustness-aggregate":
-            from meg_tokens.workflows.sequential_sampling import aggregate_exclusion_robustness_stage
-
-            result = aggregate_exclusion_robustness_stage(project)
-        elif args.domain == "behavior" and args.behavior_command == "subjects":
-            from meg_tokens.workflows.sequential_sampling import _selected_features
-
-            _, _, subjects, _ = _selected_features(project, None)
-            for subject in subjects:
-                print(subject)
-            return 0
-        elif args.domain == "behavior" and args.behavior_command == "qc":
-            from meg_tokens.validation import run_spd_validation
-
-            summary, details = run_spd_validation(
-                project.behavior_root,
-                ignore_files=project.behavior_ignore_files,
-            )
-            print(summary.to_string(index=False))
-            print(f"Validated trials: {len(details)}")
-            return 0
-        elif args.domain == "meg" and args.meg_command == "stage-raw":
-            from meg_tokens.workflows.raw_staging import plan_raw_staging
-
-            result = plan_raw_staging(project, subjects=args.subjects)
-            for subject, counts in result.settings["summary_by_subject"].items():
-                counts_text = ", ".join(f"{action}={count}" for action, count in sorted(counts.items()))
-                print(f"{subject}: {counts_text}")
-            review_rows = result.settings["review_rows"]
-            if review_rows:
-                print(f"\n{len(review_rows)} row(s) need review before applying:")
-                for row in review_rows:
-                    reason = row["note"] or (
-                        f"{row['count_agreement']} (MEG start pulses={row['meg_start_pulse_count']}, "
-                        f"behavior trials={row['behavior_trial_count']})"
-                    )
-                    print(f"  {row['subject']} {row['kind']} {row['condition']} {row['run']}: {reason}")
-            print(f"\nManifest: {result.outputs[0]}")
-            print("Review flagged rows, then run `meg-tokens meg apply-raw-staging`.")
-            return 0
-        elif args.domain == "meg" and args.meg_command == "apply-raw-staging":
-            from meg_tokens.workflows.raw_staging import apply_raw_staging
-
-            result = apply_raw_staging(
-                project,
-                manifest_path=args.manifest,
-                subjects=args.subjects,
-            )
-        elif args.domain == "meg" and args.meg_command == "preprocess":
-            from meg_tokens.workflows.preprocessing import preprocess_run
-
-            result = preprocess_run(
-                project,
-                RunSpec(
-                    subject=args.subject,
-                    run=args.run,
-                    condition=args.condition,
-                ),
-                raw_path=args.raw_path,
-                settings=PreprocessingConfig(
-                    high_pass=args.high_pass,
-                    low_pass=args.low_pass,
-                    notch_freqs=tuple(args.notch_freqs) if args.notch_freqs else None,
-                    run_ica=args.run_ica,
-                    ica_exclude=tuple(args.ica_exclude) if args.ica_exclude is not None else None,
-                ),
-            )
-        elif args.domain == "meg" and args.meg_command == "epoch":
-            from meg_tokens.workflows.preprocessing import epoch_subjects
-
-            result = epoch_subjects(
-                project,
-                subjects=args.subjects,
-                settings=EpochingConfig(
-                    tmin=args.tmin,
-                    tmax=args.tmax,
-                    alignment=args.alignment,
-                ),
-                raw_root=args.raw_root,
-                behavior_root=args.behavior_root,
-            )
-        elif args.domain == "meg" and args.meg_command == "source":
-            from meg_tokens.workflows.sources import reconstruct_sources
-
-            result = reconstruct_sources(
-                project,
-                subjects=args.subjects,
-                settings=SourceConfig(
-                    stages=tuple(args.stages),
-                    spacing=args.spacing,
-                    volume_labels=tuple(args.volume_labels) if args.volume_labels else None,
-                    volume_pos=args.volume_pos,
-                    run=args.run,
-                    condition=args.condition,
-                    alignment=args.alignment,
-                    method=args.method,
-                    snr=args.snr,
-                ),
-                epochs_root=args.epochs_root,
-            )
-        elif args.domain == "features" and args.feature_command == "erp":
-            from meg_tokens.workflows.erp import extract_erp_features
-
-            result = extract_erp_features(
-                project,
-                subjects=args.subjects,
-                settings=ERPConfig(
-                    run=args.run,
-                    condition=args.condition,
-                    alignment=args.alignment,
-                    source_method=args.source_method,
-                    parc=args.parc,
-                    feature_space=args.feature_space,
-                    hemi=args.hemi,
-                    label_subject=args.label_subject,
-                    spacing=args.spacing,
-                    label_mode=args.label_mode,
-                    max_duration_samples=args.max_duration_samples,
-                    cutoff_before_enter_ms=args.cutoff_before_enter_ms,
-                    min_rt_ms=args.min_rt_ms,
-                ),
-                source_root=args.source_root,
-                behavior_root=args.behavior_root,
-            )
-        elif args.domain == "features" and args.feature_command == "power":
-            from meg_tokens.workflows.power import extract_power_features, parse_frequency_bands
-
-            parsed_bands = parse_frequency_bands(args.bands) if args.bands else None
-            result = extract_power_features(
-                project,
-                subjects=args.subjects,
-                settings=PowerConfig(
-                    run=args.run,
-                    condition=args.condition,
-                    alignment=args.alignment,
-                    source_method=args.source_method,
-                    method=args.method,
-                    bands=(
-                        tuple((name, bounds[0], bounds[1]) for name, bounds in parsed_bands.items())
-                        if parsed_bands
-                        else None
-                    ),
-                    width=args.width,
-                    step=args.step,
-                    baseline=tuple(args.baseline) if args.baseline else None,
-                    baseline_method=args.baseline_method,
-                    n_jobs=args.n_jobs,
-                ),
-                source_root=args.source_root,
-            )
-        elif args.domain == "features" and args.feature_command == "spectral":
-            from meg_tokens.workflows.spectral import extract_spectral_features
-
-            result = extract_spectral_features(
-                project,
-                subjects=args.subjects,
-                settings=SpectralConfig(
-                    run=args.run,
-                    condition=args.condition,
-                    alignment=args.alignment,
-                    method=args.method,
-                    fmin=args.fmin,
-                    fmax=args.fmax,
-                    n_fft=args.n_fft,
-                    n_overlap=args.n_overlap,
-                    n_jobs=args.n_jobs,
-                    fit_model=not args.no_specparam,
-                ),
-                epochs_root=args.epochs_root,
-            )
-        elif args.domain == "features" and args.feature_command == "hilbert":
-            from meg_tokens.features.time_frequency import parse_frequency_bands
-            from meg_tokens.workflows.hilbert import extract_hilbert_features
-
-            parsed_bands = parse_frequency_bands(args.bands) if args.bands else None
-            result = extract_hilbert_features(
-                project,
-                subjects=args.subjects,
-                settings=HilbertConfig(
-                    conditions=tuple(args.conditions),
-                    alignment=args.alignment,
-                    source_method=args.source_method,
-                    parc=args.parc,
-                    labels=tuple(args.labels) if args.labels else None,
-                    bands=(
-                        tuple((name, bounds[0], bounds[1]) for name, bounds in parsed_bands.items())
-                        if parsed_bands
-                        else None
-                    ),
-                    features=tuple(args.feature_types),
-                    sfreq=args.sfreq,
-                    n_jobs=args.n_jobs,
-                ),
-                feature_root=args.feature_root,
-            )
-        elif args.domain == "features" and args.feature_command == "pac":
-            from meg_tokens.workflows.pac import extract_pac_features
-
-            result = extract_pac_features(
-                project,
-                subjects=args.subjects,
-                settings=PACConfig(
-                    conditions=tuple(args.conditions),
-                    phase_bands=tuple(args.phase_bands),
-                    amplitude_bands=tuple(args.amplitude_bands),
-                    alignment=args.alignment,
-                    source_method=args.source_method,
-                    parc=args.parc,
-                    n_bins=args.n_bins,
-                    time_window=tuple(args.time_window) if args.time_window else None,
-                ),
-                feature_root=args.feature_root,
-            )
-        elif args.domain == "features" and args.feature_command == "connectivity":
-            from meg_tokens.workflows.connectivity import _parse_bands, extract_connectivity_features
-
-            names, lower, upper = _parse_bands(args.bands)
-            result = extract_connectivity_features(
-                project,
-                subjects=args.subjects,
-                settings=ConnectivityConfig(
-                    conditions=tuple(args.conditions),
-                    alignment=args.alignment,
-                    source_method=args.source_method,
-                    parc=args.parc,
-                    labels=tuple(args.labels) if args.labels else None,
-                    bands=tuple(zip(names, lower, upper)),
-                    method=args.method,
-                    mode=args.mode,
-                    sfreq=args.sfreq,
-                    before_window=tuple(args.before_window),
-                    after_window=tuple(args.after_window),
-                    n_jobs=args.n_jobs,
-                ),
-                feature_root=args.feature_root,
-            )
-        elif args.domain == "analyze" and args.analysis_command == "statistics":
-            from meg_tokens.workflows.statistics import run_group_statistics
-
-            result = run_group_statistics(
-                project,
-                subjects=args.subjects,
-                settings=StatisticsConfig(
-                    conditions=tuple(args.conditions),
-                    alignment=args.alignment,
-                    source_method=args.source_method,
-                    parc=args.parc,
-                    runs_condition_1=tuple(args.runs_condition_1) if args.runs_condition_1 else None,
-                    runs_condition_2=tuple(args.runs_condition_2) if args.runs_condition_2 else None,
-                    permutations=args.permutations,
-                    alpha=args.alpha,
-                    tail=args.tail,
-                    n_jobs=args.n_jobs,
-                ),
-                feature_root=args.feature_root,
-            )
-        elif args.domain == "analyze" and args.analysis_command == "lateralization":
-            from meg_tokens.workflows.statistics import run_lateralized_statistics
-
-            result = run_lateralized_statistics(
-                project,
-                subjects=args.subjects,
-                settings=LateralizedStatisticsConfig(
-                    condition=args.condition,
-                    alignment=args.alignment,
-                    source_method=args.source_method,
-                    parc=args.parc,
-                    runs=tuple(args.runs) if args.runs else None,
-                    permutations=args.permutations,
-                    alpha=args.alpha,
-                    tail=args.tail,
-                    n_jobs=args.n_jobs,
-                ),
-                feature_root=args.feature_root,
-            )
-        elif args.domain == "analyze" and args.analysis_command == "decoding":
-            from meg_tokens.workflows.decoding import run_decoding
-
-            result = run_decoding(
-                project,
-                subjects=args.subjects,
-                settings=DecodingConfig(
-                    conditions=tuple(args.conditions),
-                    input_conditions=tuple(args.input_conditions) if args.input_conditions else None,
-                    feature_source=args.feature_source,
-                    alignment=args.alignment,
-                    source_method=args.source_method,
-                    parc=args.parc,
-                    band=args.band,
-                    power_method=args.power_method,
-                    runs=tuple(args.runs) if args.runs else None,
-                    labels=tuple(args.labels) if args.labels else None,
-                    lateralize=args.lateralize,
-                    class_column=args.class_column,
-                    class_values=tuple(args.class_values) if args.class_values else None,
-                    permutations=args.permutations,
-                    n_jobs=args.n_jobs,
-                ),
-                feature_root=args.feature_root,
-            )
-        elif args.domain == "analyze" and args.analysis_command == "decomposition":
-            from meg_tokens.workflows.decomposition import run_decomposition
-
-            result = run_decomposition(
-                project,
-                subjects=args.subjects,
-                settings=DecompositionConfig(
-                    conditions=tuple(args.conditions),
-                    analysis=args.analysis,
-                    feature_source=args.feature_source,
-                    alignment=args.alignment,
-                    source_method=args.source_method,
-                    parc=args.parc,
-                    band=args.band,
-                    power_method=args.power_method,
-                    labels=tuple(args.labels) if args.labels else None,
-                    lateralize=args.lateralize,
-                    average_unit=args.average_unit,
-                    transform=args.transform,
-                    n_components=args.n_components,
-                    min_variance=args.min_variance,
-                    fit_time_range=tuple(args.fit_time_range) if args.fit_time_range else None,
-                    project_centered=args.project_centered,
-                    marginalize_cols=tuple(args.marginalize_cols) if args.marginalize_cols else None,
-                    dpca_labels=args.dpca_labels,
-                ),
-                feature_root=args.feature_root,
-            )
-        elif args.domain == "analyze" and args.analysis_command == "spatial-decoding":
-            from meg_tokens.workflows.spatial_decoding import run_spatial_decoding
-
-            result = run_spatial_decoding(
-                project,
-                settings=SpatialDecodingConfig(
-                    conditions=tuple(args.conditions),
-                    permutations=args.permutations,
-                    n_jobs=args.n_jobs,
-                ),
-                data_dir=args.data_dir,
-                output_root=args.output_root,
-            )
-        elif args.domain == "report" and args.report_command == "behavior":
-            from meg_tokens.reports.behavior_summary import (
-                list_behavior_figures,
-                run_behavior_plotting,
-            )
-
-            if args.list_figures:
-                result = [
-                    f"{spec.key}  [{', '.join(spec.groups)}]  "
-                    f"requires: {', '.join(spec.requires)}  -- {spec.title}"
-                    for spec in list_behavior_figures()
-                ]
-            else:
-                result = run_behavior_plotting(
-                    str(args.behavior_root or project.bids_root),
-                    str(args.output_root or project.bids_root),
-                    subjects_list=args.subjects,
-                    figures=tuple(args.figures),
-                    formats=tuple(args.formats),
-                    skip_missing=args.skip_missing,
-                )
-        elif args.domain == "report" and args.report_command == "statistics":
-            from meg_tokens.reports.statistics import run_group_statistics_plotting
-
-            result = run_group_statistics_plotting(
-                str(args.stats_root or project.bids_root),
-                str(args.output_root or project.bids_root),
-                conditions=args.conditions,
-                align_to=args.alignment,
-                source_method=args.source_method,
-                parc=args.parc,
-                labels=args.labels,
-                top_n=args.top_n,
-                alpha=args.alpha,
-                peak_mode=args.peak_mode,
-                behavior_dir=(
-                    str(args.behavior_root or project.bids_root)
-                    if args.correlate_behavior
-                    else None
-                ),
-                correlate_behavior=args.correlate_behavior,
-            )
-        elif args.domain == "report" and args.report_command == "connectivity":
-            from meg_tokens.reports.connectivity import run_batch_plot_connectivity_circle
-
-            result = run_batch_plot_connectivity_circle(
-                str(args.feature_root or project.bids_root),
-                str(args.output_root or project.bids_root),
-                args.condition,
-                band=args.band,
-                p_threshold=args.p_threshold,
-                n_permutations=args.permutations,
-                node_names_path=args.node_names,
-            )
-        elif args.domain == "report" and args.report_command == "seed-connectivity":
-            from meg_tokens.reports.seed_connectivity import run_batch_plot_seed_connectivity
-
-            result = run_batch_plot_seed_connectivity(
-                str(args.feature_root or project.bids_root),
-                str(args.output_root or project.bids_root),
-                args.condition,
-                args.seed_roi,
-                band=args.band,
-                p_threshold=args.p_threshold,
-                n_permutations=args.permutations,
-                node_names_path=args.node_names,
-            )
-        elif args.domain == "report" and args.report_command == "decoding-onset":
-            from meg_tokens.reports.decoding import run_batch_plot_decoding_onset
-
-            result = run_batch_plot_decoding_onset(
-                args.scores,
-                args.thresholds,
-                args.names,
-                str(args.output_root or project.bids_root),
-                time_offset=args.time_offset,
-                time_step=args.time_step,
-            )
-        elif args.domain == "report" and args.report_command == "spatial-decoding":
-            from meg_tokens.reports.spatial_decoding import plot_spatial_decoding_topomap
-
-            result = plot_spatial_decoding_topomap(
-                args.score_path,
-                args.info_fif,
-                str(args.output_root or project.bids_root),
-            )
-        elif args.domain == "report" and args.report_command == "pca-trajectory":
-            from meg_tokens.reports.decomposition.trajectory import run_batch_plot_pca_trajectory
-
-            result = run_batch_plot_pca_trajectory(
-                args.timecourse_path,
-                str(args.output_root or project.bids_root),
-                args.conditions,
-                args.components,
-            )
-        elif args.domain == "report" and args.report_command == "pca-timecourse":
-            from meg_tokens.reports.decomposition.timecourse import run_batch_plot_component_timecourse
-
-            result = run_batch_plot_component_timecourse(
-                args.timecourse_path,
-                str(args.output_root or project.bids_root),
-                args.components,
-                args.conditions,
-            )
-        elif args.domain == "report" and args.report_command == "pca-variance":
-            from meg_tokens.reports.decomposition.variance import run_batch_plot_pca_variance
-
-            result = run_batch_plot_pca_variance(
-                args.variance_path,
-                str(args.output_root or project.bids_root),
-            )
-        elif args.domain == "report" and args.report_command == "pca-heatmap":
-            from meg_tokens.reports.decomposition.heatmap import run_batch_plot_pca_heatmap
-
-            result = run_batch_plot_pca_heatmap(
-                args.data_path,
-                str(args.output_root or project.bids_root),
-                args.rois,
-            )
-        elif args.domain == "report" and args.report_command == "pca-loadings":
-            from meg_tokens.reports.decomposition.loadings import run_batch_plot_pca_loadings
-
-            result = run_batch_plot_pca_loadings(
-                args.loadings_path,
-                str(args.output_root or project.bids_root),
-                args.subjects_dir or (
-                    str(project.subjects_dir) if project.subjects_dir else None
-                ),
-                args.threshold_percentile,
-                args.export_csv,
-                args.save_movie,
-                args.vertices_path,
-                args.volume,
-            )
-        elif args.domain == "report" and args.report_command == "dpca":
-            from meg_tokens.reports.decomposition.dpca import run_batch_plot_dpca
-
-            result = run_batch_plot_dpca(
-                component_paths=args.component_paths,
-                dpca_dir=args.dpca_root,
-                output_dir=str(args.output_root or project.bids_root),
-                n_components_to_plot=args.n_components,
-            )
-        elif args.domain == "validate" and args.validation_command == "golden":
-            from meg_tokens.validation import run_golden_validation
-
-            result = run_golden_validation(
-                args.comparison_config,
-                out_tsv=args.out_tsv,
-            )
-            failed = result[result["status"] != "pass"]
-            print(f"Comparisons: {len(result)}; failed: {len(failed)}")
-            if len(failed) and not args.allow_failures:
-                names = ", ".join(failed["name"].astype(str).tolist())
-                raise SystemExit(f"Golden validation failed for: {names}")
-            print(args.out_tsv)
-            return 0
-        else:  # pragma: no cover - argparse enforces the command tree
-            parser.error("Unknown command")
+        result = _HANDLERS[(args.domain, command)](project, args)
     except (FileNotFoundError, ValueError) as error:
         parser.error(str(error))
 
