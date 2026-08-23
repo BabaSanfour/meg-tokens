@@ -400,11 +400,6 @@ def run_psd_specparam(
     return outputs
 
 
-def run_psd_fooof(*args, **kwargs):
-    """Compatibility alias for the modern PSD/specparam runner."""
-    return run_psd_specparam(*args, **kwargs)
-
-
 def extract_spectral_features(
     project: ProjectConfig,
     *,

@@ -298,11 +298,6 @@ def parse_single_trial(events_str: str) -> dict:
 def parse_tdms_file(file_path: str) -> pd.DataFrame:
     """Parse and validate every trial in one behavioral TDMS file.
 
-    Parameters
-    ----------
-    file_path
-        Path to the source TDMS file.
-
     Returns
     -------
     pandas.DataFrame

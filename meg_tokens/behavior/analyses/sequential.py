@@ -400,11 +400,6 @@ def choice_history(features: pd.DataFrame) -> pd.DataFrame:
 def choice_history_statistics(subject_table: pd.DataFrame) -> pd.DataFrame:
     """Run fixed group contrasts on subject-level choice-history measures.
 
-    Parameters
-    ----------
-    subject_table
-        Output of :func:`choice_history`.
-
     Returns
     -------
     pandas.DataFrame

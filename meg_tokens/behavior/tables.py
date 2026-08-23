@@ -69,11 +69,6 @@ def add_run_metadata(
 def read_behavior_table(path: str | Path) -> pd.DataFrame:
     """Load one Stage 1 behavioral derivative under the strict schema.
 
-    Parameters
-    ----------
-    path
-        TSV derivative path.
-
     Returns
     -------
     pandas.DataFrame
@@ -114,11 +109,6 @@ def read_raw_behavior_table(path: str | Path) -> pd.DataFrame:
 
 def read_trial_features(path: str | Path) -> pd.DataFrame:
     """Load the canonical analysis-ready trial-feature derivative.
-
-    Parameters
-    ----------
-    path
-        TSV derivative path.
 
     Returns
     -------

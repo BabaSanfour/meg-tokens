@@ -179,41 +179,6 @@ def format_stat(
     return ", ".join(parts)
 
 
-def annotate_contrast(
-    ax: Axes,
-    *,
-    x_a: float,
-    x_b: float,
-    y: float,
-    result: StatResult,
-    unit: str = "",
-    show_text: bool = True,
-) -> None:
-    """Significance bracket between two x positions: marker plus optional stat text."""
-    ax.plot([x_a, x_a, x_b, x_b], [y * 0.98, y, y, y * 0.98], color=style.INK, linewidth=0.8)
-    marker = significance_marker(result.p)
-    label = marker if marker not in ("", "n.s.") else "n.s."
-    ax.text(
-        (x_a + x_b) / 2,
-        y,
-        label,
-        ha="center",
-        va="bottom",
-        color=style.INK,
-        fontsize=style.SIGNIFICANCE_PT,
-    )
-    if show_text:
-        ax.text(
-            (x_a + x_b) / 2,
-            y * 1.02,
-            format_stat(result, unit=unit, include_effect_size=False),
-            ha="center",
-            va="bottom",
-            color=style.INK_SECONDARY,
-            fontsize=style.ANNOTATION_PT,
-        )
-
-
 def annotate_stat_block(
     ax: Axes, *, lines: Sequence[str], loc: str = "upper left", y: float | None = None
 ) -> None:

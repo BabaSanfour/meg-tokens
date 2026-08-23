@@ -335,67 +335,6 @@ def confidence_interval_from_t(
     return estimate - half_width, estimate + half_width
 
 
-def equivalence_bound_from_summary(
-    estimate: float,
-    df: float,
-    *,
-    standard_error: float | None = None,
-    t_statistic: float | None = None,
-    coverage: float = 0.90,
-) -> float:
-    """The equivalence bound for a contrast already summarized in a row.
-
-    Parameters
-    ----------
-    estimate
-        The mean difference.
-    df
-        Degrees of freedom of the test on it.
-    standard_error
-        Its standard error, when the row carries one.
-    t_statistic
-        The t statistic testing it against zero. Used when no standard error
-        is given -- which is the common case for a *paired* contrast, whose
-        rows carry ``sem_a`` and ``sem_b`` per condition but no paired
-        ``sem``: that error term depends on the within-subject covariance and
-        is not recoverable from the two condition standard errors. It is
-        recoverable from the t statistic the test itself reported.
-    coverage
-        Two-sided coverage the bound is read off. Defaults to 0.90, the
-        interval a TOST at ``alpha = .05`` uses.
-
-    Returns
-    -------
-    float
-        The smallest effect the contrast rules out, or NaN when the interval
-        is not recoverable.
-
-    Notes
-    -----
-    Same rule as :func:`equivalence_bound` -- the furthest endpoint of the
-    interval -- for the case where the subject-level differences are no longer
-    at hand but a persisted row summarizes them. A figure arguing from a null
-    needs the bound and usually has only the row; without this it either
-    re-derives the rule inline or prints "n.s.", and both are how a null
-    quietly becomes a claim. The standardized companion is not returned,
-    because the differences' own standard deviation is not recoverable from a
-    summary row.
-    """
-    if standard_error is not None and np.isfinite(standard_error):
-        low, high = confidence_interval(
-            estimate, standard_error, df, coverage=coverage
-        )
-    elif t_statistic is not None:
-        low, high = confidence_interval_from_t(
-            estimate, t_statistic, df, coverage=coverage
-        )
-    else:
-        return float("nan")
-    if not np.isfinite(low) or not np.isfinite(high):
-        return float("nan")
-    return max(abs(low), abs(high))
-
-
 def subject_bootstrap(
     statistic,
     n_subjects: int,

@@ -521,24 +521,3 @@ def fit_specparam(
         model.input_shape = leading_shape
         return model
     raise ValueError("spectra must be 1D, 2D, or 3D")
-
-
-def fit_fooof(
-    freqs: np.ndarray,
-    spectra: np.ndarray,
-    peak_width_limits: tuple[float, float] = (1.0, 10.0),
-    min_peak_height: float = 0.1,
-    max_n_peaks: int = 6,
-    peak_threshold: float = 2.0,
-    freq_range: tuple[float, float] | None = None,
-):
-    """Compatibility wrapper around :func:`fit_specparam`."""
-    return fit_specparam(
-        freqs,
-        spectra,
-        peak_width_limits=peak_width_limits,
-        min_peak_height=min_peak_height,
-        max_n_peaks=max_n_peaks,
-        peak_threshold=peak_threshold,
-        freq_range=freq_range,
-    )
