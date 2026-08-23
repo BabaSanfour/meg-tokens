@@ -96,8 +96,10 @@ Two traps worth stating plainly:
 
 **Never use a deleting rsync, `git reset`, or a force-overwrite against either
 checkout.** Inspect both local and remote `git status` first — the cluster
-carries its own untracked `logs/`, `scripts/render_figs.sh` and
-`scripts/rerun_behavior.sh`, and losing those costs a re-derivation.
+carries its own untracked `logs/`, and losing those costs a re-derivation.
+(`scripts/render_figs.sh` and `scripts/rerun_behavior.sh` used to be cluster-only;
+they are tracked now, as `scripts/behavior_report.sh` and
+`scripts/behavior_analyze.sh`.)
 
 ### Where each stage runs
 
@@ -115,6 +117,32 @@ carries its own untracked `logs/`, `scripts/render_figs.sh` and
 them back, so the run order between the two is free. A characterization-only
 run produces no `ssm*` group table, so the model-comparison figures need
 `ssm-fit` and `ssm-aggregate` to have run first.
+
+Recovery is the exception to "copy the group derivatives down and re-run
+locally". `ssm-recovery-aggregate` merges twelve repetition-scoped tables that
+only the cluster array writes, and merging a *partial* or *stale* set silently
+replaces the published `ssmparameterrecovery` / `ssmmodelrecovery` tables — and
+therefore F15 — with results from a different simulation. The desktop
+deliberately keeps only the merged tables, so the command fails naming the
+missing repetition instead of producing a plausible wrong answer. Run the merge
+where the repetitions are.
+
+### Proving a refactor changed nothing
+
+The behavioral stages re-run end to end on the real data in about two minutes,
+so a change to them can be *measured* rather than argued:
+
+```bash
+python -m scripts.equivalence.harness prepare        # copy the fixed inputs once
+python -m scripts.equivalence.harness run baseline   # before the change
+python -m scripts.equivalence.harness run candidate  # after it
+python -m scripts.equivalence.harness compare baseline candidate
+```
+
+It diffs every derivative table, every figure PNG (rendering is deterministic,
+so they compare byte for byte) and every sidecar. It does not cover the
+per-subject model fitting or the recovery merge, whose outputs it consumes;
+those still have to be verified on the cluster.
 
 ### Verifying the write-up against the derivatives
 
