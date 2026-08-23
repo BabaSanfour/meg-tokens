@@ -4,14 +4,14 @@
 # unique derivative. The audit records whether the two source masks are equal.
 
 #SBATCH --account=rrg-kjerbi_cpu
-#SBATCH --job-name=meg-thura12-excl
+#SBATCH --job-name=ssm-excl
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=24G
 #SBATCH --time=12:00:00
 #SBATCH --output=logs/thura12-excl-%A_%a.out
 
 set -euo pipefail
-CONFIG="${1:?usage: sbatch --array=0-N scripts/thura2012_exclusion_array.sh <config.toml>}"
+CONFIG="${1:?usage: sbatch --array=0-N scripts/ssm_exclusion_robustness_array.sh <config.toml>}"
 mapfile -t SUBJECTS < <(./.venv/bin/meg-tokens --config "$CONFIG" behavior subjects)
 RULES=(complete_token_log_alignment)
 INDEX="${SLURM_ARRAY_TASK_ID}"

@@ -4,14 +4,14 @@
 # limit and make failed cells independently resubmittable.
 
 #SBATCH --account=rrg-kjerbi_cpu
-#SBATCH --job-name=meg-thura12-robust-array
+#SBATCH --job-name=ssm-robust-array
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=16G
 #SBATCH --time=08:00:00
 #SBATCH --output=logs/thura12-robust-%A_%a.out
 
 set -euo pipefail
-CONFIG="${1:?usage: sbatch --array=0-191%8 scripts/thura2012_robustness_array.sh <config.toml> [n_starts]}"
+CONFIG="${1:?usage: sbatch --array=0-191%8 scripts/ssm_robustness_array.sh <config.toml> [n_starts]}"
 N_STARTS="${2:-1}"
 mapfile -t SUBJECTS < <(./.venv/bin/meg-tokens --config "$CONFIG" behavior subjects)
 CONFIGURATIONS=(baseline tau_100ms tau_300ms solver_20ms post_horizon_evidence_zero expanded_bounds)

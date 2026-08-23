@@ -2,17 +2,17 @@
 # Restartable, repetition-indexed recovery array. Each task writes only
 # ssmparameterrecoveryrepNNN/ssmmodelrecoveryrepNNN and is independent of
 # subject-level fit outputs. Submit, for example:
-#   sbatch --array=0-11%4 scripts/thura2012_recovery_array.sh tokens.toml 12
+#   sbatch --array=0-11%4 scripts/ssm_recovery_array.sh tokens.toml 12
 
 #SBATCH --account=rrg-kjerbi_cpu
-#SBATCH --job-name=meg-thura12-recovery
+#SBATCH --job-name=ssm-recovery
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=24G
 #SBATCH --time=12:00:00
 #SBATCH --output=logs/thura12-recovery-%A_%a.out
 
 set -euo pipefail
-CONFIG="${1:?usage: sbatch --array=0-11%4 scripts/thura2012_recovery_array.sh <config.toml> [repetitions]}"
+CONFIG="${1:?usage: sbatch --array=0-11%4 scripts/ssm_recovery_array.sh <config.toml> [repetitions]}"
 REPETITIONS="${2:-12}"
 if [ "$REPETITIONS" -lt 8 ]; then
     echo "recovery requires at least 8 truth repetitions" >&2

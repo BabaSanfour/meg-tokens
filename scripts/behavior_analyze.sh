@@ -1,10 +1,15 @@
 #!/bin/bash
+# Stage 2 and Stage 2b: rebuild the trial features and the whole
+# characterization battery from the staged behavioral logs.
+#
+#   sbatch scripts/behavior_analyze.sh
+#
 #SBATCH --account=rrg-kjerbi_cpu
-#SBATCH --job-name=behavior_rerun
+#SBATCH --job-name=behavior-analyze
 #SBATCH --time=1:00:00
 #SBATCH --cpus-per-task=2
 #SBATCH --mem=16G
-#SBATCH --output=logs/behavior_rerun_%j.out
+#SBATCH --output=logs/behavior-analyze-%j.out
 set -euo pipefail
 cd "$HOME/meg-tokens"
 echo "node: $(hostname)"

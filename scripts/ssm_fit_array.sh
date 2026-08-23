@@ -1,47 +1,42 @@
 #!/bin/bash
-# Fit the Tier sequential-sampling models as a SLURM array job,
-# one subject per array task.
+# Restartable Slurm array for the complete four-model Thura et al. (2012) fit.
+# Never run this command directly on a login node.
 #
-#   sbatch --array=0-31 scripts/ssm_fit_array.sh tokens.toml
-#   meg-tokens --config tokens.toml behavior characterization   # aggregate
+#   sbatch --array=0-31%8 scripts/ssm_fit_array.sh tokens.toml 3
 #
-# Each task fits one subject and writes one table to
-# derivatives/sub-<ID>/beh/sub-<ID>_task-tokens_desc-ssmcomparison_beh.tsv.
-# Tasks never share an output path, so any one of them can fail and be
-# requeued on its own with --array=<index>.
-#
-# Four CPUs per task. One subject is six independent fits -- three conditions
-# (all, fast, slow) by two models (ddm, urgency) -- but they are very unequal:
-# the urgency fit takes about ten times the integrator's. Wall time is set by
-# the single longest fit, the pooled 'all' urgency cell, so cores past four buy
-# no wall time and only sit idle.
-#
-# Set the --array upper bound from the subject count (zero-indexed):
-#   meg-tokens --config tokens.toml behavior subjects | wc -l
+# Each array task owns one subject's output paths. Requeue a failed task with
+# the same array index; no task writes another subject's files.
 
-#SBATCH --account=rrg-kjerbi
-#SBATCH --job-name=meg-tokens-ssm
-#SBATCH --cpus-per-task=4
-#SBATCH --mem=8G
-#SBATCH --time=01:00:00
-#SBATCH --output=logs/ssm-%A_%a.out
+#SBATCH --account=rrg-kjerbi_cpu
+#SBATCH --job-name=ssm-fit
+#SBATCH --cpus-per-task=8
+#SBATCH --mem=16G
+#SBATCH --time=08:00:00
+#SBATCH --output=logs/thura12-fit-%A_%a.out
 
 set -euo pipefail
 
-CONFIG="${1:?usage: sbatch scripts/ssm_fit_array.sh <config.toml>}"
+CONFIG="${1:?usage: sbatch --array=0-N scripts/ssm_fit_array.sh <config.toml> [n_starts]}"
+N_STARTS="${2:-3}"
+if [ "$N_STARTS" -lt 3 ]; then
+    echo "production mechanistic fit array requires at least three optimizer starts" >&2
+    exit 2
+fi
 
-# The same subject list, in the same order, that the aggregation step expects.
-mapfile -t SUBJECTS < <(meg-tokens --config "$CONFIG" behavior subjects)
-
+mapfile -t SUBJECTS < <(./.venv/bin/meg-tokens --config "$CONFIG" behavior subjects)
 if [ "${SLURM_ARRAY_TASK_ID}" -ge "${#SUBJECTS[@]}" ]; then
-    echo "Array index ${SLURM_ARRAY_TASK_ID} is past the end of the subject list" \
-         "(${#SUBJECTS[@]} subjects)."
+    echo "array index ${SLURM_ARRAY_TASK_ID} outside ${#SUBJECTS[@]} subjects"
     exit 0
 fi
 
 SUBJECT="${SUBJECTS[$SLURM_ARRAY_TASK_ID]}"
-echo "Task ${SLURM_ARRAY_TASK_ID}: fitting ${SUBJECT}"
+echo "started=$(date --iso-8601=seconds) job=${SLURM_JOB_ID} task=${SLURM_ARRAY_TASK_ID} subject=${SUBJECT}"
+echo "commit=$(git rev-parse HEAD) dirty=$(git status --porcelain | tr '\n' ';') host=$(hostname) python=$(./.venv/bin/python --version 2>&1)"
+echo "command=meg-tokens --config ${CONFIG} behavior ssm-fit --subjects ${SUBJECT} --n-starts ${N_STARTS} --n-jobs ${SLURM_CPUS_PER_TASK}"
 
-meg-tokens --config "$CONFIG" behavior ssm-fit \
+./.venv/bin/meg-tokens --config "$CONFIG" behavior ssm-fit \
     --subjects "$SUBJECT" \
-    --n-jobs "${SLURM_CPUS_PER_TASK:-4}"
+    --n-starts "$N_STARTS" \
+    --n-jobs "${SLURM_CPUS_PER_TASK}"
+
+echo "finished=$(date --iso-8601=seconds)"
