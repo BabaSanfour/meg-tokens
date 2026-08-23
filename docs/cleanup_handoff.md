@@ -1,8 +1,10 @@
 # Behavior cleanup — handoff
 
-Working session of 2026-08-23. **Nothing is committed.** The working tree holds
-48 modified/deleted files plus three new untracked paths. Everything below was
-verified before this file was written; the verification commands are in §4.
+Working session of 2026-08-23. **The session is finished and committed** in
+eight commits, `58e4412..d1a3284`, plus the one that carries this rewrite. Every
+commit was checked out in turn and run against the full suite in isolation —
+all nine are green. §2 records what each of the three planned steps turned out
+to be worth; the verification commands are in §4.
 
 ---
 
@@ -31,9 +33,10 @@ It does **not** cover per-subject model fitting (`ssm-fit`, `ssm-evaluate`,
 merge, whose outputs it consumes. Changes to the likelihood, the solver or the
 model set still have to be verified on the cluster.
 
-Current state: **EQUIVALENT**, 590 passed / 29 skipped / 6 failed. All six
-failures are in `tests/test_batch_erp_parcellation.py`, predate this work, and
-are outside behavior scope.
+Current state: **EQUIVALENT**, 513 passed / 27 skipped / 6 failed, and all seven
+`scripts/verify/` scripts pass against the real derivatives. All six failures
+are in `tests/test_batch_erp_parcellation.py`, predate this work, and are
+outside behavior scope.
 
 ---
 
@@ -143,7 +146,8 @@ exists. It now says `--figures all`.
 
 ### 1.6 Test suite trimmed
 
-**875 → 625 collected** (754 → 537 test functions; 15,046 → 13,728 lines).
+**875 → 625 collected** at the point this section was written; the seven files
+of Step 2 took it to **546**. Sixteen files were grouped in all.
 
 Removed outright: 26 tests that hand-listed command names and asserted argparse
 prints `--help`; the N = 28 preprint regression that could never run (it needs
@@ -181,70 +185,104 @@ per assertion, sharing the expensive fixtures, keeping every distinct claim:
   the recovery-merge hazard documented so nobody "fixes" the error by
   restoring the repetition files.
 
-**Net: 48 files changed, 3,160 insertions, 5,610 deletions (−2,450 tracked
-lines), plus three new untracked paths.**
+**Net over the whole session (`554adc5..d1a3284`): 62 files changed, 4,303
+insertions, 6,220 deletions — −1,917 tracked lines. 316 of the insertions are
+this document.**
 
 ---
 
-## 2. Next steps, in priority order
+## 2. How the three planned steps turned out
 
-### Step 1 — Commit the verified state (do this first)
+### Step 1 — Commit the verified state ✅
 
-The tree is verified but bisectable only if it lands in coherent pieces. The
-suggested split, in dependency order:
+Eight commits, `58e4412..d1a3284`. The planned split was seven; two pairs had to
+merge because the *files* do not separate — the fit-array flag fix lives in the
+script that was renamed in the same breath, and the tests for the deleted
+analyses sit in files that were also regrouped. Splitting those would have meant
+hunk surgery producing red intermediate commits, which is worse than a slightly
+coarser history.
 
-1. `fix(behavior): repair the ssm-fit array flag and pin scripts to the CLI` —
-   `scripts/ssm_fit_array.sh`, `tests/test_cluster_scripts.py`
-2. `refactor(behavior): drop fourteen derivatives nothing reads` —
-   `workflows/behavior_characterization.py`, `workflows/sequential_sampling.py`,
-   `analyses/evidence.py`, `analyses/design_effects.py`,
-   `analyses/sequential_sampling.py`, `docs/behavior.md`
-3. `refactor(cli): replace the dispatch chain with a handler table` —
-   `cli/main.py`, `tests/test_cli.py`, minus `tests/reports/test_cli_wiring.py`
-4. `refactor(scripts): name every launcher for the command it submits`
-5. `refactor(behavior): remove dead helpers and signature-restating docstrings`
-6. `test(behavior): group the suites by behaviour rather than by assertion`
-7. `feat(scripts): add the before/after equivalence harness` +
-   `docs: document the harness and the recovery-merge hazard`
+Each commit was then checked out in turn and run against the full suite
+(`git rebase --exec`): 861 → 863 → 730 → 676 → 589 → 589 → 513 → 513 passed,
+**zero failures at any step**. The history bisects.
 
-Also delete branch `worktree-agent-a993d156c19a4c105` once reviewed.
+    58e4412  fix(scripts): repair the ssm-fit array and name every launcher…
+    c9a7aef  refactor(cli): replace the dispatch chain with a handler table
+    b4ce299  refactor(behavior): drop fourteen derivatives nothing reads
+    bf828e3  refactor(behavior): remove dead helpers and signature-restating…
+    9263ab6  test(behavior): group the suites by behaviour rather than by…
+    cfe9b85  feat(scripts): add the before/after equivalence harness
+    73767a5  test(behavior): group the last seven suites by behaviour
+    d1a3284  refactor: finish the source trim — rename the figure battery…
 
-### Step 2 — Finish the test trim (~625 → ~450 collected)
+Still open: delete branch `worktree-agent-a993d156c19a4c105` once reviewed.
 
-Six files have not had the grouping treatment. Same method as §3.
+### Step 2 — Finish the test trim ✅ (625 → 546 collected, not ~450)
 
-| File | tests | lines |
-| :--- | ---: | ---: |
-| `tests/reports/test_remaining_figures.py` | 21 | 473 |
-| `tests/behavior/test_analyses_individual.py` | 26 | 411 |
-| `tests/test_behavior_workflow.py` | 15 | 403 |
-| `tests/behavior/test_classification.py` | 21 | 361 |
-| `tests/behavior/test_analyses_sequential.py` | 20 | 366 |
-| `tests/behavior/test_analyses_performance.py` | 25 | 345 |
-| `tests/behavior/test_analyses_summary.py` | 19 | 218 |
+All seven remaining files were grouped: **147 test functions → 81**, 2,577 →
+2,358 lines. Per-file numbers are in commit `73767a5`.
 
-`tests/reports/factories.py` (638 lines, no tests) is the largest single file
-left and is pure fixture construction — worth a read for redundancy after the
-report tests are grouped, since grouping may strand parts of it.
+The ~450 target was not reached and should not be chased. What is left is not
+scaffolding: the suite is now 546 collected of which 130 are `pytest.raises`
+guards over the LabVIEW-log parsers, and the rest are one test per distinct
+behavioural claim. Going lower means deleting claims.
 
-### Step 3 — Finish the source trim
+`tests/reports/factories.py` was left alone. Grouping the report tests stranded
+nothing — every factory it exports is still called.
 
-Only partly done. What is left, in descending value:
+### Step 3 — Finish the source trim ✅ (two of three items were already empty)
 
-- **Docstring scaffolding.** ~4,500 docstring lines remain in the behavior
-  stack (35% of it). The 25 pure-restatement `Parameters` blocks are gone;
-  `Returns` sections that only name the type (`pandas.DataFrame`) with no
-  content are the same class of thing and were not swept. **Do not touch
-  `Notes` sections** — that is where the scientific reasoning lives, and it is
-  why the pipeline is auditable.
-- **Unreachable defensive branches** inside `sequential_sampling.py` (3,700
-  lines), `evidence.py` (2,030) and `design_effects.py` (1,179). Not yet
-  audited. Note that the 60 `require_columns` calls are *not* this: each names
-  the columns that analysis needs and produces the "re-run `behavior analyze`"
-  message, so they were deliberately kept.
-- **`reports/behavior_summary.py`** is misnamed — it is the figure-battery
-  orchestrator, not a summary report. Renaming touches `cli/main.py` and two
-  test files.
+- **Docstring scaffolding — nothing left of that class.** The behavior stack is
+  11,975 lines with 4,001 docstring lines (33%). Scanned with `ast`: **zero**
+  `Returns` sections name a type without saying something about it, and **zero**
+  `Parameters` blocks restate every annotation — commit `bf828e3` took the last
+  of them. What remains earns its space (`individual_profile` explains which
+  slope becomes which column and that joins never drop subjects). Do not sweep
+  further, and **do not touch `Notes` sections**: that is where the scientific
+  reasoning lives, and it is why the pipeline is auditable.
+- **Defensive branches — audited, nothing dead.** Measured rather than read, with
+  a filtered `sys.settrace` recording every line the real 32-subject pipeline and
+  the whole test suite execute, then subtracted from the statements `ast` says
+  exist:
+
+  | Module | statements | never executed |
+  | :--- | ---: | ---: |
+  | `design_effects.py` | 264 | 5 (2%) |
+  | `evidence.py` | 452 | 9 (2%) |
+  | `sequential_sampling.py` | 1,021 | 258 (25%) |
+
+  The 14 in the two smaller modules are `continue`/`pass` guards, every one of
+  them protecting a cohort shape this dataset does not produce — a subject with
+  no Slow block, a class with no trials, a `sm.Logit` that fails to separate.
+  Removing them turns a skipped row into a `KeyError` on a differently shaped
+  dataset. They stay.
+
+  The 258 in `sequential_sampling.py` are not dead either: they are the
+  cluster-only machinery — `_fit_one`, the Hessian standard errors, the
+  cross-validation, the matched-sequence predictions, the recovery and
+  robustness refits. Neither the harness nor the suite reaches them *by design*
+  (§0). Their coverage lives on the cluster; do not read that 25% as slack.
+
+  The one genuine find: `_population_normal`, 50 lines with no callers, removed
+  in `d1a3284` along with the module's last `scipy.optimize` import.
+- **`reports/behavior_summary.py` renamed** to `reports/behavior_battery.py`,
+  which is what its own docstring calls it. The old name collided with
+  `layout.behavior_summary()`, a different thing entirely (the Stage 1 subject
+  table).
+
+### What is left for a future session
+
+- Delete branch `worktree-agent-a993d156c19a4c105` once reviewed.
+- Four MEG-side functions have no callers anywhere and were left alone as out of
+  scope for a behavior cleanup: `psd_description` (`workflows/spectral.py`),
+  `run_batch_dpca` and two `_*_desc` helpers (`workflows/decomposition.py`),
+  `get_peak_latency` / `get_significance_onset` / `compute_motor_lateralization`
+  (`analysis/statistics.py`), `extract_roi_time_courses`
+  (`features/connectivity.py`), `plot_tfr_spectrogram` / `plot_sensor_topomap`
+  (`reports/meg.py`), `_parse_baseline` (`workflows/power.py`). The equivalence
+  harness cannot vouch for any of these, so they need the MEG stack's own
+  verification before anyone removes them.
+- The 6 `tests/test_batch_erp_parcellation.py` failures. Still a separate job.
 
 ---
 
@@ -275,16 +313,17 @@ fitting layer has, because the harness cannot reach it.
 
 ## 4. Verification commands
 
-Run all four before committing anything. Expected results are stated.
+Run all four before committing anything. Expected results are stated, and are
+what `d1a3284` produces today.
 
 ```bash
-# 1. Test suite — expect 590 passed, 29 skipped, 6 failed.
+# 1. Test suite — expect 513 passed, 27 skipped, 6 failed.
 #    All six failures are pre-existing, in tests/test_batch_erp_parcellation.py.
 python -m pytest -q
 
 # 2. Pipeline equivalence — expect "EQUIVALENT".
 python -m scripts.equivalence.harness run candidate
-python -m scripts.equivalence.harness compare baseline candidate
+python -m scripts.equivalence.harness compare step3_baseline candidate
 
 # 3. The write-up against the real derivatives — expect seven PASS.
 for m in verify_doc verify_act4_doc verify_act5_doc \
@@ -312,5 +351,8 @@ python -m pytest tests/test_cluster_scripts.py -q
   disk. `clear_outputs()` fixes it — do not weaken it.
 - **`--figures all` renders all 18.** Any script or habit that enumerates
   figure keys is working around a problem that no longer exists.
+- **`reports.behavior_battery` is the figure battery; `layout.behavior_summary()`
+  is the Stage 1 subject table.** They were one word apart until `d1a3284`, and
+  the import path is the half that moved.
 - The 6 MEG `erp_parcellation` failures are untouched and out of scope. They
   are a separate job.
