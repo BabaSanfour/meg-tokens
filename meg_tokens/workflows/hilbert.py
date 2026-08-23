@@ -5,8 +5,6 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Mapping, Optional, Sequence
 
-import numpy as np
-
 from meg_tokens.core import (
     HilbertConfig,
     ProjectConfig,

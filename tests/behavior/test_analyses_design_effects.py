@@ -8,6 +8,7 @@ from meg_tokens.behavior.analyses.design_effects import (
     choice_side_statistics,
     choice_side_summary,
     condition_class_cells,
+    condition_class_contrasts,
     condition_class_statistics,
     condition_order_effects,
     condition_order_statistics,
@@ -16,6 +17,8 @@ from meg_tokens.behavior.analyses.design_effects import (
     lapse_summary,
     time_on_task,
     time_on_task_statistics,
+    within_block_decile_profile,
+    within_block_decile_statistics,
 )
 from meg_tokens.behavior.trials import CLASS_NAMES
 
@@ -281,6 +284,323 @@ def test_time_on_task_statistics_test_the_slopes_and_contrast_conditions():
     ].iloc[0]
     assert drift_test["n_subjects"] == 4
     assert drift_test["mean"] < 0
+
+
+def _both_order_groups(n_per_group=5, effect=120.0):
+    """Subjects counterbalanced on which condition they met first.
+
+    `_interleaved_session` always starts on Fast, so it yields a single order
+    group and the between-group tests are skipped entirely. Each subject here
+    carries a different Slow-minus-Fast effect, so the within-group tests have
+    the variance an interval needs.
+    """
+    sessions = []
+    for group_index, first in enumerate(("Fast", "Slow")):
+        second = "Slow" if first == "Fast" else "Fast"
+        for index in range(n_per_group):
+            subject = f"H{group_index * n_per_group + index + 1:02d}"
+            subject_effect = effect + 25.0 * index
+            order = [first] * 2 + [second] * 2
+            sessions.append(
+                trial_features(
+                    subject=[subject] * 4,
+                    condition=order,
+                    run=[1, 1, 2, 2],
+                    run_trial_index=[1, 2, 1, 2],
+                    initial_time_ms=[100, 200, 300, 400],
+                    dt_ms=[
+                        1000.0 + (subject_effect if name == "Slow" else 0.0) + offset
+                        for name, offset in zip(order, (0.0, 10.0, 0.0, 10.0))
+                    ],
+                )
+            )
+    return pd.concat(sessions, ignore_index=True)
+
+
+def test_condition_order_statistics_test_each_group_against_zero():
+    statistics = condition_order_statistics(
+        condition_order_effects(_both_order_groups())
+    )
+    within = statistics.loc[statistics["test"] == "one_sample_vs_zero"]
+
+    # The within-group tests are what counterbalancing has to pass, so they
+    # belong in the derivative rather than being recomputed by the figure.
+    assert len(within) == 2
+    assert set(within["measure"]) == {"slow_minus_fast_dt_ms"}
+    assert within["n_positive"].notna().all()
+    assert (within["ci_low"] < within["mean"]).all()
+    assert (within["mean"] < within["ci_high"]).all()
+
+
+def test_the_between_group_null_is_accompanied_by_a_bound():
+    statistics = condition_order_statistics(
+        condition_order_effects(_both_order_groups())
+    )
+    bound = statistics.loc[statistics["test"] == "welch_bound"]
+
+    assert len(bound) == 1
+    # 90%, deliberately: it is read as a bound on an effect argued to be
+    # absent, so the narrower interval is the stricter claim.
+    assert bound.iloc[0]["coverage"] == pytest.approx(0.90)
+    assert bound.iloc[0]["ci_low"] < bound.iloc[0]["ci_high"]
+
+
+def test_three_different_tests_report_on_the_same_measure():
+    """So a consumer must select on `test`, not on `measure` alone."""
+    statistics = condition_order_statistics(
+        condition_order_effects(_both_order_groups())
+    )
+    rows = statistics.loc[statistics["measure"] == "slow_minus_fast_dt_ms"]
+
+    assert len(rows) == 4
+    assert set(rows["test"]) == {"welch_t_test", "welch_bound", "one_sample_vs_zero"}
+
+
+# --- condition x class contrasts ----------------------------------------------
+
+
+def _scaled_cells(factor=1.20, n_subjects=6, jitter=0.05):
+    """Cells where Slow is ``factor`` times Fast in every class.
+
+    A pure multiplicative condition effect: the stretch factor must recover
+    ``factor`` for all three classes, whatever the class differs by in level.
+
+    ``jitter`` spreads each subject's own factor around ``factor``
+    symmetrically *in log space*, alternating sign, so the geometric mean stays
+    exactly ``factor`` while the log ratios carry real between-subject
+    variance. Without that variance the interval is undefined, which is a
+    property of the fixture rather than of the estimator.
+    """
+    base = {"easy": 800.0, "ambiguous": 1400.0, "misleading": 1200.0}
+    accuracy = {"easy": 0.99, "ambiguous": 0.77, "misleading": 0.37}
+    rows = []
+    for index in range(n_subjects):
+        shift = 20.0 * index
+        subject_factor = factor * np.exp(jitter * (1 if index % 2 == 0 else -1))
+        for class_name, level in base.items():
+            for condition in ("fast", "slow"):
+                rows.append(
+                    {
+                        "subject": f"H{index + 1:02d}",
+                        "condition": condition,
+                        "trial_class_name": class_name,
+                        "mean_dt_ms": (level + shift)
+                        * (subject_factor if condition == "slow" else 1.0),
+                        "accuracy": accuracy[class_name] + 0.005 * index,
+                    }
+                )
+    return pd.DataFrame(rows)
+
+
+def test_a_pure_multiplicative_effect_recovers_one_factor_for_every_class():
+    contrasts = condition_class_contrasts(_scaled_cells(factor=1.20))
+    stretch = contrasts.loc[contrasts["term"] == "stretch_factor"].set_index(
+        "trial_class_name"
+    )
+
+    assert stretch["estimate"].to_numpy() == pytest.approx(1.20)
+    # The additive differences are wildly unequal for the same ratio, which is
+    # exactly why the factor and not the difference is the right summary.
+    additive = contrasts.loc[
+        contrasts["term"] == "additive_difference_ms"
+    ].set_index("trial_class_name")
+    assert additive.loc["easy", "estimate"] < additive.loc["ambiguous", "estimate"]
+
+
+def test_a_pure_multiplicative_effect_still_shows_an_additive_interaction():
+    """Which is exactly why the report tests the interaction on the log scale.
+
+    Every class here stretches by an identical factor, so on the multiplicative
+    reading there is no interaction at all. Measured in milliseconds there
+    plainly is one: classes sitting at different levels move by different
+    amounts. A millisecond-scale interaction test would reject a model that is
+    true by construction.
+    """
+    # jitter=0 so the difference of differences is exact rather than averaged
+    # over per-subject factors; this assertion is about the estimate, and the
+    # interval is exercised by the stretch-factor test above.
+    contrasts = condition_class_contrasts(_scaled_cells(factor=1.20, jitter=0.0))
+    bound = contrasts.loc[contrasts["term"] == "additive_interaction_ms"].iloc[0]
+
+    level_gap = 800.0 - 1200.0
+    assert bound["estimate"] == pytest.approx(level_gap * 0.20, abs=1e-6)
+    assert bound["coverage"] == pytest.approx(0.90)
+
+
+def test_the_stretch_factor_interval_is_reported_on_the_factor_itself():
+    contrasts = condition_class_contrasts(_scaled_cells(factor=1.20))
+    row = contrasts.loc[contrasts["term"] == "stretch_factor"].iloc[0]
+
+    # Back-transformed from log ratios, so the interval brackets the factor
+    # rather than a log value, and is asymmetric about it.
+    assert row["ci_low"] < row["estimate"] < row["ci_high"]
+    assert row["ci_low"] > 0
+
+
+def test_accuracy_is_tested_against_chance_not_zero():
+    contrasts = condition_class_contrasts(_scaled_cells())
+    accuracy = contrasts.loc[contrasts["term"] == "accuracy_vs_chance"].set_index(
+        "trial_class_name"
+    )
+
+    # Misleading sits below .5 and easy far above it, with opposite t signs.
+    assert accuracy.loc["misleading", "estimate"] < 0.5
+    assert accuracy.loc["misleading", "t"] < 0
+    assert accuracy.loc["easy", "t"] > 0
+    # The interval is reported in accuracy units, not as a deviation from .5.
+    assert 0.0 < accuracy.loc["misleading", "ci_low"] < 0.5
+
+
+# --- within-block deciles -----------------------------------------------------
+
+
+def _scheduled_class_session(subject="H01", n_subjects=1, positional_ms=0.0):
+    """Sessions where trial class is confounded with within-block position.
+
+    Each 20-trial block runs easy trials first and ambiguous trials second, and
+    decision time is a pure function of class plus an optional genuine
+    positional term. The observed profile therefore rises even when
+    ``positional_ms`` is zero, and only the class adjustment can tell the two
+    sources apart -- which is the property panel B of F04 rests on.
+    """
+    block_length = 20
+    sessions = []
+    for index in range(n_subjects):
+        name = subject if n_subjects == 1 else f"H{index + 1:02d}"
+        for run in (1, 2):
+            positions = list(range(1, block_length + 1))
+            classes = ["easy"] * 10 + ["ambiguous"] * 10
+            sessions.append(
+                trial_features(
+                    subject=[name] * block_length,
+                    condition=["Fast" if run == 1 else "Slow"] * block_length,
+                    run=[run] * block_length,
+                    run_trial_index=positions,
+                    initial_time_ms=[
+                        100_000 * run + 100 * position for position in positions
+                    ],
+                    trial_class=[1] * 10 + [2] * 10,
+                    trial_class_name=classes,
+                    dt_ms=[
+                        (800.0 if name_ == "easy" else 1200.0)
+                        + positional_ms * position
+                        + 10.0 * index
+                        for name_, position in zip(classes, positions)
+                    ],
+                )
+            )
+    return pd.concat(sessions, ignore_index=True)
+
+
+def test_deciles_are_cut_within_each_block_for_every_condition_subset():
+    profile = within_block_decile_profile(_scheduled_class_session())
+
+    assert set(profile["condition"]) == {"all", "fast", "slow"}
+    for condition in ("all", "fast", "slow"):
+        subset = profile.loc[profile["condition"] == condition]
+        assert sorted(subset["decile"]) == list(range(1, 11))
+    # Each 20-trial block contributes two trials per decile, so the pooled
+    # subset holds four and each condition holds two. Every decile is equally
+    # filled, which is what cutting within the block guarantees.
+    assert set(profile.loc[profile["condition"] == "all", "n_trials"]) == {4}
+    assert set(profile.loc[profile["condition"] == "fast", "n_trials"]) == {2}
+
+
+def test_the_class_adjustment_removes_a_purely_compositional_rise():
+    profile = within_block_decile_profile(_scheduled_class_session())
+    pooled = profile.loc[profile["condition"] == "all"].set_index("decile")
+
+    # Class alone drives decision time here, so the observed profile steps from
+    # the easy level to the ambiguous one ...
+    assert pooled.loc[1, "dt_ms"] == pytest.approx(800.0)
+    assert pooled.loc[10, "dt_ms"] == pytest.approx(1200.0)
+    # ... while the adjusted profile is flat at the subject's grand mean.
+    assert pooled["dt_class_adjusted_ms"].to_numpy() == pytest.approx(1000.0)
+
+
+def test_the_class_adjustment_is_conservative_about_genuine_drift():
+    """Confounded class and position means the adjustment over-corrects.
+
+    Removing per-class means also removes whatever genuine positional drift
+    happens to fall between the classes, because that drift is part of the
+    class means. Here class and position are *perfectly* confounded, so the
+    adjustment is maximally conservative: of a real 90 ms rise it keeps the
+    40 ms falling within a class and attributes the rest to composition.
+
+    The direction is what matters for the report: this estimator can
+    under-state a real positional effect but never over-state one, so the
+    class-adjusted slope is a lower bound and the compositional share of the
+    raw slope is an upper bound.
+    """
+    profile = within_block_decile_profile(
+        _scheduled_class_session(positional_ms=5.0)
+    )
+    pooled = profile.loc[profile["condition"] == "all"].set_index("decile")
+    adjusted = pooled["dt_class_adjusted_ms"]
+    observed = pooled["dt_ms"]
+
+    genuine_rise = 5.0 * 18  # deciles 1 and 10 average positions 1.5 and 19.5
+    assert observed.loc[10] - observed.loc[1] == pytest.approx(400.0 + genuine_rise)
+    surviving = adjusted.loc[10] - adjusted.loc[1]
+    assert 0 < surviving < genuine_rise
+    # Exactly the within-class share: half the block spanned at 5 ms/trial.
+    assert surviving == pytest.approx(5.0 * 8, abs=1e-6)
+
+
+def test_class_composition_is_reported_per_decile():
+    profile = within_block_decile_profile(_scheduled_class_session())
+    pooled = profile.loc[profile["condition"] == "all"].set_index("decile")
+
+    assert pooled.loc[1, "proportion_easy"] == pytest.approx(1.0)
+    assert pooled.loc[10, "proportion_ambiguous"] == pytest.approx(1.0)
+
+
+def test_decile_statistics_separate_observed_and_adjusted_rise():
+    profile = pd.concat(
+        [
+            within_block_decile_profile(
+                _scheduled_class_session(f"H{index:02d}", positional_ms=index)
+            )
+            for index in range(1, 6)
+        ],
+        ignore_index=True,
+    )
+
+    statistics = within_block_decile_statistics(profile)
+    rise = statistics.loc[statistics["term"] == "first_to_last_rise_ms"].set_index(
+        "measure"
+    )
+
+    assert rise.loc["dt_ms", "mean"] > rise.loc["dt_class_adjusted_ms", "mean"]
+    assert rise.loc["dt_ms", "n_subjects"] == 5
+
+
+def test_the_peak_decile_is_descriptive_and_carries_no_test():
+    profile = within_block_decile_profile(_scheduled_class_session(n_subjects=2))
+
+    statistics = within_block_decile_statistics(profile)
+    peaks = statistics.loc[statistics["term"] == "peak_decile"]
+
+    assert set(peaks["test"]) == {"descriptive"}
+    assert peaks["p"].isna().all()
+
+
+def test_per_decile_deviations_carry_a_bonferroni_threshold():
+    profile = pd.concat(
+        [
+            within_block_decile_profile(
+                _scheduled_class_session(f"H{index:02d}", positional_ms=index)
+            )
+            for index in range(1, 6)
+        ],
+        ignore_index=True,
+    )
+
+    statistics = within_block_decile_statistics(profile)
+    deviations = statistics.loc[statistics["term"] == "linear_deviation_ms"]
+
+    assert len(deviations) == 10
+    assert deviations["p_threshold"].to_numpy() == pytest.approx(0.005)
 
 
 # --- condition order ----------------------------------------------------------

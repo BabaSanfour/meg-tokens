@@ -16,7 +16,7 @@ def run_batch_plot_component_timecourse(
     components_to_plot: int = 3,
     conditions: Optional[Sequence[str]] = None,
 ) -> list[str]:
-    print(f"=== Starting Component Timecourse Plotting ===")
+    print("=== Starting Component Timecourse Plotting ===")
     print(f"Loading timecourses from: {timecourse_path}")
     
     output_path = ensure_dir(output_dir)

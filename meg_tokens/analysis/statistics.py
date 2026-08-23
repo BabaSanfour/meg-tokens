@@ -1,8 +1,7 @@
 """Statistical estimators for group and within-subject analyses."""
 
 import numpy as np
-import mne
-from mne.stats import permutation_t_test, spatio_temporal_cluster_1samp_test, spatio_temporal_cluster_test
+from mne.stats import permutation_t_test, spatio_temporal_cluster_1samp_test
 
 def compute_permutation_t_test(
     data: np.ndarray,

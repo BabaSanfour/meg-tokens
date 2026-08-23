@@ -21,7 +21,7 @@ Builder = Callable[[BehaviorTableSet], tuple[Figure, dict[str, object]]]
 
 @dataclass(frozen=True)
 class FigureSpec:
-    key: str  # "ssmcomparison-deltabic"
+    key: str  # "ssmcomparison-model"
     analysis: str  # desc segment 1 / statistics derivative
     view: str  # desc segment 2
     title: str
@@ -33,55 +33,49 @@ class FigureSpec:
 
 
 REGISTRY: tuple[FigureSpec, ...] = (
-    # --- Headline / modeling (behavior/analyses/sequential_sampling.py) ---
+    # --- Act 1: behavioral foundation (F01-F08) ---
+    # Cohort/QC, the Fast/Slow manipulation, stimulus-frame difficulty,
+    # decision-time distributions, and confidence at commitment.
     FigureSpec(
-        key="ssmcomparison-deltabic", analysis="ssmcomparison", view="deltabic",
-        title="Urgency gating versus bounded integration (H1)",
-        kind="per_subject_criterion_difference", groups=("headline", "modeling"),
-        requires=("ssmcomparison", "ssmcomparisonstats"),
-        builder=modeling.build_ssmcomparison_deltabic,
+        key="summary-cohort", analysis="summary", view="cohort",
+        title="Cohort composition and data quality",
+        kind="cohort_overview", groups=("design", "qc"),
+        requires=("summary", "lapses", "extremedt"),
+        builder=design.build_summary_cohort,
     ),
     FigureSpec(
-        key="ssmcomparison-urgencyscale", analysis="ssmcomparison", view="urgencyscale",
-        title="Urgency scale, Fast vs. Slow (H2)",
-        kind="paired_condition_contrast", groups=("headline", "modeling"),
-        requires=("ssmcomparison", "ssmcomparisonstats"),
-        builder=modeling.build_ssmcomparison_urgencyscale,
+        key="conditionorder-balance", analysis="conditionorder", view="balance",
+        title="First-block counterbalancing",
+        kind="between_subject_balance_check", groups=("design",),
+        requires=("conditionorder", "conditionorderstats"),
+        builder=design.build_conditionorder_balance,
     ),
     FigureSpec(
-        key="ssmcomparison-urgencyparams", analysis="ssmcomparison", view="urgencyparams",
-        title="Urgency-model parameters, Fast vs. Slow",
-        kind="paired_condition_contrast_grid", groups=("modeling",),
-        requires=("ssmcomparison", "ssmcomparisonstats"),
-        builder=modeling.build_ssmcomparison_urgencyparams,
+        key="choiceside-asymmetry", analysis="choiceside", view="asymmetry",
+        title="Left/right choice asymmetry",
+        kind="asymmetry_grid", groups=("design",),
+        requires=("choiceside", "choicesidestats"),
+        builder=design.build_choiceside_asymmetry,
     ),
     FigureSpec(
-        key="ssmtimecourse-fit", analysis="ssmtimecourse", view="fit",
-        title="Model internals: criterion, fit quality, decision variable",
-        kind="model_time_course", groups=("modeling",),
-        requires=("ssmtimecourse",),
-        builder=modeling.build_ssmtimecourse_fit,
+        key="timeontask-drift", analysis="timeontask", view="drift",
+        title="Session and within-block drift",
+        kind="trend_and_coefficient", groups=("design",),
+        requires=("timeontaskstats", "withinblockdecile"),
+        builder=design.build_timeontask_drift,
     ),
     FigureSpec(
-        key="ssmpopulation-shrinkage", analysis="ssmpopulation", view="shrinkage",
-        title="Population sequential-sampling parameters",
-        kind="shrinkage_forest", groups=("modeling",),
-        requires=("ssmpopulation", "ssmpopulationstats"),
-        builder=modeling.build_ssmpopulation_shrinkage,
+        key="conditionclass-anova", analysis="conditionclass", view="anova",
+        title="Condition x class",
+        kind="factorial_interaction", groups=("design",),
+        requires=("conditionclass", "conditionclassstats", "conditionclasscontrasts"),
+        builder=design.build_conditionclass_anova,
     ),
-    FigureSpec(
-        key="ssmcomparison-mechanistic", analysis="ssmcomparison", view="mechanistic",
-        title="Model comparison: criterion, fit quality, held-out prediction",
-        kind="mechanistic_model_summary", groups=("modeling",),
-        requires=("ssmcomparison", "ssmcomparisonstats", "ssmtimecourse", "ssmheldout", "ssmheldoutstats"),
-        builder=modeling.build_ssmcomparison_mechanistic,
-    ),
-    # --- Core / distributions (behavior/analyses/distributions.py) ---
     FigureSpec(
         key="dtdistribution-condition", analysis="dtdistribution", view="condition",
         title="Decision time, Fast vs. Slow",
         kind="condition_distribution", groups=("core", "distributions"),
-        requires=("dtdistribution", "dtdistributionstats"),
+        requires=("dtdistribution", "dtdistributionstats", "dtgeometry", "groupstats"),
         builder=distributions.build_dtdistribution_condition,
     ),
     FigureSpec(
@@ -97,7 +91,7 @@ REGISTRY: tuple[FigureSpec, ...] = (
         key="spdcumulative-class", analysis="spdcumulative", view="class",
         title="SPD at decision, cumulative by class",
         kind="cumulative_distribution", groups=("distributions",),
-        requires=("spdcumulative",),
+        requires=("spdcumulative", "groupstats"),
         builder=distributions.build_spdcumulative_class,
         caveat="validated_15row only (the higher-integrity subset; excludes "
         "unvalidated \"14-row\" logs). all_logged was checked against it and "
@@ -106,58 +100,35 @@ REGISTRY: tuple[FigureSpec, ...] = (
         "elsewhere in the pipeline (summary, individual.py, performance.py) "
         "-- whether those should also move to validated_15row is TBD.",
     ),
-    # --- Design effects (behavior/analyses/design_effects.py) ---
+    # --- Act 2: dynamic commitment policy (F09-F12) ---
+    # How changing evidence becomes a choice: criterion across time,
+    # conditional accuracy, continuous-evidence effects, and the temporal
+    # choice kernel. F10 is the exact-posterior sensitivity companion to F09.
     FigureSpec(
-        key="conditionclass-anova", analysis="conditionclass", view="anova",
-        title="Condition x class",
-        kind="factorial_interaction", groups=("design",),
-        requires=("conditionclass", "conditionclassstats"),
-        builder=design.build_conditionclass_anova,
+        key="criterionscale-comparison",
+        analysis="criterionscale",
+        view="comparison",
+        title="Evidence criterion vs. decision time, on two evidence scales",
+        kind="criterion_scale_comparison", groups=("evidence",),
+        requires=("criterionscale", "criterionscaleprofile", "criterionscalestats"),
+        builder=evidence.build_criterionscale_comparison,
     ),
     FigureSpec(
-        key="choiceside-asymmetry", analysis="choiceside", view="asymmetry",
-        title="Left/right choice asymmetry",
-        kind="asymmetry_grid", groups=("design",),
-        requires=("choiceside", "choicesidestats"),
-        builder=design.build_choiceside_asymmetry,
+        key="conditionalaccuracy-caf", analysis="conditionalaccuracy", view="caf",
+        title="Conditional accuracy function, by trial class",
+        kind="conditional_accuracy_function", groups=("evidence",),
+        requires=("conditionalaccuracy", "conditionalaccuracystats"),
+        builder=evidence.build_conditionalaccuracy_caf,
     ),
     FigureSpec(
-        key="timeontask-drift", analysis="timeontask", view="drift",
-        title="Session and within-block drift",
-        kind="trend_and_coefficient", groups=("design",),
-        requires=("timeontaskstats",),
-        builder=design.build_timeontask_drift,
-    ),
-    FigureSpec(
-        key="conditionorder-balance", analysis="conditionorder", view="balance",
-        title="First-block counterbalancing",
-        kind="between_subject_balance_check", groups=("design",),
-        requires=("conditionorder", "conditionorderstats"),
-        builder=design.build_conditionorder_balance,
-    ),
-    FigureSpec(
-        key="summary-cohort", analysis="summary", view="cohort",
-        title="Cohort composition and data quality",
-        kind="cohort_overview", groups=("design", "qc"),
-        requires=("summary", "lapses", "extremedt"),
-        builder=design.build_summary_cohort,
-    ),
-    # --- Evidence and criterion (behavior/analyses/evidence.py) ---
-    FigureSpec(
-        key="criteriondecline-sumloglr",
-        analysis="criteriondecline",
-        view="sumloglr",
-        title="Chosen-target evidence criterion vs. decision time",
-        kind="fitted_criterion", groups=("evidence",),
-        requires=("criteriondecline", "criteriondeclinestats"),
-        builder=evidence.build_criteriondecline_sumloglr,
-    ),
-    FigureSpec(
-        key="urgency-decisiontime", analysis="urgency", view="decisiontime",
-        title="Evidence at decision vs. decision time",
-        kind="fitted_criterion", groups=("evidence",),
-        requires=("urgency", "urgencystats"),
-        builder=evidence.build_urgency_decisiontime,
+        key="continuousevidence-effects", analysis="continuousevidence", view="effects",
+        title="Early evidence by trial class",
+        kind="early_evidence_by_class", groups=("evidence",),
+        # The key is kept even though the figure no longer claims the predictor
+        # is continuous: keys are the durable reference across revisions of
+        # docs/behavior.md, and the derivative it reads has the same name.
+        requires=("continuousevidenceprofile", "continuousevidencestats"),
+        builder=evidence.build_continuousevidence_effects,
     ),
     FigureSpec(
         key="reversecorrelation-kernel", analysis="reversecorrelation", view="kernel",
@@ -166,21 +137,45 @@ REGISTRY: tuple[FigureSpec, ...] = (
         requires=("reversecorrelation", "reversecorrelationstats"),
         builder=evidence.build_reversecorrelation_kernel,
     ),
+    # --- Act 3: mechanistic adjudication (F13-F15) ---
+    # Formal comparison of urgency gating, bounded integration,
+    # collapsing/adaptive bounds, and plausible urgency variants.
+    # (behavior/analyses/sequential_sampling.py)
     FigureSpec(
-        key="conditionalaccuracy-caf", analysis="conditionalaccuracy", view="caf",
-        title="Conditional accuracy function",
-        kind="conditional_accuracy_function", groups=("evidence",),
-        requires=("conditionalaccuracy", "conditionalaccuracystats"),
-        builder=evidence.build_conditionalaccuracy_caf,
+        key="ssmcomparison-model", analysis="ssmcomparison", view="model",
+        title="Model comparison: mechanism and adjudication",
+        kind="mechanistic_model_comparison", groups=("headline", "modeling"),
+        requires=(
+            "ssmcomparison", "ssmcomparisonstats", "ssmtimecourse",
+            "ssmheldout", "ssmheldoutstats", "ssmheldoutpairwise",
+            "ssmdistributioncheckstats",
+        ),
+        builder=modeling.build_ssmcomparison_model,
     ),
     FigureSpec(
-        key="continuousevidence-effects", analysis="continuousevidence", view="effects",
-        title="Continuous early-evidence effects",
-        kind="continuous_predictor", groups=("evidence",),
-        requires=("continuousevidence", "continuousevidencestats"),
-        builder=evidence.build_continuousevidence_effects,
+        key="ssmcomparison-urgency", analysis="ssmcomparison", view="urgency",
+        title="Urgency parameters, Fast vs. Slow",
+        kind="paired_condition_contrast_grid", groups=("headline", "modeling"),
+        requires=(
+            "ssmcomparison", "ssmcomparisonstats", "ssmboundaryaudit",
+            "ssmrobustnessstats",
+        ),
+        builder=modeling.build_ssmcomparison_urgency,
     ),
-    # --- Sequential effects (behavior/analyses/sequential.py) ---
+    FigureSpec(
+        key="ssmparameterrecovery-identifiability", analysis="ssmparameterrecovery",
+        view="identifiability",
+        title="Parameter and model recovery, in the fitted region",
+        kind="recovery_identifiability", groups=("modeling",),
+        requires=(
+            "ssmparameterrecovery", "ssmparameterrecoverystats",
+            "ssmmodelrecoverystats",
+        ),
+        builder=modeling.build_ssmrecovery_identifiability,
+    ),
+    # --- Act 4: sequential adaptation (F16-F17) ---
+    # Post-error slowing and choice/history effects.
+    # (behavior/analyses/sequential.py)
     FigureSpec(
         key="posterror-slowing", analysis="posterror", view="slowing",
         title="Robust post-error slowing",
@@ -195,35 +190,32 @@ REGISTRY: tuple[FigureSpec, ...] = (
         requires=("choicehistory", "choicehistorystats"),
         builder=sequential.build_choicehistory_effects,
     ),
-    # --- Individual differences and cross-species (behavior/analyses/individual.py) ---
+    # --- Act 5: individual differences (F18) ---
+    # Cross-subject structure, cross-species comparison, and the later
+    # behavioral-MEG join. (behavior/analyses/individual.py)
+    # The matrix and the scatter grid were two figures; they are one argument.
+    # At n = 32 a correlation matrix cannot show whether an r is outlier-driven,
+    # so the scatters are its required companion, and each of them is one cell
+    # of the matrix magnified. Split across figures, the check a reader is meant
+    # to perform meant flipping pages and matching cells by name.
     FigureSpec(
-        key="individualcorrelations-matrix", analysis="individualcorrelations", view="matrix",
-        title="Individual-differences correlation matrix",
-        kind="correlation_matrix", groups=("individual",),
-        requires=("individualcorrelations",),
-        builder=individual.build_individualcorrelations_matrix,
-    ),
-    FigureSpec(
-        key="individualprofile-scatter", analysis="individualprofile", view="scatter",
-        title="Individual-differences scatter grid",
-        kind="scatter_grid", groups=("individual",),
+        key="individualcorrelations-structure", analysis="individualcorrelations",
+        view="structure",
+        title="Individual-differences structure",
+        kind="correlation_structure", groups=("individual",),
         requires=("individualprofile", "individualcorrelations"),
-        builder=individual.build_individualprofile_scatter,
+        builder=individual.build_individualcorrelations_structure,
     ),
-    FigureSpec(
-        key="speciescomparison-forest", analysis="speciescomparison", view="forest",
-        title="Cross-species comparison statistics",
-        kind="unit_faceted_forest", groups=("individual",),
-        requires=("speciescomparison",),
-        builder=individual.build_speciescomparison_forest,
-    ),
-    FigureSpec(
-        key="individualprofile-neural", analysis="individualprofile", view="neural",
-        title="Behaviour vs. neural metric",
-        kind="neural_correlation", groups=("individual", "qc"),
-        requires=("individualprofile", "--neural-metrics"),
-        builder=individual.build_individualprofile_neural,
-    ),
+    # No cross-species figure. `speciescomparison` is still computed and still
+    # the canonical comparison-ready table, but every one of its ten rows is
+    # already drawn elsewhere -- DT by class in F05/F07, SP at decision in F08,
+    # the criterion slope in F09, the BIC margin and urgency scale in F13/F14 --
+    # and published monkey values may not be plotted beside them by design. What
+    # was left was a table of numbers reported elsewhere, drawn as a chart,
+    # which is what rule 2.3 rejects for `groupstats`. The measure-to-citation
+    # mapping it carried now lives in docs/behavior.md, which is where a
+    # textual comparison belongs.
+
 )
 
 GROUP_NAMES: tuple[str, ...] = (

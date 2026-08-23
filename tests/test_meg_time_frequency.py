@@ -7,8 +7,7 @@ from meg_tokens.features.time_frequency import (
     compute_band_power,
     compute_psd,
     fit_specparam,
-    rescale_baseline,
-    DEFAULT_BANDS
+    rescale_baseline
 )
 
 def test_slide_window():

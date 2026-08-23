@@ -18,7 +18,6 @@ class BehaviorTableSet:
 
     layout: DerivativeLayout
     subjects: tuple[str, ...] | None = None
-    neural_metrics_path: str | None = None
     _cache: dict[str, pd.DataFrame] = field(default_factory=dict, repr=False)
     _sources: dict[str, str] = field(default_factory=dict, repr=False)
 
@@ -102,30 +101,6 @@ class BehaviorTableSet:
         table = pd.read_csv(path, sep="\t")
         self._cache[key] = table
         self._sources["groupstats"] = str(path)
-        return table
-
-    def neural_metrics(self) -> pd.DataFrame:
-        """Optional subject-level MEG metrics table for F26, gated on
-        `--neural-metrics`. Requires `subject` and `neural_peak_ms` columns."""
-        key = "__neural__"
-        if key in self._cache:
-            return self._cache[key]
-        if not self.neural_metrics_path:
-            raise FileNotFoundError(
-                "individualprofile-neural (F26) requires --neural-metrics "
-                "<subject-level CSV/TSV with 'subject' and 'neural_peak_ms' columns>."
-            )
-        path = Path(self.neural_metrics_path)
-        if not path.is_file():
-            raise FileNotFoundError(f"--neural-metrics table does not exist: {path}")
-        table = pd.read_csv(path, sep="\t" if path.suffix == ".tsv" else ",")
-        required = {"subject", "neural_peak_ms"}
-        missing = required - set(table.columns)
-        if missing:
-            raise ValueError(f"--neural-metrics table is missing columns: {sorted(missing)}")
-        table = self._subject_filter(table)
-        self._cache[key] = table
-        self._sources["neural_metrics"] = str(path)
         return table
 
     @property

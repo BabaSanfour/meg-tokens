@@ -20,8 +20,11 @@ if [ "$REPETITIONS" -lt 8 ]; then
 fi
 echo "started=$(date --iso-8601=seconds) job=${SLURM_JOB_ID} task=${SLURM_ARRAY_TASK_ID} repetition=${SLURM_ARRAY_TASK_ID}/${REPETITIONS}"
 echo "commit=$(git rev-parse HEAD) dirty=$(git status --porcelain | tr '\n' ';') python=$(./.venv/bin/python --version 2>&1)"
+# Three starts matches the production fit. The earlier two-start run is one of
+# the reasons the recovery result could not be cited as evidence about the
+# production fits: it was a different estimator.
 ./.venv/bin/meg-tokens --config "$CONFIG" behavior ssm-recovery \
     --repetitions "$REPETITIONS" \
     --repetition-index "$SLURM_ARRAY_TASK_ID" \
-    --n-starts 2
+    --n-starts 3
 echo "finished=$(date --iso-8601=seconds)"

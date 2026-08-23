@@ -94,7 +94,6 @@ def run_behavior_plotting(
     behavior_dir: str,
     output_figures_dir: str,
     subjects_list: list[str] | None = None,
-    neural_metrics_csv: str | None = None,
     *,
     figures: Sequence[str] = ("all",),
     formats: Sequence[str] = (".pdf", ".png"),
@@ -106,7 +105,6 @@ def run_behavior_plotting(
     tables = BehaviorTableSet(
         layout=input_layout,
         subjects=tuple(subjects_list) if subjects_list else None,
-        neural_metrics_path=neural_metrics_csv,
     )
 
     keys = resolve_figure_keys(tuple(figures))

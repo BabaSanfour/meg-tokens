@@ -1,6 +1,4 @@
-import pytest
 import numpy as np
-import mne
 import pandas as pd
 import os
 from meg_tokens.meg.sources import (

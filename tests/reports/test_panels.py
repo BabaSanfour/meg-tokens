@@ -1,6 +1,5 @@
 import numpy as np
 import matplotlib.pyplot as plt
-import pytest
 from matplotlib.collections import PathCollection
 
 from meg_tokens.reports import panels, style

@@ -286,7 +286,7 @@ def main():
           f"sd={residuals.std():.2f}ms max|.|={residuals.abs().max():.2f}ms")
 
     alignment = pd.DataFrame(alignments)
-    print(f"\nGo-alignment replay (the epoching stage's own decisions):")
+    print("\nGo-alignment replay (the epoching stage's own decisions):")
     print(f"  runs that align successfully:    {int(alignment['ok'].sum())}/{len(alignment)}")
     print(f"  policy=truncate / error:         "
           f"{int((alignment['policy'] == 'truncate').sum())} / "

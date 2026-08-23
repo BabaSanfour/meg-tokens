@@ -14,10 +14,6 @@ the rest of the output.
 from __future__ import annotations
 
 from pathlib import Path
-import hashlib
-from importlib.metadata import PackageNotFoundError, version
-import subprocess
-import sys
 from typing import Optional, Sequence
 
 import pandas as pd
@@ -26,6 +22,7 @@ from meg_tokens.behavior.analyses.design_effects import (
     choice_side_statistics,
     choice_side_summary,
     condition_class_cells,
+    condition_class_contrasts,
     condition_class_statistics,
     condition_order_effects,
     condition_order_statistics,
@@ -34,10 +31,14 @@ from meg_tokens.behavior.analyses.design_effects import (
     lapse_summary,
     time_on_task,
     time_on_task_statistics,
+    within_block_decile_profile,
+    within_block_decile_statistics,
 )
 from meg_tokens.behavior.analyses.distributions import (
     decision_time_distribution_statistics,
     decision_time_distributions,
+    decision_time_geometry,
+    decision_time_geometry_statistics,
     spd_cumulative_distributions,
 )
 from meg_tokens.behavior.analyses.evidence import (
@@ -45,9 +46,22 @@ from meg_tokens.behavior.analyses.evidence import (
     conditional_accuracy_statistics,
     continuous_evidence_effects,
     continuous_evidence_statistics,
+    early_evidence_order_profile,
+    early_evidence_order_statistics,
+    early_evidence_profile,
     criterion_decline_statistics,
+    criterion_scale_comparison,
+    criterion_scale_comparison_statistics,
+    criterion_time_profile,
+    discretization_overshoot_fits,
+    discretization_overshoot_statistics,
     evidence_at_decision_responses,
     first_order_criterion_decline,
+    posterior_evidence_criterion_agreement,
+    posterior_evidence_sensitivity,
+    posterior_evidence_sensitivity_statistics,
+    posterior_grid_by_token_index,
+    posterior_grid_step_summary,
     reverse_correlation,
     reverse_correlation_statistics,
 )
@@ -62,300 +76,9 @@ from meg_tokens.behavior.analyses.sequential import (
     post_error_statistics,
     robust_post_error_slowing,
 )
-from meg_tokens.behavior.analyses.sequential_sampling import (
-    EVIDENCE_AFTER_LAST,
-    FILTER_TAU_S,
-    FIT_SEED,
-    HESSIAN_STEP,
-    MINIMUM_FIT_TRIALS,
-    MIXTURE_COEF,
-    MODEL_PARAMETERS,
-    PARAMETER_RANGES,
-    SOLVER_STEP_S,
-    TIME_COURSE_STEP_S,
-    TOKEN_INTERVAL_S,
-    fit_sequential_sampling_models,
-    fitted_predictions,
-    model_comparison_statistics,
-    population_parameters,
-    urgency_condition_contrast,
-)
 from meg_tokens.behavior.tables import read_trial_features
 from meg_tokens.core import ProjectConfig, WorkflowResult, normalize_subject_id
 from meg_tokens.io import DerivativeLayout, load_table, require_file, save_table
-
-
-def _ssm_source_tree_sha256() -> str:
-    """Hash source/scripts/docs because cluster analysis is uncommitted."""
-    root = Path(__file__).resolve().parents[2]
-    paths = [
-        path
-        for base in (root / "meg_tokens", root / "scripts")
-        if base.exists()
-        for path in base.rglob("*")
-        if path.is_file() and path.suffix in {".py", ".sh"}
-    ]
-    paths.extend(
-        path for path in (
-            root / "docs" / "behavior.md",
-            root / "docs" / "behavior_reporting_session_handoff.md",
-        ) if path.is_file()
-    )
-    digest = hashlib.sha256()
-    for path in sorted(set(paths)):
-        digest.update(str(path.relative_to(root)).encode("utf-8"))
-        digest.update(b"\0")
-        digest.update(path.read_bytes())
-        digest.update(b"\0")
-    return digest.hexdigest()
-
-
-def _package_version(name: str) -> str:
-    try:
-        return version(name)
-    except PackageNotFoundError:
-        return "unavailable"
-
-
-def _ssm_fit_metadata(
-    *,
-    models: tuple[str, ...],
-    n_jobs: int,
-    n_starts: int,
-    features_path: Path,
-    excluded: set[str],
-) -> dict[str, object]:
-    """Return complete reproducibility metadata for subject-level SSM fits."""
-    return {
-        "stage": "behavior_characterization_analysis",
-        "analysis": "ssm mechanistic model fit",
-        "models": list(models),
-        "model_parameters": {model: list(names) for model, names in MODEL_PARAMETERS.items()},
-        "parameter_ranges": {name: list(bounds) for name, bounds in PARAMETER_RANGES.items()},
-        "condition_parameterization": "separate subject × condition × model cells",
-        "input_files": [str(features_path)],
-        "excluded_subjects": sorted(excluded),
-        "timing": {
-            "token_interval_s": TOKEN_INTERVAL_S,
-            "decision_time_origin": "first token jump; dt_ms is motor-baseline-corrected",
-            "evidence_after_last_token": EVIDENCE_AFTER_LAST,
-        },
-        "filter_tau_s": FILTER_TAU_S,
-        "solver": {
-            "dt_s": SOLVER_STEP_S,
-            "state_grid_step": SOLVER_STEP_S,
-            "state_grid_units": "decision-variable/noise units (not seconds)",
-            "timecourse_dt_s": TIME_COURSE_STEP_S,
-            "boundary": "absorbing finite-grid first passage",
-            "overshoot_correction": "none; numerical grid only",
-        },
-        "likelihood": {
-            "loss": "PyDDM LossLikelihood",
-            "mixture_coef": MIXTURE_COEF,
-            "mixture_distribution": "uniform contaminant",
-        },
-        "minimum_fit_trials": MINIMUM_FIT_TRIALS,
-        "fit_seed": FIT_SEED,
-        "n_jobs": n_jobs,
-        "n_starts": n_starts,
-        "uncertainty": {
-            "final_full_data": "finite-difference observed-information Hessian",
-            "hessian_step": HESSIAN_STEP,
-            "outside_final_full_data": "disabled for held-out/recovery/robustness",
-        },
-        "git_commit": subprocess.run(
-            ["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=False
-        ).stdout.strip(),
-        "git_dirty": bool(subprocess.run(
-            ["git", "status", "--porcelain"], capture_output=True, text=True, check=False
-        ).stdout.strip()),
-        "source_tree_sha256": _ssm_source_tree_sha256(),
-        "python": sys.version,
-        "software": {
-            name: _package_version(name)
-            for name in ("pyddm", "numpy", "pandas", "scipy")
-        },
-    }
-
-
-def _selected_features(
-    project: ProjectConfig,
-    layout: DerivativeLayout,
-    subjects: Optional[Sequence[str]],
-) -> tuple[pd.DataFrame, Path, set[str]]:
-    """Load the trial-feature table and apply exclusions and subject selection.
-
-    Parameters
-    ----------
-    project
-        Project configuration supplying the exclusion list.
-    layout
-        Derivative layout for the project's BIDS root.
-    subjects
-        Optional subject selection; every retained subject when omitted.
-
-    Returns
-    -------
-    features
-        The selected rows of the canonical trial-feature table.
-    features_path
-        Path the table was read from, for provenance.
-    excluded
-        Subjects removed by the project's exclusion list.
-
-    Raises
-    ------
-    FileNotFoundError
-        If Stage 2 has not been run.
-    ValueError
-        If no rows remain after selection.
-    """
-    features_path = layout.behavior_trial_features()
-    if not features_path.is_file():
-        raise FileNotFoundError(
-            "The trial-feature table is required by the behavioral characterization "
-            f"analyses but does not exist: {features_path}. Run "
-            "'meg-tokens behavior analyze' first."
-        )
-    features = read_trial_features(features_path)
-    excluded = set(project.subject_exclusions)
-    if excluded:
-        features = features.loc[~features["subject"].isin(excluded)]
-    if subjects:
-        selected = {normalize_subject_id(subject) for subject in subjects}
-        features = features.loc[features["subject"].isin(selected)]
-    if features.empty:
-        raise ValueError(
-            "No trial-feature rows remain after applying subject selection "
-            "and exclusions"
-        )
-    return features, features_path, excluded
-
-
-def characterization_subjects(project: ProjectConfig) -> list[str]:
-    """List the subjects Stage 2b will analyze, in a stable order.
-
-    Parameters
-    ----------
-    project
-        Project configuration supplying the exclusion list.
-
-    Returns
-    -------
-    list of str
-        Sorted subject identifiers present in the trial-feature table and not
-        excluded.
-
-    Notes
-    -----
-    An array job needs this list before it can map a task index to a batch of
-    subjects, and it must be the same list the aggregation step will expect.
-    """
-    layout = DerivativeLayout(project.bids_root, task=project.task)
-    features, _, _ = _selected_features(project, layout, None)
-    return sorted(features["subject"].astype(str).unique())
-
-
-def fit_subject_sequential_sampling(
-    project: ProjectConfig,
-    *,
-    subjects: Optional[Sequence[str]] = None,
-    n_jobs: int = 1,
-    models: tuple[str, ...] = ("ddm", "urgency"),
-    n_starts: int = 1,
-) -> WorkflowResult:
-    """Fit the sequential-sampling models and write one table per subject.
-
-    The fits are the whole runtime of Stage 2b and are independent across
-    subjects, so this splits them out of
-    :func:`analyze_behavior_characterization`: run it once per subject, or once
-    per batch of subjects, then run the characterization, which pools the
-    written tables instead of refitting.
-
-    Parameters
-    ----------
-    project
-        Project configuration.
-    subjects
-        Subjects to fit. Every retained subject when omitted.
-    n_jobs
-        Worker processes. Each subject contributes six independent fits (three
-        conditions by two models), so a batch of subjects is what fills a node
-        with more cores than that.
-
-    Returns
-    -------
-    WorkflowResult
-        Outputs are the per-subject fit tables, one per fitted subject.
-
-    Notes
-    -----
-    Every subject's table holds that subject's rows only, in the schema
-    :func:`~meg_tokens.behavior.analyses.sequential_sampling.fit_sequential_sampling_models`
-    returns, so pooling them is a concatenation. Writing per subject rather
-    than per batch keeps an array job's tasks from racing for one path.
-    """
-    layout = DerivativeLayout(project.bids_root, task=project.task)
-    features, features_path, excluded = _selected_features(project, layout, subjects)
-    fits = fit_sequential_sampling_models(
-        features, n_jobs=n_jobs, models=models, n_starts=n_starts
-    )
-    time_courses, trial_predictions = fitted_predictions(features, fits)
-
-    written = {
-        "ssmcomparison": fits,
-        "ssmtimecourse": time_courses,
-        "ssmtrialpredictions": trial_predictions,
-    }
-    provenance = _ssm_fit_metadata(
-        models=models,
-        n_jobs=n_jobs,
-        n_starts=n_starts,
-        features_path=features_path,
-        excluded=excluded,
-    )
-    outputs = []
-    for subject in sorted(fits["subject"].astype(str).unique()):
-        for name, table in written.items():
-            # A cell too small to fit produces no prediction rows at all, and an
-            # empty table is not worth a file.
-            if table.empty:
-                continue
-            rows = table.loc[table["subject"].astype(str) == subject]
-            output_path = layout.behavior_subject_analysis(subject, name)
-            save_table(
-                output_path,
-                rows.reset_index(drop=True),
-                metadata={
-                    **provenance,
-                    "analysis": name,
-                    "subjects": [subject],
-                    "inference": (
-                        "maximum-likelihood fit per subject, condition and "
-                        "model; pooled by dedicated Thura et al. aggregation"
-                    ),
-                },
-            )
-            outputs.append(output_path)
-    return WorkflowResult(
-        stage="behavior_sequential_sampling_fit",
-        inputs=(features_path,),
-        outputs=tuple(outputs),
-        settings={
-            "subjects": sorted(fits["subject"].astype(str).unique()),
-            "n_jobs": n_jobs,
-            "models": list(models),
-            "n_starts": n_starts,
-            "n_converged_fits": int(fits["converged"].sum()),
-        },
-    )
-
-
-SUBJECT_LEVEL_ANALYSES: tuple[str, ...] = (
-    "ssmcomparison",
-    "ssmtimecourse",
-    "ssmtrialpredictions",
-)
 
 
 def _pooled_sequential_sampling_fits(
@@ -383,8 +106,9 @@ def _pooled_sequential_sampling_fits(
     -----
     Missing subjects are reported rather than fitted. The fits are the runtime
     of Stage 2b and are run separately by
-    :func:`fit_subject_sequential_sampling`; the characterization only pools
-    them, so a partly finished array job still yields every other derivative.
+    :func:`~meg_tokens.workflows.sequential_sampling.fit_subject_sequential_sampling`;
+    the characterization only pools them, so a partly finished array job
+    still yields every other derivative.
     """
     subjects = sorted(features["subject"].astype(str).unique())
     tables = []
@@ -407,11 +131,27 @@ def analyze_behavior_characterization(
 ) -> WorkflowResult:
     """Run the Stage 2b behavioral characterization pipeline over staged trial features.
 
-    This is also the aggregation step for the sequential-sampling models:
-    it fits nothing itself, and pools whatever per-subject tables
-    :func:`fit_subject_sequential_sampling` has written. Subjects without one
-    are named in the result rather than fitted, and the ``ssm*`` derivatives
-    are omitted entirely when none has been.
+    This *consumes* the sequential-sampling fits but does not aggregate them.
+    It pools whatever per-subject tables
+    :func:`~meg_tokens.workflows.sequential_sampling.fit_subject_sequential_sampling`
+    has written, uses them for ``speciescomparison``, and names any unfitted
+    subject in the result. It writes no ``ssm*`` group derivative.
+
+    Notes
+    -----
+    ``ssm-aggregate`` in :mod:`meg_tokens.workflows.sequential_sampling` is the
+    sole writer of every ``ssm*`` group table. It used to share four of those
+    filenames with this workflow -- ``ssmcomparison``, ``ssmcomparisonstats``,
+    ``ssmtimecourse`` and ``ssmtrialpredictions`` -- so whichever pipeline ran
+    last silently won. The two differed in substance, not just in timing: this
+    one pooled whatever
+    per-subject files existed, while ``ssm-aggregate`` admits only fits that
+    pass its three-start acceptance gate, and its ``ssmcomparisonstats``
+    additionally carries the ``ssm_mechanistic_model_comparison`` rows that the
+    Act 3 adjudication panel selects on. Running characterization second
+    therefore replaced gated results with ungated ones and deleted an entire
+    analysis block. Single ownership removes the failure mode rather than
+    ordering around it, so neither run order can now corrupt the other.
     """
     layout = DerivativeLayout(
         project.bids_root,
@@ -451,21 +191,32 @@ def analyze_behavior_characterization(
         neural_metrics = pd.read_csv(neural_path, sep=separator)
 
     dt_distributions = decision_time_distributions(features)
+    dt_geometry = decision_time_geometry(features)
     cells = condition_class_cells(features)
     sides = choice_side_summary(features)
     drift = time_on_task(features)
+    decile_profile = within_block_decile_profile(features)
     order = condition_order_effects(features)
     lapses = lapse_summary(features)
     extreme_counts, extreme_flagged = extreme_decision_times(features)
     criterion = first_order_criterion_decline(features)
+    criterion_scale = criterion_scale_comparison(features)
+    criterion_profile = criterion_time_profile(features)
     urgency = evidence_at_decision_responses(features, predictor="dt_ms")
+    posterior_evidence_index = evidence_at_decision_responses(
+        features, predictor="decision_token_index"
+    )
+    posterior_grid = posterior_grid_by_token_index()
+    discretization_fits = discretization_overshoot_fits(features)
+    posterior_sensitivity = posterior_evidence_sensitivity(features)
     kernels = reverse_correlation(features)
     accuracy_functions = conditional_accuracy_functions(features)
     evidence = continuous_evidence_effects(features)
-    ssm_pooled = {
-        name: _pooled_sequential_sampling_fits(layout, features, name)[0]
-        for name in SUBJECT_LEVEL_ANALYSES
-    }
+    evidence_profile = early_evidence_profile(features)
+    evidence_order = early_evidence_order_profile(features)
+    # Pooled here to feed `speciescomparison` and to report who is unfitted.
+    # These fits are *not* written back out as group tables: `ssm-aggregate`
+    # owns every `ssm*` group derivative. See the module docstring.
     ssm_fits, ssm_missing = _pooled_sequential_sampling_fits(layout, features)
     post_error = robust_post_error_slowing(features)
     history = choice_history(features)
@@ -482,12 +233,17 @@ def analyze_behavior_characterization(
         "spdcumulative": spd_cumulative_distributions(features),
         "dtdistribution": dt_distributions,
         "dtdistributionstats": decision_time_distribution_statistics(dt_distributions),
+        "dtgeometry": dt_geometry,
+        "dtgeometrystats": decision_time_geometry_statistics(dt_geometry),
         "conditionclass": cells,
         "conditionclassstats": condition_class_statistics(cells),
+        "conditionclasscontrasts": condition_class_contrasts(cells),
         "choiceside": sides,
         "choicesidestats": choice_side_statistics(sides),
         "timeontask": drift,
         "timeontaskstats": time_on_task_statistics(drift),
+        "withinblockdecile": decile_profile,
+        "withinblockdecilestats": within_block_decile_statistics(decile_profile),
         "conditionorder": order,
         "conditionorderstats": condition_order_statistics(order),
         "lapses": lapses,
@@ -496,14 +252,46 @@ def analyze_behavior_characterization(
         "extremedttrials": extreme_flagged,
         "criteriondecline": criterion,
         "criteriondeclinestats": criterion_decline_statistics(criterion),
+        "criterionscale": criterion_scale,
+        "criterionscaleprofile": criterion_profile,
+        "criterionscalestats": criterion_scale_comparison_statistics(
+            criterion_scale, criterion_profile
+        ),
         "urgency": urgency,
         "urgencystats": criterion_decline_statistics(urgency),
+        "posteriorevidenceindex": posterior_evidence_index,
+        "posteriorevidenceindexstats": criterion_decline_statistics(
+            posterior_evidence_index
+        ),
+        "posteriorgrid": posterior_grid,
+        "posteriorgridstats": posterior_grid_step_summary(posterior_grid),
+        "posteriordiscretization": discretization_fits,
+        "posteriordiscretizationstats": discretization_overshoot_statistics(
+            discretization_fits
+        ),
+        "posteriorevidencesensitivity": posterior_sensitivity,
+        "posteriorevidencesensitivitystats": posterior_evidence_sensitivity_statistics(
+            posterior_sensitivity
+        ),
+        "posteriorevidenceagreement": posterior_evidence_criterion_agreement(
+            urgency_fits=urgency, criterion_fits=criterion
+        ),
         "reversecorrelation": kernels,
         "reversecorrelationstats": reverse_correlation_statistics(kernels),
         "conditionalaccuracy": accuracy_functions,
         "conditionalaccuracystats": conditional_accuracy_statistics(accuracy_functions),
         "continuousevidence": evidence,
-        "continuousevidencestats": continuous_evidence_statistics(evidence),
+        "continuousevidenceprofile": evidence_profile,
+        "continuousevidenceorder": evidence_order,
+        # The order rows share a table with the level rows so the write-up
+        # cites one statistics derivative for this figure, not two.
+        "continuousevidencestats": pd.concat(
+            [
+                continuous_evidence_statistics(evidence, evidence_profile),
+                early_evidence_order_statistics(evidence_order),
+            ],
+            ignore_index=True,
+        ),
         "posterror": post_error,
         "posterrorstats": post_error_statistics(post_error),
         "choicehistory": history,
@@ -514,29 +302,6 @@ def analyze_behavior_characterization(
             summary, criterion=criterion, sequential_sampling=ssm_fits
         ),
     }
-    if len(ssm_fits):
-        ssm_estimates, ssm_population = population_parameters(ssm_fits)
-        tables.update(
-            {
-                "ssmcomparison": ssm_fits,
-                "ssmcomparisonstats": pd.concat(
-                    [
-                        model_comparison_statistics(ssm_fits),
-                        urgency_condition_contrast(ssm_fits),
-                    ],
-                    ignore_index=True,
-                ),
-                "ssmpopulation": ssm_estimates,
-                "ssmpopulationstats": ssm_population,
-            }
-        )
-        tables.update(
-            {
-                name: table
-                for name, table in ssm_pooled.items()
-                if name != "ssmcomparison" and not table.empty
-            }
-        )
 
     analysis_subjects = sorted(features["subject"].unique())
     outputs = []

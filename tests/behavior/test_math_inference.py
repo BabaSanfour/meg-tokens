@@ -6,10 +6,58 @@ import pytest
 from scipy import stats
 
 from meg_tokens.behavior.math.inference import (
+    confidence_interval,
+    confidence_interval_from_t,
+    equivalence_bound,
     one_sample_statistics,
     paired_subject_statistics,
     repeated_measures_anova,
+    subject_bootstrap,
 )
+
+
+def test_an_interval_recovered_from_t_matches_the_direct_computation():
+    values = np.array([2.0, 5.0, -1.0, 4.0, 3.0, 7.0, 0.5, 2.5])
+    statistics = one_sample_statistics(values)
+
+    low, high = confidence_interval_from_t(
+        statistics["mean"], statistics["t"], statistics["df"], coverage=0.90
+    )
+
+    half_width = stats.t.ppf(0.95, statistics["df"]) * statistics["sem"]
+    assert low == pytest.approx(statistics["mean"] - half_width)
+    assert high == pytest.approx(statistics["mean"] + half_width)
+
+
+def test_a_wider_coverage_gives_a_wider_interval():
+    narrow = confidence_interval_from_t(2.0, 4.0, 31.0, coverage=0.90)
+    wide = confidence_interval_from_t(2.0, 4.0, 31.0, coverage=0.99)
+
+    assert wide[0] < narrow[0] and narrow[1] < wide[1]
+
+
+def test_the_interval_is_symmetric_about_its_estimate_whatever_the_sign():
+    low, high = confidence_interval_from_t(-10.4, -1.15, 31.0, coverage=0.90)
+
+    assert (low + high) / 2 == pytest.approx(-10.4)
+    assert low < -10.4 < high
+
+
+@pytest.mark.parametrize(
+    "estimate, t_statistic, df",
+    [
+        (1.0, 0.0, 31.0),        # zero t hides the standard error entirely
+        (1.0, 2.0, 0.0),         # no degrees of freedom
+        (np.nan, 2.0, 31.0),     # missing estimate
+        (1.0, np.nan, 31.0),     # missing test statistic
+    ],
+)
+def test_an_unrecoverable_interval_is_missing_rather_than_guessed(
+    estimate, t_statistic, df
+):
+    low, high = confidence_interval_from_t(estimate, t_statistic, df)
+
+    assert np.isnan(low) and np.isnan(high)
 
 
 # --- paired subject statistics ------------------------------------------------
@@ -133,6 +181,142 @@ def test_a_sample_without_variance_has_no_effect_size():
 
     assert result["mean"] == pytest.approx(2.0)
     assert np.isnan(result["cohens_dz"])
+
+
+# --- equivalence bound --------------------------------------------------------
+
+
+def test_the_bound_is_the_furthest_endpoint_of_its_own_interval():
+    values = [0.4, -0.2, 0.9, 0.1, -0.5, 0.3]
+    statistics = one_sample_statistics(values)
+    low, high = confidence_interval(
+        statistics["mean"], statistics["sem"], statistics["df"], coverage=0.90
+    )
+
+    result = equivalence_bound(values)
+
+    assert result["equivalence_bound"] == pytest.approx(max(abs(low), abs(high)))
+    assert result["equivalence_bound_coverage"] == 0.90
+    assert result["equivalence_bound_dz"] == pytest.approx(
+        result["equivalence_bound"] / np.std(values, ddof=1)
+    )
+
+
+def test_the_bound_does_not_return_an_interval_of_its_own():
+    """A row usually carries an interval already, often at another coverage."""
+    result = equivalence_bound([0.4, -0.2, 0.9, 0.1])
+
+    assert "ci_low" not in result and "ci_high" not in result
+    assert "coverage" not in result
+
+
+def test_a_wider_coverage_excludes_less():
+    values = [0.4, -0.2, 0.9, 0.1, -0.5, 0.3]
+
+    assert (
+        equivalence_bound(values, coverage=0.99)["equivalence_bound"]
+        > equivalence_bound(values, coverage=0.90)["equivalence_bound"]
+    )
+
+
+@pytest.mark.parametrize("values", [[], [1.0], [np.nan, 2.0]])
+def test_too_few_finite_values_emit_no_columns_rather_than_a_number(values):
+    assert equivalence_bound(values) == {}
+
+
+# --- subject bootstrap --------------------------------------------------------
+
+
+def test_the_bootstrap_interval_on_a_mean_matches_the_t_interval():
+    """The one case with a closed form: on a plain mean the percentile interval
+    should land where the t interval does, or the resampling is wrong. They
+    converge in the subject count -- at n = 10 the percentile interval is
+    visibly the narrower of the two, which is the known small-sample behaviour
+    and the reason this is checked at a realistic n instead."""
+    values = np.linspace(-2.0, 8.0, 60)
+    result = subject_bootstrap(
+        lambda index: values[index].mean(axis=-1), len(values), n_resamples=8000
+    )
+    statistics = one_sample_statistics(values)
+
+    assert result["estimate"] == pytest.approx(statistics["mean"])
+    assert result["ci_low"] == pytest.approx(statistics["ci95_low"], abs=0.1)
+    assert result["ci_high"] == pytest.approx(statistics["ci95_high"], abs=0.1)
+
+
+def test_the_same_seed_gives_the_same_interval_twice():
+    """A derivative that changes on re-run is not a derivative."""
+    values = np.array([0.3, -0.1, 0.8, 0.2, -0.4, 0.5, 0.1, 0.9])
+
+    def run():
+        return subject_bootstrap(
+            lambda index: values[index].mean(axis=-1), len(values),
+            n_resamples=500, seed=7,
+        )
+
+    assert run() == run()
+
+
+def test_two_statistics_share_one_resample_so_their_difference_can_cancel():
+    """The point of driving both from one index array: a difference between
+    two quantities measured on the same subjects is far better determined than
+    two independent draws would make it."""
+    first = np.array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0])
+    # Identical up to a constant, so every resample shifts them together.
+    second = first + 10.0
+
+    difference = subject_bootstrap(
+        lambda index: second[index].mean(axis=-1) - first[index].mean(axis=-1),
+        len(first), n_resamples=2000,
+    )
+
+    assert difference["estimate"] == pytest.approx(10.0)
+    # Each mean alone varies by more than a unit across resamples; the
+    # difference does not vary at all.
+    assert difference["ci_low"] == pytest.approx(10.0)
+    assert difference["ci_high"] == pytest.approx(10.0)
+
+
+def test_the_achieved_significance_level_cannot_report_zero():
+    """It is bounded below by the resolution of the resampling, and saying so
+    is the difference between a small p and a p the bootstrap cannot see."""
+    values = np.array([5.0, 6.0, 7.0, 8.0, 9.0, 10.0])
+    result = subject_bootstrap(
+        lambda index: values[index].mean(axis=-1), len(values), n_resamples=1000
+    )
+
+    assert result["p"] == pytest.approx(2.0 / 1001)
+
+
+def test_the_bound_is_read_off_a_narrower_interval_than_the_one_reported():
+    values = np.array([0.4, -0.2, 0.9, 0.1, -0.5, 0.3, 0.7, -0.1])
+    result = subject_bootstrap(
+        lambda index: values[index].mean(axis=-1), len(values), n_resamples=4000
+    )
+
+    assert result["coverage"] == 0.95
+    assert result["equivalence_bound_coverage"] == 0.90
+    assert result["equivalence_bound"] < max(
+        abs(result["ci_low"]), abs(result["ci_high"])
+    )
+
+
+@pytest.mark.parametrize("n_subjects", [0, 1])
+def test_too_few_subjects_yield_nan_rather_than_a_number(n_subjects):
+    result = subject_bootstrap(lambda index: np.ones(np.shape(index)[:-1]), n_subjects)
+
+    assert result["n_subjects"] == n_subjects
+    assert np.isnan(result["estimate"])
+    assert np.isnan(result["ci_low"]) and np.isnan(result["p"])
+
+
+def test_a_statistic_that_never_resolves_yields_nan_rather_than_raising():
+    """A vanishing denominator is the realistic case: the caller returns NaN
+    and the interval has to come back undefined, not empty or exploded."""
+    result = subject_bootstrap(lambda index: np.full(np.shape(index)[:-1], np.nan), 8, n_resamples=50)
+
+    assert np.isnan(result["ci_low"]) and np.isnan(result["ci_high"])
+    assert result["n_subjects"] == 8
 
 
 # --- repeated-measures ANOVA --------------------------------------------------

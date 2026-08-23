@@ -8,7 +8,6 @@ Note on legacy implementations:
 """
 
 import os
-import numpy as np
 import mne
 import pandas as pd
 from pathlib import Path

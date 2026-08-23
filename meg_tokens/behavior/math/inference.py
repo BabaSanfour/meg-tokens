@@ -80,6 +80,37 @@ def paired_subject_statistics(
         if difference_sd > 0:
             effect_size = float(np.mean(differences) / difference_sd)
 
+    # The paired difference needs its own standard error and interval. Only
+    # the two condition SEMs were registered before, and neither of them is
+    # the uncertainty on the contrast -- they ignore the pairing, which is the
+    # whole design. A figure drawing this contrast had no registered interval
+    # to read and either reconstructed one from mean/t (the plotting layer
+    # computing an inferential statistic, which the reporting rules forbid) or,
+    # where that reconstruction was mis-guarded, silently drew none at all.
+    sem_difference = np.nan
+    ci95_low = ci95_high = np.nan
+    bound = bound_dz = np.nan
+    if n_subjects > 1:
+        differences = values_a - values_b
+        sem_difference = float(
+            np.std(differences, ddof=1) / np.sqrt(n_subjects)
+        )
+        if np.isfinite(sem_difference):
+            half_width = float(
+                stats.t.ppf(0.975, n_subjects - 1) * sem_difference
+            )
+            ci95_low = float(np.mean(differences) - half_width)
+            ci95_high = float(np.mean(differences) + half_width)
+        # The equivalence bound travels with the contrast. A figure that
+        # argues from a null needs the smallest effect that null excludes, and
+        # a bare "n.s." is how a null quietly becomes a claim -- but the bound
+        # is an inferential quantity, so the figure layer must not derive it.
+        # It is registered here, from the differences themselves, rather than
+        # reconstructed downstream from t.
+        equivalence = equivalence_bound(differences)
+        bound = float(equivalence.get("equivalence_bound", np.nan))
+        bound_dz = float(equivalence.get("equivalence_bound_dz", np.nan))
+
     return {
         "n_subjects": n_subjects,
         "mean_a": mean_a,
@@ -87,6 +118,12 @@ def paired_subject_statistics(
         "mean_b": mean_b,
         "sem_b": sem_b,
         "mean_difference": mean_a - mean_b,
+        "sem_difference": sem_difference,
+        "ci95_low": ci95_low,
+        "ci95_high": ci95_high,
+        "equivalence_bound": bound,
+        "equivalence_bound_dz": bound_dz,
+        "equivalence_bound_coverage": 0.90,
         "t": t_stat,
         "p": p_value,
         "df": float(n_subjects - 1) if n_subjects > 1 else np.nan,
@@ -142,10 +179,17 @@ def one_sample_statistics(values: Sequence[float]) -> dict[str, float]:
         }
     standard_deviation = float(np.std(array, ddof=1))
     result = stats.ttest_1samp(array, 0.0)
+    standard_error = standard_deviation / np.sqrt(n_subjects)
+    # Persisted so a figure drawing these means reads the interval rather than
+    # rebuilding it from mean, sem and df -- the same reason the paired
+    # contrasts already carry one.
+    half_width = float(stats.t.ppf(0.975, n_subjects - 1)) * standard_error
     return {
         "n_subjects": n_subjects,
         "mean": mean,
-        "sem": standard_deviation / np.sqrt(n_subjects),
+        "sem": standard_error,
+        "ci95_low": mean - half_width,
+        "ci95_high": mean + half_width,
         "t": float(result.statistic),
         "p": float(result.pvalue),
         "df": float(n_subjects - 1),
@@ -155,6 +199,327 @@ def one_sample_statistics(values: Sequence[float]) -> dict[str, float]:
             else float("nan")
         ),
     }
+
+
+def equivalence_bound(values, coverage: float = 0.90) -> dict[str, float]:
+    """Smallest effect a set of subject-level differences can rule out.
+
+    Parameters
+    ----------
+    values
+        One difference per subject. Non-finite values are excluded.
+    coverage
+        Two-sided coverage of the interval the bound is read off. Defaults to
+        0.90, which is the interval a two-one-sided-tests check at
+        ``alpha = .05`` uses.
+
+    Returns
+    -------
+    dict
+        The smallest bound a TOST at ``alpha = 1 - coverage`` passes at, that
+        bound in units of the differences' standard deviation, and the coverage
+        it was read off. An empty dict when fewer than two finite values are
+        supplied, so a caller can splat the result into a row without emitting
+        columns it has no value for.
+
+        The interval itself is deliberately *not* returned. A row nearly always
+        already carries one, often at a different coverage, and silently
+        overwriting it is how a 95% interval ends up labelled 90%. Call
+        :func:`confidence_interval` for the interval and this for the bound.
+
+    Notes
+    -----
+    A TOST passes exactly when the interval lies inside the bound, so the
+    smallest bound that passes is the interval's furthest endpoint. Reporting
+    that one number states what the data exclude instead of leaving a reader
+    to try candidate bounds until one passes -- and it is the only honest
+    summary of a null, which ``p`` alone never provides.
+    """
+    array = np.asarray(list(values), dtype=float)
+    array = array[np.isfinite(array)]
+    if array.size < 2:
+        return {}
+    statistics = one_sample_statistics(array)
+    low, high = confidence_interval(
+        statistics["mean"], statistics["sem"], statistics["df"], coverage=coverage
+    )
+    bound = max(abs(low), abs(high))
+    deviation = float(np.std(array, ddof=1))
+    return {
+        "equivalence_bound": bound,
+        "equivalence_bound_dz": bound / deviation if deviation > 0 else float("nan"),
+        "equivalence_bound_coverage": coverage,
+    }
+
+
+def confidence_interval(
+    estimate: float,
+    standard_error: float,
+    df: float,
+    coverage: float = 0.95,
+) -> tuple[float, float]:
+    """Two-sided t interval from an estimate and its standard error.
+
+    Parameters
+    ----------
+    estimate
+        The point estimate.
+    standard_error
+        Its standard error.
+    df
+        Degrees of freedom for the t quantile.
+    coverage
+        Two-sided coverage probability. Defaults to 0.95.
+
+    Returns
+    -------
+    tuple of float
+        Lower and upper bounds, both NaN when any input is missing or ``df``
+        is not positive.
+
+    Notes
+    -----
+    Prefer this to :func:`confidence_interval_from_t` whenever the standard
+    error is available: that function has to divide by the t statistic and so
+    yields nothing when the estimate is exactly zero, which is precisely the
+    case a bound is most often wanted for. A zero standard error gives a
+    degenerate interval equal to the estimate, which is correct.
+    """
+    if not all(np.isfinite([estimate, standard_error, df])) or df <= 0:
+        return float("nan"), float("nan")
+    half_width = float(stats.t.ppf(0.5 + coverage / 2, df)) * abs(standard_error)
+    return estimate - half_width, estimate + half_width
+
+
+def confidence_interval_from_t(
+    estimate: float,
+    t_statistic: float,
+    df: float,
+    coverage: float = 0.95,
+) -> tuple[float, float]:
+    """Recover an estimate's confidence interval from its own t statistic.
+
+    Parameters
+    ----------
+    estimate
+        The point estimate the t statistic was computed for, such as a mean
+        paired difference.
+    t_statistic
+        The t statistic testing ``estimate`` against zero.
+    df
+        Degrees of freedom of that test.
+    coverage
+        Two-sided coverage probability. Defaults to 0.95.
+
+    Returns
+    -------
+    tuple of float
+        Lower and upper bounds, both NaN when the interval is not recoverable.
+
+    Notes
+    -----
+    ``estimate / t`` is the standard error the test itself used, so this
+    reconstructs the interval exactly rather than re-deriving it from
+    condition-level standard errors -- which is not possible for a paired
+    difference, whose error term depends on the within-subject covariance. The
+    interval is undefined when the t statistic is zero, since the standard
+    error is then unrecoverable; that case returns NaN rather than an
+    arbitrarily wide interval.
+    """
+    if not all(np.isfinite([estimate, t_statistic, df])) or df <= 0:
+        return float("nan"), float("nan")
+    if t_statistic == 0:
+        return float("nan"), float("nan")
+    standard_error = abs(estimate / t_statistic)
+    half_width = float(stats.t.ppf(0.5 + coverage / 2, df)) * standard_error
+    return estimate - half_width, estimate + half_width
+
+
+def equivalence_bound_from_summary(
+    estimate: float,
+    df: float,
+    *,
+    standard_error: float | None = None,
+    t_statistic: float | None = None,
+    coverage: float = 0.90,
+) -> float:
+    """The equivalence bound for a contrast already summarized in a row.
+
+    Parameters
+    ----------
+    estimate
+        The mean difference.
+    df
+        Degrees of freedom of the test on it.
+    standard_error
+        Its standard error, when the row carries one.
+    t_statistic
+        The t statistic testing it against zero. Used when no standard error
+        is given -- which is the common case for a *paired* contrast, whose
+        rows carry ``sem_a`` and ``sem_b`` per condition but no paired
+        ``sem``: that error term depends on the within-subject covariance and
+        is not recoverable from the two condition standard errors. It is
+        recoverable from the t statistic the test itself reported.
+    coverage
+        Two-sided coverage the bound is read off. Defaults to 0.90, the
+        interval a TOST at ``alpha = .05`` uses.
+
+    Returns
+    -------
+    float
+        The smallest effect the contrast rules out, or NaN when the interval
+        is not recoverable.
+
+    Notes
+    -----
+    Same rule as :func:`equivalence_bound` -- the furthest endpoint of the
+    interval -- for the case where the subject-level differences are no longer
+    at hand but a persisted row summarizes them. A figure arguing from a null
+    needs the bound and usually has only the row; without this it either
+    re-derives the rule inline or prints "n.s.", and both are how a null
+    quietly becomes a claim. The standardized companion is not returned,
+    because the differences' own standard deviation is not recoverable from a
+    summary row.
+    """
+    if standard_error is not None and np.isfinite(standard_error):
+        low, high = confidence_interval(
+            estimate, standard_error, df, coverage=coverage
+        )
+    elif t_statistic is not None:
+        low, high = confidence_interval_from_t(
+            estimate, t_statistic, df, coverage=coverage
+        )
+    else:
+        return float("nan")
+    if not np.isfinite(low) or not np.isfinite(high):
+        return float("nan")
+    return max(abs(low), abs(high))
+
+
+def subject_bootstrap(
+    statistic,
+    n_subjects: int,
+    *,
+    n_resamples: int = 20000,
+    seed: int = 0,
+    coverage: float = 0.95,
+    bound_coverage: float = 0.90,
+) -> dict[str, float]:
+    """Resample subjects to interval-estimate a statistic that is not a mean.
+
+    Parameters
+    ----------
+    statistic
+        Callable taking an integer index array whose **last** axis holds
+        ``n_subjects`` resampled subject positions, and reducing over that axis
+        to return one value per leading element. Written against
+        ``numpy``'s ``axis=-1`` reductions it is the same expression for one
+        resample or for all of them, and every replicate is computed in a
+        single call rather than in a Python loop.
+    n_subjects
+        Number of subjects to resample from, with replacement.
+    n_resamples
+        Bootstrap replicates. The default resolves the interval endpoints to
+        about a thousandth on the scales used here.
+    seed
+        Seed for the resampling generator. Fixed by default, because a
+        derivative that changes on re-run is not a derivative.
+    coverage
+        Two-sided coverage of the reported percentile interval.
+    bound_coverage
+        Two-sided coverage the equivalence bound is read off, matching
+        :func:`equivalence_bound`.
+
+    Returns
+    -------
+    dict
+        The point estimate, its percentile interval and that interval's
+        coverage, the bootstrap achieved significance level against zero, the
+        equivalence bound and its own coverage, the subject count, and the
+        resampling settings. Inferential fields are NaN when fewer than two
+        subjects are supplied or the statistic never returns a finite value.
+
+    Notes
+    -----
+    Use this for a quantity the subject-level t machinery cannot reach: a ratio
+    of subject means, or a difference between two such ratios. Those have no
+    per-subject value to average -- a per-subject ratio explodes wherever a
+    subject's denominator approaches zero, which is exactly where the group
+    ratio is best determined -- so the sampling unit has to be resampled
+    instead of the estimate.
+
+    The same index array drives every statistic a caller composes, so two
+    quantities computed from one set of subjects stay **paired** across
+    replicates. That is what makes a difference between them testable at all:
+    unpaired, the two sampling errors add instead of cancelling.
+
+    ``p`` is the percentile achieved significance level,
+    ``2 * min(P(theta* <= 0), P(theta* >= 0))``, counted with the standard
+    ``+1`` correction so that it is bounded below by ``2 / (n_resamples + 1)``
+    -- it can say "smaller than the resolution of this bootstrap", never
+    "zero". No bias correction or acceleration is applied, so a heavily skewed
+    statistic's interval is the percentile one and nothing better.
+    """
+    if n_subjects < 2:
+        return {
+            "n_subjects": int(max(n_subjects, 0)),
+            "estimate": float("nan"),
+            "ci_low": float("nan"),
+            "ci_high": float("nan"),
+            "coverage": coverage,
+            "p": float("nan"),
+            "equivalence_bound": float("nan"),
+            "equivalence_bound_coverage": bound_coverage,
+            "n_resamples": int(n_resamples),
+            "bootstrap_seed": int(seed),
+        }
+    estimate = float(np.asarray(statistic(np.arange(n_subjects))).reshape(()))
+    generator = np.random.default_rng(seed)
+    indices = generator.integers(0, n_subjects, size=(n_resamples, n_subjects))
+    replicates = np.asarray(statistic(indices), dtype=float).ravel()
+    replicates = replicates[np.isfinite(replicates)]
+    if replicates.size < 2:
+        return {
+            "n_subjects": int(n_subjects),
+            "estimate": estimate,
+            "ci_low": float("nan"),
+            "ci_high": float("nan"),
+            "coverage": coverage,
+            "p": float("nan"),
+            "equivalence_bound": float("nan"),
+            "equivalence_bound_coverage": bound_coverage,
+            "n_resamples": int(n_resamples),
+            "bootstrap_seed": int(seed),
+        }
+    low, high = _percentile_interval(replicates, coverage)
+    bound_low, bound_high = _percentile_interval(replicates, bound_coverage)
+    # The +1 on both counts is the standard correction: a replicate count of
+    # zero would otherwise print p = 0, which asserts more than any finite
+    # number of resamples can support.
+    total = replicates.size + 1
+    below = (float(np.sum(replicates <= 0.0)) + 1.0) / total
+    above = (float(np.sum(replicates >= 0.0)) + 1.0) / total
+    return {
+        "n_subjects": int(n_subjects),
+        "estimate": estimate,
+        "ci_low": low,
+        "ci_high": high,
+        "coverage": coverage,
+        "p": min(1.0, 2.0 * min(below, above)),
+        "equivalence_bound": max(abs(bound_low), abs(bound_high)),
+        "equivalence_bound_coverage": bound_coverage,
+        "n_resamples": int(replicates.size),
+        "bootstrap_seed": int(seed),
+    }
+
+
+def _percentile_interval(
+    replicates: np.ndarray, coverage: float
+) -> tuple[float, float]:
+    """Two-sided percentile interval of a bootstrap distribution."""
+    tail = (1.0 - coverage) / 2.0
+    low, high = np.percentile(replicates, [100.0 * tail, 100.0 * (1.0 - tail)])
+    return float(low), float(high)
 
 
 def _effect_component(data: np.ndarray, kept_axes: tuple[int, ...]) -> np.ndarray:

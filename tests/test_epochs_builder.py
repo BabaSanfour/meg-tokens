@@ -272,7 +272,6 @@ def test_reconstruct_missing_go_events_skips_never_started_trials():
 
 
 def test_reconstruct_missing_go_events_falls_back_to_default_lag_when_uncalibrated():
-    n_trials = 2
     sfreq = 1000.0
     start_samples = [0, 1000]
     tgo_ms = [100, 100]

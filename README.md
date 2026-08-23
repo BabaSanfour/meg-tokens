@@ -16,7 +16,7 @@ Analysis library for decision-making dynamics on the **Tokens Task** with MEG. `
     *   `io/`: derivative layout, `.npy`/JSON/xarray/table contracts.
 *   **`workflow/`**: Snakemake DAG, local/Slurm profiles.
 *   **`tests/`**: unit tests.
-*   **`docs/`**: data contracts, refactor notes -- [`legacy_traceability.md`](docs/legacy_traceability.md) (old-script mapping), [`refactor/architecture.md`](docs/refactor/architecture.md) (architecture contract).
+*   **`docs/`**: [`behavior.md`](docs/behavior.md) (behavioral results, figures and their conventions), [`meg.md`](docs/meg.md) (MEG pipeline), [`data_contract.md`](docs/data_contract.md) (persisted data and metadata), [`refactor/architecture.md`](docs/refactor/architecture.md) (architecture contract).
 *   **`pyproject.toml`**: package metadata/deps.
 *   **`archive/`**: raw scripts copied from the external drives -- `DDM_scripts/` (`scripts_new/` Python/Jupyter + `matlab_scripts/`), `DDM_analysis_scripts/` (Jupyter, from `DDM/scripts/`).
 
@@ -60,6 +60,76 @@ Relative paths resolve from the config file's location.
 
 ---
 *Refactored/organized starting 2026-06-25.*
+
+## Machines, environments, and execution rules
+
+Two machines run this project, and the differences between them have caused
+real failures. Read this before running anything on the cluster.
+
+### `fir` (Alliance cluster)
+
+Checkout `~/meg-tokens`, data root `/scratch/hamza97/meg-tokens`. The venv is a
+**real directory** at `~/meg-tokens/.venv` — not a symlink; it was rebuilt on
+2026-08-22 after the previous one turned out to be a dangling symlink into a
+deleted `/project/.../meg-tokens-venv`:
+
+```bash
+module load StdEnv/2023 python/3.10.13
+python -m venv .venv
+./.venv/bin/pip install -e '.[modeling,dev]'
+```
+
+Two traps worth stating plainly:
+
+- **`uv` is not available on `fir`**, so `uv.lock` is unusable there. Install
+  from `pyproject.toml` with pip.
+- **`pyddm` lives in the `modeling` extra.** A bare `pip install -e .` yields an
+  environment that imports fine and cannot fit a single model.
+
+### Configuration
+
+**`tokens.toml` is per machine and gitignored. Never sync it.** The desktop's
+`data_root` is `/media/karim/Hamza/meg-tokens`; the cluster's is
+`/scratch/hamza97/meg-tokens`.
+
+### Syncing between checkouts
+
+**Never use a deleting rsync, `git reset`, or a force-overwrite against either
+checkout.** Inspect both local and remote `git status` first — the cluster
+carries its own untracked `logs/`, `scripts/render_figs.sh` and
+`scripts/rerun_behavior.sh`, and losing those costs a re-derivation.
+
+### Where each stage runs
+
+- **Report regeneration is local**, from the copied group derivatives:
+  `uv run meg-tokens --config tokens.toml report behavior --figures <key>`.
+- **Characterization and model fitting run on the cluster**, against the full
+  data, **through Slurm on a compute node — never on a login node**.
+- Cluster command pattern: `uv run meg-tokens --config tokens.toml <command>`
+  from inside `~/meg-tokens`.
+
+### Stage ordering for the sequential-sampling models
+
+`ssm-aggregate` is the sole writer of every `ssm*` group derivative;
+`behavior characterization` consumes the per-subject fits but writes none of
+them back, so the run order between the two is free. A characterization-only
+run produces no `ssm*` group table, so the model-comparison figures need
+`ssm-fit` and `ssm-aggregate` to have run first.
+
+### Verifying the write-up against the derivatives
+
+`scripts/verify/` holds seven scripts that assert every number
+`docs/behavior.md` quotes against the derivative it came from. They read
+`data_root` from `tokens.toml`, so they run unchanged on any machine
+(`MEG_TOKENS_DATA_ROOT` overrides it):
+
+```bash
+python -m scripts.verify.verify_doc          # Acts 1-2
+python -m scripts.verify.verify_act4_doc     # sequential effects
+python -m scripts.verify.verify_act5_doc     # individual differences
+```
+
+Run them after any derivative regeneration.
 
 ## Running the Pipeline (CLI)
 
@@ -106,8 +176,9 @@ Runs the full battery of behavioral analyses described in `docs/behavior.md`
 over Stage 2's trial-feature table — distributions, condition × class effects, session
 drift, lapses, continuous evidence, criterion decline and urgency, reverse
 correlation, conditional accuracy, trial history, and individual differences.
-Each writes its own group derivative; results on the current dataset are in
-`docs/behavior_roadmap_results.md`. Requires Stage 2 to have run first:
+Each writes its own group derivative; the results on the current dataset, and
+the figures built from them, are reported in `docs/behavior.md`. Requires
+Stage 2 to have run first:
 
 ```bash
 meg-tokens --config tokens.toml behavior characterization

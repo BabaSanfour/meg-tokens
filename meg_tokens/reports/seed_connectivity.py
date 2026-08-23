@@ -58,7 +58,6 @@ def run_batch_plot_seed_connectivity(
     con_before_group, con_after_group, node_names, subjects, input_paths = load_connectivity_pairs_with_metadata(
         data_dir, condition, band
     )
-    _, n_rois, _ = con_before_group.shape
     seed_idx, node_names = _resolve_seed(seed_roi, node_names, node_names_path)
 
     print(f"Extracting Seed -> All vector for seed index {seed_idx}")

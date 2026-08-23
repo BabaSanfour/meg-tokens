@@ -19,6 +19,10 @@ from meg_tokens.behavior.schema import OUTCOME_NEVER_STARTED
 CLASS_NAMES: Final[dict[int, str]] = {1: "easy", 2: "ambiguous", 3: "misleading"}
 CLASS_CODES: Final[dict[str, int]] = {name: code for code, name in CLASS_NAMES.items()}
 TASK_CONDITIONS: Final[tuple[str, ...]] = ("Fast", "Slow")
+# Two-alternative forced choice: accuracy's null is chance, never zero. A task
+# property rather than an analysis choice, so it lives here and every analysis
+# that tests an accuracy reads the same number.
+CHANCE_ACCURACY: Final[float] = 0.5
 
 # LabVIEW outcome codes, from archive/DDM_scripts/matlab_scripts (ERROR CODES).
 # 7003 (never started) is handled by started_trials and never reaches analysis.

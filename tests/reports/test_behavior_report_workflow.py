@@ -2,13 +2,23 @@ import json
 
 import pytest
 
+from meg_tokens.behavior.analyses.distributions import decision_time_geometry
+from meg_tokens.behavior.analyses.sequential_sampling import (
+    heldout_model_statistics,
+    heldout_pairwise_model_statistics,
+)
 from meg_tokens.io import DerivativeLayout, save_table, sidecar_path
 from meg_tokens.reports.behavior_summary import run_behavior_plotting
 
 from tests.reports.factories import (
     ssmcomparison,
+    ssmboundaryaudit,
     ssmcomparisonstats,
+    ssmheldout,
     trial_features_group,
+    ssmdistributioncheckstats,
+    ssmrobustnessstats,
+    ssmtimecourse,
     write_group_derivative,
 )
 
@@ -18,6 +28,22 @@ def _stage_headline_derivatives(tmp_path):
     fits = ssmcomparison()
     write_group_derivative(layout, "ssmcomparison", fits)
     write_group_derivative(layout, "ssmcomparisonstats", ssmcomparisonstats(fits))
+    write_group_derivative(layout, "ssmboundaryaudit", ssmboundaryaudit(fits))
+    write_group_derivative(
+        layout, "ssmrobustnessstats", ssmrobustnessstats()
+    )
+    write_group_derivative(layout, "ssmtimecourse", ssmtimecourse())
+    write_group_derivative(
+        layout, "ssmdistributioncheckstats", ssmdistributioncheckstats()
+    )
+    heldout = ssmheldout(fits)
+    write_group_derivative(layout, "ssmheldout", heldout)
+    write_group_derivative(
+        layout, "ssmheldoutstats", heldout_model_statistics(heldout)
+    )
+    write_group_derivative(
+        layout, "ssmheldoutpairwise", heldout_pairwise_model_statistics(heldout)
+    )
 
 
 def test_writes_pdf_png_and_one_json_per_figure(tmp_path):
@@ -35,7 +61,7 @@ def test_writes_pdf_png_and_one_json_per_figure(tmp_path):
 def test_desc_segments_match_sidecar_analysis_and_view(tmp_path):
     _stage_headline_derivatives(tmp_path)
     outputs = run_behavior_plotting(
-        str(tmp_path), str(tmp_path), figures=("ssmcomparison-deltabic",)
+        str(tmp_path), str(tmp_path), figures=("ssmcomparison-model",)
     )
     sidecar = json.loads(sidecar_path(outputs[0]).read_text(encoding="utf-8"))
     desc = outputs[0].name.split("_desc-", 1)[1].rsplit("_behavior", 1)[0]
@@ -71,7 +97,7 @@ def test_skip_missing_returns_a_shorter_list_without_raising(tmp_path):
 
 
 def test_unknown_figure_key_raises_valueerror_listing_valid_keys(tmp_path):
-    with pytest.raises(ValueError, match="ssmcomparison-deltabic"):
+    with pytest.raises(ValueError, match="ssmcomparison-model"):
         run_behavior_plotting(str(tmp_path), str(tmp_path), figures=("not-a-real-key",))
 
 
@@ -92,8 +118,10 @@ def test_a_figures_own_sources_do_not_leak_across_figures_in_the_same_run(tmp_pa
     write_group_derivative(layout, "dtdistribution", dist)
     write_group_derivative(layout, "dtdistributionstats", dtdistributionstats(dist))
     write_group_derivative(layout, "groupstats", groupstats())
+    features = trial_features_group()
+    write_group_derivative(layout, "dtgeometry", decision_time_geometry(features))
     save_table(
-        layout.behavior_trial_features(), trial_features_group(),
+        layout.behavior_trial_features(), features,
         metadata={"stage": "test_fixture"},
     )
 

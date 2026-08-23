@@ -5,8 +5,9 @@ post-correct trial, which confounds the effect with slow stretches of a
 session. The robust comparison instead pairs each post-error trial with the trial
 immediately *preceding* its error, so both sides of the contrast come from the
 same moment in the session. The same adjacency also supports choice-history
-effects: win-stay/lose-shift, side autocorrelation, and the influence of the
-previous trial's class and outcome on the current decision time.
+effects: win-stay/lose-shift and side autocorrelation. The previous trial's
+*outcome* effect on decision time lives with the post-error measures above,
+which own that contrast and report it decomposed.
 """
 
 from __future__ import annotations
@@ -20,7 +21,6 @@ from meg_tokens.behavior.math.inference import (
 )
 from meg_tokens.behavior.schema import validate_boolean_values
 from meg_tokens.behavior.trials import (
-    CLASS_NAMES,
     TASK_CONDITIONS,
     require_columns,
 )
@@ -129,6 +129,12 @@ def robust_post_error_slowing(features: pd.DataFrame) -> pd.DataFrame:
     contrast (mean post-error minus mean post-correct DT) is reported beside it
     from the same trials so the two definitions can be compared directly.
 
+    The local pair is also decomposed against the subject's own baseline,
+    because ``DT(error + 1) - DT(error - 1)`` is post-error slowing *only if
+    pre-error trials are typical*. ``pre_error_minus_baseline_ms`` and
+    ``post_error_minus_baseline_ms`` split it into the two effects it actually
+    contains, and they sum to ``robust_pes_ms`` by construction.
+
     Parameters
     ----------
     features
@@ -154,6 +160,12 @@ def robust_post_error_slowing(features: pd.DataFrame) -> pd.DataFrame:
     DT from mean post-error DT. No trimming, imputation, or outlier threshold
     is applied. ``robust`` refers to local temporal matching, not a robust
     estimator such as a median or M-estimator.
+
+    The baseline is the subject's mean decision time over every finite-DT trial
+    in the same selection, so the decomposition is against that subject's own
+    typical trial rather than a group value. Pre-error speeding is a real and
+    separately reported effect here, not a nuisance term: reporting only their
+    difference attributes both to post-error slowing.
     """
     trials = _ordered_task_runs(features)
     is_error = trials["is_correct"] == False  # noqa: E712 - keeps NaN out of the mask
@@ -173,11 +185,26 @@ def robust_post_error_slowing(features: pd.DataFrame) -> pd.DataFrame:
             following = subject_trials.loc[selection & subject_trials["previous_dt"].notna()]
             post_error = following.loc[following["previous_is_correct"] == False]  # noqa: E712
             post_correct = following.loc[following["previous_is_correct"] == True]  # noqa: E712
+            # The subject's own typical trial in this selection, which is what
+            # makes the pre/post split interpretable as two separate effects.
+            baseline_dt = subject_trials.loc[selection, "dt"]
+            baseline = (
+                float(baseline_dt.mean()) if baseline_dt.notna().any() else float("nan")
+            )
             rows.append(
                 {
                     "subject": subject,
                     "condition": name,
                     "n_error_pairs": int(differences.size),
+                    "mean_baseline_dt_ms": baseline,
+                    "pre_error_minus_baseline_ms": (
+                        float(paired["previous_dt"].mean() - baseline)
+                        if len(paired) else float("nan")
+                    ),
+                    "post_error_minus_baseline_ms": (
+                        float(paired["next_dt"].mean() - baseline)
+                        if len(paired) else float("nan")
+                    ),
                     "robust_pes_ms": (
                         float(np.mean(differences)) if differences.size else float("nan")
                     ),
@@ -212,8 +239,11 @@ def post_error_statistics(subject_table: pd.DataFrame) -> pd.DataFrame:
     -------
     pandas.DataFrame
         One-sample tests against zero for robust and classical post-error
-        slowing in every available condition, plus subject-paired Fast-minus-
-        Slow contrasts when both condition columns exist.
+        slowing in every available condition, subject-paired Fast-minus-Slow
+        contrasts when both condition columns exist, and a descriptive
+        ``robust_vs_classical_agreement`` row per condition carrying the
+        correlation between the two measures and how many subjects each puts
+        above zero.
 
     Notes
     -----
@@ -227,7 +257,16 @@ def post_error_statistics(subject_table: pd.DataFrame) -> pd.DataFrame:
         ["subject", "condition", "robust_pes_ms", "classical_pes_ms"],
     )
     rows = []
-    for measure in ("robust_pes_ms", "classical_pes_ms"):
+    # The two baseline-relative components are tested on the same footing as
+    # the composite: `robust_pes_ms` is their difference, so citing only the
+    # composite reports pre-error speeding as if it were post-error slowing.
+    measures = (
+        "robust_pes_ms",
+        "classical_pes_ms",
+        "post_error_minus_baseline_ms",
+        "pre_error_minus_baseline_ms",
+    )
+    for measure in (m for m in measures if m in subject_table.columns):
         for condition, group in subject_table.groupby("condition", sort=True):
             rows.append(
                 {
@@ -249,6 +288,33 @@ def post_error_statistics(subject_table: pd.DataFrame) -> pd.DataFrame:
                     **paired_subject_statistics(wide["fast"], wide["slow"]),
                 }
             )
+
+    # How far the two conventional measures agree. The write-up argues from
+    # these -- "r = 0.82 but not interchangeable, positive in 32 of 32 against
+    # 29" -- so they are registered here rather than recomputed by whoever
+    # needs them. They are descriptive: the correlation carries no test,
+    # because the claim is that the two measures track each other while
+    # disagreeing on individual subjects, not that r differs from zero.
+    for condition, group in subject_table.groupby("condition", sort=True):
+        robust = pd.to_numeric(group["robust_pes_ms"], errors="coerce")
+        classical = pd.to_numeric(group["classical_pes_ms"], errors="coerce")
+        complete = robust.notna() & classical.notna()
+        robust, classical = robust[complete], classical[complete]
+        rows.append(
+            {
+                "analysis": "post_error_slowing",
+                "measure": "robust_vs_classical_agreement",
+                "condition": condition,
+                "test": "descriptive",
+                "n_subjects": int(complete.sum()),
+                "pearson_r": (
+                    float(robust.corr(classical)) if complete.sum() > 2
+                    else float("nan")
+                ),
+                "robust_positive": int((robust > 0).sum()),
+                "classical_positive": int((classical > 0).sum()),
+            }
+        )
     return pd.DataFrame(rows)
 
 
@@ -322,19 +388,11 @@ def choice_history(features: pd.DataFrame) -> pd.DataFrame:
             row["lose_shift"] = (
                 1.0 - row["lose_stay"] if np.isfinite(row["lose_stay"]) else float("nan")
             )
-            dt_after = {
-                "correct": linked.loc[after_correct, "dt"],
-                "error": linked.loc[after_error, "dt"],
-            }
-            for outcome, values in dt_after.items():
-                row[f"mean_dt_after_{outcome}_ms"] = (
-                    float(values.mean()) if values.notna().any() else float("nan")
-                )
-            for code, class_name in CLASS_NAMES.items():
-                values = linked.loc[linked["previous_trial_class"] == code, "dt"]
-                row[f"mean_dt_after_{class_name}_ms"] = (
-                    float(values.mean()) if values.notna().any() else float("nan")
-                )
+            # Decision time after an error belongs to `robust_post_error_slowing`,
+            # which owns the post-error contrast and reports it decomposed
+            # against each subject's baseline. Computing it here too produced
+            # the same per-subject value to 4.5e-13 under a second name, and two
+            # figures drew it.
             rows.append(row)
     return pd.DataFrame(rows)
 
@@ -369,12 +427,6 @@ def choice_history_statistics(subject_table: pd.DataFrame) -> pd.DataFrame:
             "win_stay",
             "lose_stay",
             "side_autocorrelation_lag1",
-            "mean_dt_after_error_ms",
-            "mean_dt_after_correct_ms",
-            *[
-                f"mean_dt_after_{class_name}_ms"
-                for class_name in CLASS_NAMES.values()
-            ],
         ],
     )
     rows = []
@@ -402,33 +454,4 @@ def choice_history_statistics(subject_table: pd.DataFrame) -> pd.DataFrame:
                 **one_sample_statistics(group["side_autocorrelation_lag1"]),
             }
         )
-        rows.append(
-            {
-                "analysis": "choice_history",
-                "measure": "dt_after_error_vs_correct",
-                "condition": condition,
-                "test": "paired_t_test",
-                "label_a": "after_error",
-                "label_b": "after_correct",
-                **paired_subject_statistics(
-                    group["mean_dt_after_error_ms"],
-                    group["mean_dt_after_correct_ms"],
-                ),
-            }
-        )
-        for first, second in (("easy", "ambiguous"), ("easy", "misleading"), ("ambiguous", "misleading")):
-            rows.append(
-                {
-                    "analysis": "choice_history",
-                    "measure": f"dt_after_{first}_vs_{second}",
-                    "condition": condition,
-                    "test": "paired_t_test",
-                    "label_a": f"after_{first}",
-                    "label_b": f"after_{second}",
-                    **paired_subject_statistics(
-                        group[f"mean_dt_after_{first}_ms"],
-                        group[f"mean_dt_after_{second}_ms"],
-                    ),
-                }
-            )
     return pd.DataFrame(rows)

@@ -155,7 +155,19 @@ def _post_error_table(n_subjects=4):
 def test_post_error_statistics_test_both_definitions_and_contrast_conditions():
     statistics = post_error_statistics(_post_error_table())
 
-    assert set(statistics["measure"]) == {"robust_pes_ms", "classical_pes_ms"}
+    assert set(statistics["measure"]) == {
+        "robust_pes_ms",
+        "classical_pes_ms",
+        # The local pair is DT(error+1) - DT(error-1), which is post-error
+        # slowing only if pre-error trials are typical. Both baseline-relative
+        # components are tested so the composite is never reported as if it
+        # were slowing alone.
+        "post_error_minus_baseline_ms",
+        "pre_error_minus_baseline_ms",
+        # Descriptive, not a test: how far the two conventional measures track
+        # each other, which the write-up quotes and so must not recompute.
+        "robust_vs_classical_agreement",
+    }
     assert set(statistics["condition"]) == {"all", "fast", "slow", "fast_vs_slow"}
     robust = statistics.loc[
         (statistics["measure"] == "robust_pes_ms")
@@ -163,6 +175,30 @@ def test_post_error_statistics_test_both_definitions_and_contrast_conditions():
     ].iloc[0]
     assert robust["n_subjects"] == 4
     assert robust["mean"] > 0
+    assert robust["ci95_low"] < robust["mean"] < robust["ci95_high"]
+
+
+def test_the_two_post_error_measures_carry_a_registered_agreement_row():
+    """The write-up argues from the correlation and the sign counts, so they
+    are a derivative row rather than something each consumer recomputes."""
+    table = _post_error_table()
+    statistics = post_error_statistics(table)
+    row = statistics.loc[
+        (statistics["measure"] == "robust_vs_classical_agreement")
+        & (statistics["condition"] == "all")
+    ].iloc[0]
+
+    pooled = table.loc[table["condition"] == "all"]
+    assert row["n_subjects"] == len(pooled)
+    assert row["pearson_r"] == pytest.approx(
+        pooled["robust_pes_ms"].corr(pooled["classical_pes_ms"])
+    )
+    assert row["robust_positive"] == int((pooled["robust_pes_ms"] > 0).sum())
+    assert row["classical_positive"] == int((pooled["classical_pes_ms"] > 0).sum())
+    # It is descriptive: a correlation between two measures of the same thing
+    # is not a hypothesis, and a p on it would only ever be misread.
+    assert row["test"] == "descriptive"
+    assert pd.isna(row.get("p", float("nan")))
 
 
 def test_post_error_statistics_require_the_subject_table_they_document():
@@ -219,36 +255,6 @@ def test_the_autocorrelation_is_withheld_when_a_side_never_varies():
     )
 
     assert np.isnan(_pooled(choice_history(features))["side_autocorrelation_lag1"])
-
-
-def test_decision_time_is_summarized_by_the_previous_outcome():
-    features = trial_features(
-        run_trial_index=[1, 2, 3, 4, 5],
-        choice_side=[1, 1, 2, 2, 1],
-        isCorrect=[True, False, True, False, True],
-        dt_ms=[900.0, 1000.0, 1100.0, 1200.0, 1300.0],
-    )
-
-    overall = _pooled(choice_history(features))
-
-    assert overall["mean_dt_after_correct_ms"] == pytest.approx(1100.0)
-    assert overall["mean_dt_after_error_ms"] == pytest.approx(1200.0)
-
-
-def test_decision_time_is_summarized_by_the_previous_trial_class():
-    features = trial_features(
-        run_trial_index=[1, 2, 3, 4],
-        trial_class=[1, 2, 3, 1],
-        trial_class_name=["easy", "ambiguous", "misleading", "easy"],
-        choice_side=[1, 1, 2, 2],
-        dt_ms=[900.0, 1000.0, 1100.0, 1200.0],
-    )
-
-    overall = _pooled(choice_history(features))
-
-    assert overall["mean_dt_after_easy_ms"] == pytest.approx(1000.0)
-    assert overall["mean_dt_after_ambiguous_ms"] == pytest.approx(1100.0)
-    assert overall["mean_dt_after_misleading_ms"] == pytest.approx(1200.0)
 
 
 def test_history_never_carries_across_a_run_or_condition_boundary():
@@ -329,10 +335,6 @@ def test_choice_history_statistics_run_the_fixed_group_contrasts():
     assert set(statistics["measure"]) == {
         "win_stay_vs_lose_stay",
         "side_autocorrelation_lag1",
-        "dt_after_error_vs_correct",
-        "dt_after_easy_vs_ambiguous",
-        "dt_after_easy_vs_misleading",
-        "dt_after_ambiguous_vs_misleading",
     }
     assert set(statistics["condition"]) == {"all", "fast"}
     assert (statistics["n_subjects"] <= 4).all()
@@ -343,3 +345,22 @@ def test_choice_history_statistics_require_the_subject_table_they_document():
 
     with pytest.raises(ValueError, match="lose_stay"):
         choice_history_statistics(history)
+
+
+def test_local_pair_slowing_decomposes_into_its_two_baseline_effects():
+    """`robust_pes_ms` is a composite, and the components must reconstruct it.
+
+    DT(error+1) - DT(error-1) is post-error slowing only when pre-error trials
+    are typical. Against the real cohort they are not: pre-error trials run
+    fast, so a quarter of the composite is pre-error speeding. The two
+    baseline-relative columns exist so the figure can state that split instead
+    of attributing all of it to slowing.
+    """
+    table = _post_error_table()
+    pooled = table.loc[table["condition"] == "all"]
+
+    reconstructed = (
+        pooled["post_error_minus_baseline_ms"] - pooled["pre_error_minus_baseline_ms"]
+    )
+    assert np.allclose(reconstructed, pooled["robust_pes_ms"], equal_nan=True)
+    assert pooled["mean_baseline_dt_ms"].notna().all()

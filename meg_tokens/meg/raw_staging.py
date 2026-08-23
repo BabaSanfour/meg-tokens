@@ -41,7 +41,6 @@ from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
-import pandas as pd
 
 from meg_tokens.behavior.tdms import (
     FILENAME_RE,

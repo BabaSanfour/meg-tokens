@@ -16,13 +16,16 @@ import statsmodels.api as sm
 from scipy import stats
 
 from meg_tokens.behavior.math.inference import (
+    confidence_interval,
     one_sample_statistics,
     paired_subject_statistics,
     repeated_measures_anova,
 )
 from meg_tokens.behavior.schema import validate_boolean_values
 from meg_tokens.behavior.trials import (
+    CHANCE_ACCURACY,
     CLASS_NAMES,
+    classified_trials,
     LAPSE_OUTCOMES,
     OUTCOME_LABELS,
     TASK_CONDITIONS,
@@ -46,7 +49,8 @@ def condition_class_cells(features: pd.DataFrame) -> pd.DataFrame:
     Parameters
     ----------
     features
-        Canonical trial-feature table. Only rows selected by ``task_trials``
+        Canonical trial-feature table. Only rows selected by
+        ``classified_trials``
         contribute.
 
     Returns
@@ -63,7 +67,10 @@ def condition_class_cells(features: pd.DataFrame) -> pd.DataFrame:
         If required fields are absent or ``isCorrect`` contains a noncanonical
         value.
     """
-    trials = task_trials(features)
+    # Every row this returns carries a trial class, so the unclassified 43%
+    # is excluded by name here rather than falling out of a comparison
+    # further down. The cells are unchanged either way.
+    trials = classified_trials(features)
     require_columns(trials, ["condition", "trial_class", "dt_ms", "isCorrect"])
     validate_boolean_values(
         trials["isCorrect"],
@@ -479,6 +486,413 @@ def time_on_task_statistics(subject_fits: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def condition_class_contrasts(cells: pd.DataFrame) -> pd.DataFrame:
+    """Planned contrasts behind the condition-by-class figure.
+
+    The 2 x 3 ANOVA in :func:`condition_class_statistics` reports whether
+    effects exist. It cannot state the three things the report actually argues
+    from: how large the Fast-to-Slow stretch is within each difficulty, how
+    tightly the leftover *additive* interaction is bounded, and whether
+    misleading accuracy sits below chance. Those were being computed in figure
+    code or by hand; they are analysis results and belong here.
+
+    Parameters
+    ----------
+    cells
+        Output of :func:`condition_class_cells`, one row per subject,
+        condition and trial class.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Rows for the per-class multiplicative stretch factor and its additive
+        counterpart, the easy-versus-misleading difference of differences, and
+        each class's accuracy against chance. ``estimate`` carries the value in
+        the row's own units, with ``ci_low``/``ci_high`` at ``coverage``.
+
+    Notes
+    -----
+    The stretch factor is a geometric mean: the test and interval are computed
+    on log ratios and back-transformed, which is the estimator matching the
+    log-scale interaction the figure annotates. Its interval covers the factor
+    itself, so a class whose interval excludes 1.0 stretched reliably.
+
+    The additive interaction is reported at 90% coverage, deliberately. It is
+    read as a bound on an effect the report argues is absent, and a 90%
+    interval is the stricter claim -- it is narrower, so surviving it is
+    harder. Interpreting an interval this way requires it to be quoted as a
+    bound, never as evidence for the null.
+
+    Accuracy is tested against chance pooled over Fast and Slow, since the
+    class definition it checks is a property of the stimulus rather than of the
+    urgency condition.
+    """
+    require_columns(
+        cells, ["subject", "condition", "trial_class_name", "mean_dt_ms", "accuracy"]
+    )
+    rows: list[dict] = []
+    dt_wide = cells.pivot_table(
+        index="subject", columns=["condition", "trial_class_name"], values="mean_dt_ms"
+    )
+    additive: dict[str, pd.Series] = {}
+    for class_name in CLASS_NAMES.values():
+        if ("slow", class_name) not in dt_wide or ("fast", class_name) not in dt_wide:
+            continue
+        slow = dt_wide[("slow", class_name)]
+        fast = dt_wide[("fast", class_name)]
+
+        ratio = (slow / fast).replace([np.inf, -np.inf], np.nan)
+        log_ratio = np.log(ratio.loc[ratio > 0].dropna())
+        statistics = one_sample_statistics(log_ratio)
+        low, high = confidence_interval(
+            statistics["mean"], statistics["sem"], statistics["df"], coverage=0.95
+        )
+        rows.append(
+            {
+                "analysis": "condition_class_contrasts",
+                "term": "stretch_factor",
+                "measure": "mean_dt_ms",
+                "trial_class_name": class_name,
+                "test": "one_sample_log_ratio",
+                "n_subjects": statistics["n_subjects"],
+                "estimate": float(np.exp(statistics["mean"])),
+                "ci_low": float(np.exp(low)),
+                "ci_high": float(np.exp(high)),
+                "coverage": 0.95,
+                "t": statistics["t"],
+                "p": statistics["p"],
+                "df": statistics["df"],
+                "cohens_dz": statistics["cohens_dz"],
+            }
+        )
+
+        difference = (slow - fast).dropna()
+        additive[class_name] = difference
+        statistics = one_sample_statistics(difference)
+        low, high = confidence_interval(
+            statistics["mean"], statistics["sem"], statistics["df"], coverage=0.95
+        )
+        rows.append(
+            {
+                "analysis": "condition_class_contrasts",
+                "term": "additive_difference_ms",
+                "measure": "mean_dt_ms",
+                "trial_class_name": class_name,
+                "test": "one_sample_vs_zero",
+                "estimate": statistics["mean"],
+                "ci_low": low,
+                "ci_high": high,
+                "coverage": 0.95,
+                **{
+                    key: statistics[key]
+                    for key in ("n_subjects", "t", "p", "df", "cohens_dz")
+                },
+            }
+        )
+
+    if "easy" in additive and "misleading" in additive:
+        # The additive interaction the millisecond-scale ANOVA tests, reduced
+        # to the single contrast that carries it: the two classes furthest
+        # apart in accuracy. Bounding this is the positive form of the claim
+        # that condition scales rather than shifts.
+        contrast = (additive["easy"] - additive["misleading"]).dropna()
+        statistics = one_sample_statistics(contrast)
+        low, high = confidence_interval(
+            statistics["mean"], statistics["sem"], statistics["df"], coverage=0.90
+        )
+        rows.append(
+            {
+                "analysis": "condition_class_contrasts",
+                "term": "additive_interaction_ms",
+                "measure": "mean_dt_ms",
+                "trial_class_name": "easy_vs_misleading",
+                "test": "one_sample_vs_zero",
+                "estimate": statistics["mean"],
+                "ci_low": low,
+                "ci_high": high,
+                "coverage": 0.90,
+                **{
+                    key: statistics[key]
+                    for key in ("n_subjects", "t", "p", "df", "cohens_dz")
+                },
+            }
+        )
+
+    accuracy_wide = cells.pivot_table(
+        index="subject", columns="trial_class_name", values="accuracy"
+    )
+    for class_name in CLASS_NAMES.values():
+        if class_name not in accuracy_wide:
+            continue
+        values = accuracy_wide[class_name].dropna()
+        statistics = one_sample_statistics(values - CHANCE_ACCURACY)
+        low, high = confidence_interval(
+            statistics["mean"], statistics["sem"], statistics["df"], coverage=0.95
+        )
+        rows.append(
+            {
+                "analysis": "condition_class_contrasts",
+                "term": "accuracy_vs_chance",
+                "measure": "accuracy",
+                "trial_class_name": class_name,
+                "test": "one_sample_vs_chance",
+                "estimate": float(values.mean()),
+                "ci_low": low + CHANCE_ACCURACY,
+                "ci_high": high + CHANCE_ACCURACY,
+                "coverage": 0.95,
+                **{
+                    key: statistics[key]
+                    for key in ("n_subjects", "t", "p", "df", "cohens_dz")
+                },
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+DECILE_COUNT: Final[int] = 10
+
+
+def within_block_decile_profile(features: pd.DataFrame) -> pd.DataFrame:
+    """Profile decision time across within-block position, observed and
+    class-adjusted.
+
+    The within-block slope in :func:`time_on_task` is a single linear
+    coefficient. It cannot show either the shape of the profile or how much of
+    that shape is trial scheduling rather than fatigue, and both are claims the
+    report makes. This resolves the same trials into deciles so those claims
+    rest on a derivative instead of the figure code.
+
+    Parameters
+    ----------
+    features
+        Canonical trial-feature table.
+
+    Returns
+    -------
+    pandas.DataFrame
+        One row per subject, condition subset (``all``, ``fast``, ``slow``) and
+        within-block decile, reporting observed and class-adjusted mean
+        decision time, the trial count, and the proportion of trials in each
+        named class.
+
+    Notes
+    -----
+    Deciles are cut *within each block* on ``run_trial_index``, because blocks
+    run 50-85 trials and pooling positions across a subject's blocks mixes
+    them. Ranks are broken by order of appearance so tied indices cannot land
+    in different deciles.
+
+    The class adjustment removes each subject's per-class mean and adds back
+    their grand mean, so the observed-minus-adjusted gap *is* the compositional
+    contribution. It is computed once per subject over all their trials, not
+    separately within each condition subset, so a subject's adjusted values do
+    not depend on which subset they are being averaged into. Trials whose class
+    is unclassified keep their own level in that adjustment rather than being
+    dropped, since they are a real and large part of every decile.
+
+    The adjustment is deliberately conservative. Class and position are
+    partially confounded by the trial schedule, so removing per-class means
+    also removes whatever genuine positional drift falls between the classes.
+    It can therefore understate a real positional effect but never overstate
+    one: the adjusted profile is a lower bound on fatigue, and the gap between
+    the two profiles is an upper bound on composition.
+    """
+    trials = task_trials(features)
+    require_columns(
+        trials,
+        ["dt_ms", "run_trial_index", "initial_time_ms", "condition", "run",
+         "trial_class_name"],
+    )
+    trials = trials.assign(block_position=_session_block_order(trials))
+    trials["dt_ms"] = pd.to_numeric(trials["dt_ms"], errors="coerce")
+    trials = trials.loc[np.isfinite(trials["dt_ms"])].copy()
+    trials["decile"] = trials.groupby(["subject", "block_position"])[
+        "run_trial_index"
+    ].transform(
+        lambda values: pd.qcut(
+            values.rank(method="first"), DECILE_COUNT, labels=False, duplicates="drop"
+        )
+    )
+    trials = trials.loc[trials["decile"].notna()]
+    trials["decile"] = trials["decile"].astype(int) + 1
+    trials["class_name"] = trials["trial_class_name"].astype(str)
+    trials["dt_class_adjusted_ms"] = (
+        trials["dt_ms"]
+        - trials.groupby(["subject", "class_name"])["dt_ms"].transform("mean")
+        + trials.groupby("subject")["dt_ms"].transform("mean")
+    )
+
+    condition = trials["condition"].astype(str).str.lower()
+    rows = []
+    for subject, subject_trials in trials.groupby("subject", sort=True):
+        subject_condition = condition.loc[subject_trials.index]
+        for name in ("all", *[item.lower() for item in TASK_CONDITIONS]):
+            selection = (
+                pd.Series(True, index=subject_trials.index)
+                if name == "all"
+                else subject_condition == name
+            )
+            selected = subject_trials.loc[selection]
+            if selected.empty:
+                continue
+            for decile, cell in selected.groupby("decile", sort=True):
+                classes = cell["class_name"]
+                rows.append(
+                    {
+                        "subject": subject,
+                        "condition": name,
+                        "decile": int(decile),
+                        "n_trials": int(len(cell)),
+                        "dt_ms": float(cell["dt_ms"].mean()),
+                        "dt_class_adjusted_ms": float(
+                            cell["dt_class_adjusted_ms"].mean()
+                        ),
+                        **{
+                            f"proportion_{class_name}": float(
+                                (classes == class_name).mean()
+                            )
+                            for class_name in CLASS_NAMES.values()
+                        },
+                    }
+                )
+    return pd.DataFrame(rows)
+
+
+def _decile_matrix(profile: pd.DataFrame, condition: str, measure: str) -> np.ndarray:
+    """Complete-subject ``(n_subjects, DECILE_COUNT)`` matrix for one cell set."""
+    wide = profile.loc[profile["condition"] == condition].pivot_table(
+        index="subject", columns="decile", values=measure, aggfunc="mean"
+    )
+    wide = wide.reindex(columns=range(1, DECILE_COUNT + 1))
+    return wide.to_numpy(dtype=float)
+
+
+def within_block_decile_statistics(profile: pd.DataFrame) -> pd.DataFrame:
+    """Test the shape of the within-block decile profile.
+
+    Parameters
+    ----------
+    profile
+        Output of :func:`within_block_decile_profile`.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Rows for the first-to-last rise and the total excursion of each
+        measure, the peak decile of each condition subset, an omnibus test of
+        departure from a per-subject straight line, and a per-decile test of
+        that departure.
+
+    Notes
+    -----
+    Linearity is tested on *deviations*: each subject's decile means have their
+    own least-squares line in decile number removed, and the residual profile
+    is submitted to a one-factor repeated-measures ANOVA. A plain ANOVA on the
+    means would reject on the linear trend itself, which is not in question.
+
+    Per-decile deviation tests carry a Bonferroni threshold for
+    ``DECILE_COUNT`` comparisons in ``p_threshold``; the ``p`` column is
+    uncorrected. Peak decile and excursion are reported for description only
+    and have no test attached: both are order statistics over ten noisy cells,
+    so neither is an inferential claim and the report must not use them as one.
+    Excursion is the range of the *group-mean* profile -- the range the figure
+    actually draws. Averaging each subject's own max-minus-min instead would
+    report roughly a third more (387 against 296 ms observed), because every
+    subject's extremes are selected partly on their own noise.
+    """
+    measures = ("dt_ms", "dt_class_adjusted_ms")
+    deciles = np.arange(1, DECILE_COUNT + 1, dtype=float)
+    rows: list[dict] = []
+
+    for measure in measures:
+        matrix = _decile_matrix(profile, "all", measure)
+        complete = matrix[np.all(np.isfinite(matrix), axis=1)]
+        if not len(complete):
+            continue
+        rows.append(
+            {
+                "analysis": "within_block_decile",
+                "term": "first_to_last_rise_ms",
+                "measure": measure,
+                "condition": "all",
+                "test": "one_sample_vs_zero",
+                **one_sample_statistics(complete[:, -1] - complete[:, 0]),
+            }
+        )
+        group_mean = complete.mean(axis=0)
+        rows.append(
+            {
+                "analysis": "within_block_decile",
+                "term": "excursion_ms",
+                "measure": measure,
+                "condition": "all",
+                "test": "descriptive",
+                "n_subjects": int(len(complete)),
+                "mean": float(group_mean.max() - group_mean.min()),
+            }
+        )
+
+    for measure in measures:
+        for condition in ("all", *[item.lower() for item in TASK_CONDITIONS]):
+            matrix = _decile_matrix(profile, condition, measure)
+            complete = matrix[np.all(np.isfinite(matrix), axis=1)]
+            if not len(complete):
+                continue
+            group_mean = complete.mean(axis=0)
+            rows.append(
+                {
+                    "analysis": "within_block_decile",
+                    "term": "peak_decile",
+                    "measure": measure,
+                    "condition": condition,
+                    "test": "descriptive",
+                    "n_subjects": int(len(complete)),
+                    "mean": float(deciles[int(np.argmax(group_mean))]),
+                }
+            )
+
+    matrix = _decile_matrix(profile, "all", "dt_ms")
+    complete = matrix[np.all(np.isfinite(matrix), axis=1)]
+    if len(complete) >= 2:
+        design = np.column_stack([np.ones_like(deciles), deciles])
+        # Per-subject least-squares line removed, so what remains is departure
+        # from linearity rather than the linear trend the slope already reports.
+        coefficients = np.linalg.lstsq(design, complete.T, rcond=None)[0]
+        deviations = complete - (design @ coefficients).T
+        effect = repeated_measures_anova(deviations, (DECILE_COUNT,))[0]
+        rows.append(
+            {
+                "analysis": "within_block_decile",
+                "term": "nonlinearity_omnibus",
+                "measure": "dt_ms",
+                "condition": "all",
+                "test": "repeated_measures_anova",
+                "n_subjects": effect["n_subjects"],
+                "df_effect": effect["df_effect"],
+                "df_error": effect["df_error"],
+                "F": effect["F"],
+                "p": effect["p"],
+                "partial_eta_squared": effect["partial_eta_squared"],
+            }
+        )
+        threshold = 0.05 / DECILE_COUNT
+        for index, decile in enumerate(deciles):
+            statistics = one_sample_statistics(deviations[:, index])
+            rows.append(
+                {
+                    "analysis": "within_block_decile",
+                    "term": "linear_deviation_ms",
+                    "measure": "dt_ms",
+                    "condition": "all",
+                    "decile": float(decile),
+                    "test": "one_sample_vs_zero",
+                    "p_threshold": threshold,
+                    **statistics,
+                }
+            )
+    return pd.DataFrame(rows)
+
+
 def condition_order_effects(features: pd.DataFrame) -> pd.DataFrame:
     """Compare the Fast/Slow DT difference between condition-order groups.
 
@@ -544,15 +958,29 @@ def condition_order_statistics(order_table: pd.DataFrame) -> pd.DataFrame:
     Returns
     -------
     pandas.DataFrame
-        Welch independent-samples t-tests for ``Slow - Fast`` adjustment and
-        the two condition means. Each row includes group labels, sample sizes,
-        means, ``a - b`` difference, statistic, p-value, and Welch degrees of
-        freedom.
+        Welch independent-samples t-tests (``test = "welch_t_test"``) for
+        ``Slow - Fast`` adjustment and the two condition means, each with group
+        labels, sample sizes, means, ``a - b`` difference, statistic, p-value
+        and Welch degrees of freedom; plus, for the ``Slow - Fast`` adjustment,
+        a within-group test against zero in each order group
+        (``test = "one_sample_vs_zero"``) and a bound on the between-group
+        difference (``test = "welch_bound"``).
 
     Notes
     -----
     A measure is omitted unless exactly two first-condition groups exist and
     each supplies at least two finite subject values.
+
+    Rows are distinguished by ``test`` as well as ``measure``: three different
+    tests report on ``slow_minus_fast_dt_ms``, so a consumer selecting on
+    measure alone will match more than one.
+
+    The within-group tests are the ones counterbalancing actually has to pass
+    -- whether subjects showed the effect whichever condition they started on
+    -- and they are what the report's design claim rests on. The between-group
+    Welch test cannot establish balance at these group sizes, so its row is
+    accompanied by a 90% interval to be read as a bound on the order effect
+    rather than as evidence that none exists.
     """
     rows = []
     for measure in ("slow_minus_fast_dt_ms", "mean_fast_dt_ms", "mean_slow_dt_ms"):
@@ -583,6 +1011,60 @@ def condition_order_statistics(order_table: pd.DataFrame) -> pd.DataFrame:
                 "df": float(getattr(result, "df", np.nan)),
             }
         )
+        if measure != "slow_minus_fast_dt_ms":
+            continue
+
+        difference = float(np.mean(values_a) - np.mean(values_b))
+        # Welch standard error from the samples themselves. Reconstructing it
+        # from the t statistic fails exactly when the two groups match, which
+        # is the case a bound is most wanted for.
+        standard_error = float(
+            np.sqrt(
+                np.var(values_a, ddof=1) / values_a.size
+                + np.var(values_b, ddof=1) / values_b.size
+            )
+        )
+        low, high = confidence_interval(
+            difference, standard_error, float(getattr(result, "df", np.nan)),
+            coverage=0.90,
+        )
+        rows.append(
+            {
+                "analysis": "condition_order",
+                "measure": measure,
+                "test": "welch_bound",
+                "label_a": f"first_{label_a}",
+                "label_b": f"first_{label_b}",
+                "n_a": int(values_a.size),
+                "n_b": int(values_b.size),
+                "mean_difference": difference,
+                "ci_low": low,
+                "ci_high": high,
+                "coverage": 0.90,
+                "df": float(getattr(result, "df", np.nan)),
+            }
+        )
+        for label, values in ((label_a, values_a), (label_b, values_b)):
+            statistics = one_sample_statistics(values)
+            low, high = confidence_interval(
+                statistics["mean"], statistics["sem"], statistics["df"], coverage=0.95
+            )
+            rows.append(
+                {
+                    "analysis": "condition_order",
+                    "measure": measure,
+                    "test": "one_sample_vs_zero",
+                    "label_a": f"first_{label}",
+                    "n_a": int(values.size),
+                    "ci_low": low,
+                    "ci_high": high,
+                    "coverage": 0.95,
+                    # How many subjects show the effect at all, which a mean
+                    # and an interval do not convey on their own.
+                    "n_positive": int(np.sum(values > 0)),
+                    **statistics,
+                }
+            )
     return pd.DataFrame(rows)
 
 

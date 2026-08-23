@@ -1,7 +1,6 @@
 import os
 import json
 import tempfile
-import pytest
 import mne
 import numpy as np
 import pandas as pd

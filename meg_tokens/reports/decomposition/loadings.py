@@ -1,5 +1,5 @@
 import json
-from typing import Optional, Sequence
+from typing import Optional
 
 import numpy as np
 import mne
@@ -53,7 +53,7 @@ def run_batch_plot_pca_loadings(
     vertices_path: str = None,
     is_volume: bool = False
 ):
-    print(f"=== Starting PCA Loadings 3D Brain Plotting ===")
+    print("=== Starting PCA Loadings 3D Brain Plotting ===")
     print(f"Loading PCA loadings from: {loadings_path}")
     
     output_path = ensure_dir(output_dir)

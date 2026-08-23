@@ -1,5 +1,6 @@
 import matplotlib.pyplot as plt
 
+from meg_tokens.behavior.analyses.distributions import decision_time_geometry
 from meg_tokens.io import DerivativeLayout
 from meg_tokens.reports.behavior import distributions
 from meg_tokens.reports.behavior._tables import BehaviorTableSet
@@ -19,12 +20,23 @@ def _tables(tmp_path):
     write_group_derivative(layout, "dtdistribution", dist)
     write_group_derivative(layout, "dtdistributionstats", dtdistributionstats(dist))
     write_group_derivative(layout, "groupstats", groupstats())
-    write_group_derivative(layout, "trialfeatures", trial_features_group())
+    features = trial_features_group()
+    write_group_derivative(layout, "trialfeatures", features)
+    write_group_derivative(layout, "dtgeometry", decision_time_geometry(features))
     return BehaviorTableSet(layout=layout)
 
 
 def test_dtdistribution_condition_reads_dt_ms_not_rawrt(tmp_path):
-    """Regression guard for the defect this plan fixes."""
+    """Regression guard for the defect this plan fixes.
+
+    F06 draws from the `dtdistribution` derivative and does not open the
+    trial-feature table, so the positive half of this guarantee -- that the
+    quantiles are `dt_ms` and not `rawRT` -- is asserted where it is true, in
+    `test_the_distributions_are_built_from_dt_ms_and_ignore_rawrt`. What this
+    checks is that the figure sources that derivative and that no rawRT-derived
+    column reaches it. It previously asserted `dt_ms` was declared, which the
+    figure only satisfied by naming a table it never read.
+    """
     figure, metadata = distributions.build_dtdistribution_condition(_tables(tmp_path))
     assert isinstance(figure, plt.Figure)
     all_columns = [
@@ -32,8 +44,11 @@ def test_dtdistribution_condition_reads_dt_ms_not_rawrt(tmp_path):
         for columns in metadata["columns_read"].values()
         for column in columns
     ]
-    assert "dt_ms" in all_columns
+    assert "dtdistribution" in metadata["columns_read"]
     assert "rawRT" not in all_columns
+    # And it declares only tables it opens; `trialfeatures` was declared here
+    # for years while nothing in the builder touched it.
+    assert "trialfeatures" not in metadata["columns_read"]
 
 
 def test_dtdistribution_condition_annotation_reaches_the_figure(tmp_path):

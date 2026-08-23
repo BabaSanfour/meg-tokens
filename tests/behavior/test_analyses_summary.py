@@ -5,7 +5,6 @@ import pandas as pd
 import pytest
 
 from meg_tokens.behavior.analyses.summary import summarize_behavior
-from meg_tokens.behavior.schema import OUTCOME_NEVER_STARTED
 
 from tests.behavior.factories import trial_features
 

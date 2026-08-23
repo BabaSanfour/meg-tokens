@@ -112,7 +112,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="Run parameter/model recovery simulations for the mechanistic model set.",
     )
     ssm_recovery.add_argument("--repetitions", type=int, default=12)
-    ssm_recovery.add_argument("--n-starts", dest="n_starts", type=int, default=2)
+    # Three, to match the production fit's estimator; recovery is cited as
+    # evidence about those fits.
+    ssm_recovery.add_argument("--n-starts", dest="n_starts", type=int, default=3)
     ssm_recovery.add_argument(
         "--repetition-index", type=int,
         help="Run one truth-design repetition for a restartable Slurm array task.",
@@ -148,12 +150,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="Validate and merge subject-by-rule exclusion-refit outputs.",
     )
     ssm_fit.add_argument(
-        "--model-set",
-        choices=("legacy", "mechanistic"),
-        default="legacy",
-        help="Fit the historical ddm+urgency pair or the complete four-model comparison.",
-    )
-    ssm_fit.add_argument(
         "--n-starts",
         dest="n_starts",
         type=int,
@@ -169,7 +165,7 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
 
-    qc = behavior_commands.add_parser(
+    behavior_commands.add_parser(
         "qc",
         help="Validate source TDMS success-probability and SPD profiles.",
     )
@@ -430,7 +426,6 @@ def build_parser() -> argparse.ArgumentParser:
     behavior_report.add_argument("--subjects", nargs="+")
     behavior_report.add_argument("--behavior-root")
     behavior_report.add_argument("--output-root")
-    behavior_report.add_argument("--neural-metrics")
     behavior_report.add_argument(
         "--figures",
         nargs="+",
@@ -596,7 +591,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 neural_metrics_path=args.neural_metrics,
             )
         elif args.domain == "behavior" and args.behavior_command == "ssm-fit":
-            from meg_tokens.workflows.behavior_characterization import (
+            from meg_tokens.workflows.sequential_sampling import (
                 fit_subject_sequential_sampling,
             )
             from meg_tokens.behavior.analyses.sequential_sampling import (
@@ -607,11 +602,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 project,
                 subjects=args.subjects,
                 n_jobs=args.n_jobs,
-                models=(MECHANISTIC_MODELS if args.model_set == "mechanistic" else ("ddm", "urgency")),
+                models=MECHANISTIC_MODELS,
                 n_starts=args.n_starts,
             )
         elif args.domain == "behavior" and args.behavior_command == "ssm-evaluate":
-            from meg_tokens.workflows.thura2012 import evaluate_thura2012
+            from meg_tokens.workflows.sequential_sampling import evaluate_thura2012
 
             result = evaluate_thura2012(
                 project,
@@ -621,15 +616,15 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 recovery_repetitions=args.recovery_repetitions,
             )
         elif args.domain == "behavior" and args.behavior_command == "ssm-evaluate-aggregate":
-            from meg_tokens.workflows.thura2012 import aggregate_mechanistic_evaluation
+            from meg_tokens.workflows.sequential_sampling import aggregate_mechanistic_evaluation
 
             result = aggregate_mechanistic_evaluation(project, folds=args.folds)
         elif args.domain == "behavior" and args.behavior_command == "ssm-aggregate":
-            from meg_tokens.workflows.thura2012 import aggregate_mechanistic_fits
+            from meg_tokens.workflows.sequential_sampling import aggregate_mechanistic_fits
 
             result = aggregate_mechanistic_fits(project)
         elif args.domain == "behavior" and args.behavior_command == "ssm-recovery":
-            from meg_tokens.workflows.thura2012 import run_recovery_stage
+            from meg_tokens.workflows.sequential_sampling import run_recovery_stage
 
             result = run_recovery_stage(
                 project,
@@ -638,11 +633,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 repetition_index=args.repetition_index,
             )
         elif args.domain == "behavior" and args.behavior_command == "ssm-recovery-aggregate":
-            from meg_tokens.workflows.thura2012 import aggregate_recovery_stage
+            from meg_tokens.workflows.sequential_sampling import aggregate_recovery_stage
 
             result = aggregate_recovery_stage(project, repetitions=args.repetitions)
         elif args.domain == "behavior" and args.behavior_command == "ssm-robustness":
-            from meg_tokens.workflows.thura2012 import run_robustness_stage
+            from meg_tokens.workflows.sequential_sampling import run_robustness_stage
 
             result = run_robustness_stage(
                 project,
@@ -652,11 +647,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 n_starts=args.n_starts,
             )
         elif args.domain == "behavior" and args.behavior_command == "ssm-robustness-aggregate":
-            from meg_tokens.workflows.thura2012 import aggregate_robustness_stage
+            from meg_tokens.workflows.sequential_sampling import aggregate_robustness_stage
 
             result = aggregate_robustness_stage(project)
         elif args.domain == "behavior" and args.behavior_command == "ssm-exclusion-robustness":
-            from meg_tokens.workflows.thura2012 import run_exclusion_robustness_stage
+            from meg_tokens.workflows.sequential_sampling import run_exclusion_robustness_stage
 
             result = run_exclusion_robustness_stage(
                 project,
@@ -666,15 +661,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 n_starts=args.n_starts,
             )
         elif args.domain == "behavior" and args.behavior_command == "ssm-exclusion-robustness-aggregate":
-            from meg_tokens.workflows.thura2012 import aggregate_exclusion_robustness_stage
+            from meg_tokens.workflows.sequential_sampling import aggregate_exclusion_robustness_stage
 
             result = aggregate_exclusion_robustness_stage(project)
         elif args.domain == "behavior" and args.behavior_command == "subjects":
-            from meg_tokens.workflows.behavior_characterization import (
-                characterization_subjects,
-            )
+            from meg_tokens.workflows.sequential_sampling import _selected_features
 
-            for subject in characterization_subjects(project):
+            _, _, subjects, _ = _selected_features(project, None)
+            for subject in subjects:
                 print(subject)
             return 0
         elif args.domain == "behavior" and args.behavior_command == "qc":
@@ -1024,7 +1018,6 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     str(args.behavior_root or project.bids_root),
                     str(args.output_root or project.bids_root),
                     subjects_list=args.subjects,
-                    neural_metrics_csv=args.neural_metrics,
                     figures=tuple(args.figures),
                     formats=tuple(args.formats),
                     skip_missing=args.skip_missing,
@@ -1183,3 +1176,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     for output in outputs:
         print(output)
     return 0
+
+
+if __name__ == "__main__":  # pragma: no cover - exercised as a subprocess
+    # Without this, `python -m meg_tokens.cli.main` defines these functions and
+    # exits 0 having run nothing, so a reproduction instruction written that way
+    # appears to succeed and writes no derivative.
+    raise SystemExit(main())

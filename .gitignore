@@ -67,3 +67,7 @@ venv.bak/
 archive/
 migration_map.md
 /tokens.toml
+
+logs/
+uv.lock
+*pdf

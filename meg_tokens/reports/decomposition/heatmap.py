@@ -1,5 +1,3 @@
-import os
-import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -10,7 +8,7 @@ def run_batch_plot_pca_heatmap(
     output_dir: str,
     rois: list = None
 ) -> str:
-    print(f"=== Starting PCA ROI Heatmap Plotting ===")
+    print("=== Starting PCA ROI Heatmap Plotting ===")
     
     output_path = ensure_dir(output_dir)
         
@@ -50,9 +48,9 @@ def run_batch_plot_pca_heatmap(
         cbar_kws={'label': 'Variance Explained (%)'}
     )
     
-    ax.set_title('PCA Variance Explained by ROI', fontsize=14, pad=15)
-    ax.set_ylabel('Principal Component', fontsize=12)
-    ax.set_xlabel('Region of Interest (ROI)', fontsize=12)
+    ax.set_title('PCA Variance Explained by ROI', pad=15)
+    ax.set_ylabel('Principal Component')
+    ax.set_xlabel('Region of Interest (ROI)')
     
     plt.tight_layout()
     

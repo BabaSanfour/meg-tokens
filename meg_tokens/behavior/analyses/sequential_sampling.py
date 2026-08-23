@@ -85,9 +85,6 @@ TOKEN_INTERVAL_S: Final[float] = 0.2
 FILTER_TAU_S: Final[float] = 0.2
 MIXTURE_COEF: Final[float] = 0.02
 
-# Keep the historical default stable for existing pooled derivatives and report
-# builders.  The complete prespecified comparison is ``MECHANISTIC_MODELS``.
-SSM_MODELS: Final[tuple[str, ...]] = ("ddm", "urgency")
 MECHANISTIC_MODELS: Final[tuple[str, ...]] = (
     "ddm",
     "urgency",
@@ -566,7 +563,7 @@ def _fit_all_cells(
     cells: list[tuple[object, str, pd.DataFrame]],
     *,
     n_jobs: int,
-    models: tuple[str, ...] = SSM_MODELS,
+    models: tuple[str, ...] = MECHANISTIC_MODELS,
     n_starts: int = 1,
     compute_uncertainty: bool = True,
 ) -> list[dict[str, dict[str, float] | None]]:
@@ -623,15 +620,15 @@ def fit_sequential_sampling_models(
     features: pd.DataFrame,
     *,
     n_jobs: int = 1,
-    models: tuple[str, ...] = SSM_MODELS,
+    models: tuple[str, ...] = MECHANISTIC_MODELS,
     n_starts: int = 1,
     compute_uncertainty: bool = True,
 ) -> pd.DataFrame:
     """Fit the urgency-gating and bounded-integrator models per subject.
 
     All requested models see the same trial-by-trial token evidence and differ
-    only in how they use it.  The default keeps the historical two-model fit;
-    pass ``models=MECHANISTIC_MODELS`` for the complete Thura et al. comparison.
+    only in how they use it.  The default is the complete prespecified
+    Thura et al. comparison; ``models`` narrows it for a smoke test.
 
     Parameters
     ----------
@@ -666,7 +663,7 @@ def fit_sequential_sampling_models(
     -----
     Fitting is maximum likelihood by differential evolution over the whole
     decision-time distribution, per subject and condition; the group layer is
-    :func:`population_parameters`. Cells with fewer than
+    the population model. Cells with fewer than
     :data:`MINIMUM_FIT_TRIALS` scorable trials are reported with ``NaN``
     estimates and ``converged`` false rather than fitted. The two models are
     not nested — one is a filter and the other an integrator — so the criterion
@@ -805,8 +802,7 @@ def fit_mechanistic_model_set(
 ) -> pd.DataFrame:
     """Fit the prespecified four-model Thura et al. comparison.
 
-    This named wrapper prevents a cluster command from accidentally reverting
-    to the historical two-model prototype.  ``n_starts=3`` is the default for
+    ``n_starts=3`` is the default for
     the final analysis; it can be reduced only for a smoke test.
     """
     return fit_sequential_sampling_models(
@@ -849,16 +845,16 @@ def model_comparison_statistics(fits: pd.DataFrame) -> pd.DataFrame:
     rows = []
     for condition, group in urgency.groupby("condition", sort=True):
         for criterion in ("aic", "bic"):
-            difference = group[f"delta_{criterion}"]
+            contrast = _paired_contrast_from_differences(group[f"delta_{criterion}"])
             rows.append(
                 {
                     "analysis": "ssm_model_comparison",
                     "condition": condition,
                     "criterion": criterion,
                     "test": "one_sample_vs_zero",
-                    "n_subjects_favoring_urgency": int((difference < 0).sum()),
-                    "n_subjects_favoring_ddm": int((difference > 0).sum()),
-                    **one_sample_statistics(difference),
+                    "n_subjects_favoring_urgency": contrast.pop("n_subjects_favoring_b"),
+                    "n_subjects_favoring_ddm": contrast.pop("n_subjects_favoring_a"),
+                    **contrast,
                 }
             )
     return pd.DataFrame(rows)
@@ -868,9 +864,8 @@ def mechanistic_model_statistics(fits: pd.DataFrame) -> pd.DataFrame:
     """Compare every candidate model with the fixed-bound ``ddm`` baseline.
 
     The returned differences are candidate minus ``ddm`` (negative values
-    favour the candidate).  This keeps the historical ``ssmcomparisonstats``
-    schema while making the collapsing-bound and additive-urgency sensitivity
-    comparisons explicit and paired by subject/condition.
+    favour the candidate).  Collapsing-bound and additive-urgency sensitivity
+    comparisons are explicit and paired by subject/condition.
     """
     if fits.empty:
         return pd.DataFrame()
@@ -894,7 +889,8 @@ def mechanistic_model_statistics(fits: pd.DataFrame) -> pd.DataFrame:
                 difference = (
                     candidate_condition.loc[common, criterion]
                     - baseline_condition.loc[common, criterion]
-                ).replace([np.inf, -np.inf], np.nan).dropna()
+                )
+                contrast = _paired_contrast_from_differences(difference)
                 rows.append(
                     {
                         "analysis": "ssm_mechanistic_model_comparison",
@@ -902,9 +898,9 @@ def mechanistic_model_statistics(fits: pd.DataFrame) -> pd.DataFrame:
                         "condition": condition,
                         "criterion": criterion,
                         "test": "one_sample_vs_zero",
-                        "n_subjects_favoring_candidate": int((difference < 0).sum()),
-                        "n_subjects_favoring_ddm": int((difference > 0).sum()),
-                        **one_sample_statistics(difference),
+                        "n_subjects_favoring_candidate": contrast.pop("n_subjects_favoring_b"),
+                        "n_subjects_favoring_ddm": contrast.pop("n_subjects_favoring_a"),
+                        **contrast,
                     }
                 )
     return pd.DataFrame(rows)
@@ -1198,23 +1194,65 @@ def _heldout_subject_scores(heldout: pd.DataFrame) -> pd.DataFrame:
     return folded[["subject", "condition", "model", "score"]]
 
 
-def _paired_score_contrast(
-    a_scores: pd.Series, b_scores: pd.Series, condition: str
-) -> dict[str, object] | None:
-    """One-sample paired contrast (a − b) for one condition, or ``None``.
+def heldout_pairwise_subject_differences(
+    heldout: pd.DataFrame, *, condition: str = "all"
+) -> pd.DataFrame:
+    """Per-subject held-out score differences for every ordered model pair.
 
-    ``None`` is returned when no subject has both scores after alignment.
-    Shared by every held-out comparison so the CI/favouring-count logic is
-    defined once regardless of what "a" and "b" represent.
+    One row per subject x ordered pair, with ``difference`` = ``model_a``
+    minus ``model_b`` in per-trial held-out log likelihood, so positive
+    favours ``model_a``.
+
+    This exists so that a figure drawing per-subject dots under a registered
+    pairwise interval computes neither. Subject scores come from
+    :func:`_heldout_subject_scores`, the same ``n_test``-weighted definition
+    :func:`heldout_pairwise_model_statistics` tests -- an unweighted fold mean
+    is a *different* estimator, and dots built that way sit under an interval
+    that was never fitted to them.
     """
-    a_condition = a_scores.loc[a_scores.index.get_level_values("condition") == condition]
-    b_condition = b_scores.loc[b_scores.index.get_level_values("condition") == condition]
-    common = a_condition.index.intersection(b_condition.index)
-    differences = (
-        a_condition.loc[common] - b_condition.loc[common]
-    ).replace([np.inf, -np.inf], np.nan).dropna()
-    if differences.empty:
-        return None
+    scores = _heldout_subject_scores(heldout)
+    scores = scores.loc[scores["condition"].astype(str) == condition]
+    if scores.empty:
+        return pd.DataFrame(
+            columns=["subject", "condition", "model_a", "model_b", "difference"]
+        )
+    wide = scores.pivot(index="subject", columns="model", values="score")
+    models = sorted(wide.columns)
+    rows = []
+    for model_a in models:
+        for model_b in models:
+            if model_a == model_b:
+                continue
+            difference = wide[model_a] - wide[model_b]
+            for subject, value in difference.items():
+                rows.append({
+                    "subject": subject,
+                    "condition": condition,
+                    "model_a": model_a,
+                    "model_b": model_b,
+                    "difference": float(value),
+                })
+    return pd.DataFrame(rows)
+
+
+def _paired_contrast_from_differences(differences: pd.Series) -> dict[str, object]:
+    """Favouring counts, a 95% CI, and the one-sample-vs-zero test for an
+    already-computed paired-difference series.
+
+    Generic ``n_subjects_favoring_a`` (``differences > 0``) /
+    ``n_subjects_favoring_b`` (``differences < 0``) keys: every call site in
+    this module relabels them to its own domain (candidate/ddm,
+    urgency/ddm, strict/primary, ...), exactly as :func:`_paired_score_contrast`
+    already does for ``a``/``b`` in :func:`heldout_model_statistics`. This is
+    the CI/favouring-count tail shared by every paired-contrast report here
+    -- held-out and in-sample alike -- so it is defined in exactly one place.
+    Never signals
+    "no data" itself (``one_sample_statistics`` already returns an all-NaN,
+    zero-count summary for an empty/all-non-finite series); a caller that
+    needs to skip an entirely-empty group checks that before calling in,
+    same as :func:`_paired_score_contrast` does.
+    """
+    differences = pd.Series(differences).replace([np.inf, -np.inf], np.nan)
     summary = one_sample_statistics(differences)
     n = int(summary["n_subjects"])
     if n > 1 and np.isfinite(summary["sem"]):
@@ -1228,6 +1266,28 @@ def _paired_score_contrast(
         "ci95_high": float(summary["mean"] + half_width),
         **summary,
     }
+
+
+def _paired_score_contrast(
+    a_scores: pd.Series, b_scores: pd.Series, condition: str
+) -> dict[str, object] | None:
+    """One-sample paired contrast (a − b) for one condition, or ``None``.
+
+    ``None`` is returned when no subject has both scores after alignment.
+    Shared by every held-out comparison so the CI/favouring-count logic is
+    defined once regardless of what "a" and "b" represent.
+    """
+    a_condition = a_scores.loc[a_scores.index.get_level_values("condition") == condition]
+    b_condition = b_scores.loc[b_scores.index.get_level_values("condition") == condition]
+    common = a_condition.index.intersection(b_condition.index)
+    if common.empty:
+        return None
+    differences = (
+        a_condition.loc[common] - b_condition.loc[common]
+    ).replace([np.inf, -np.inf], np.nan).dropna()
+    if differences.empty:
+        return None
+    return _paired_contrast_from_differences(differences)
 
 
 def heldout_model_statistics(heldout: pd.DataFrame) -> pd.DataFrame:
@@ -1795,6 +1855,369 @@ def matched_sequence_model_statistics(predictions: pd.DataFrame) -> pd.DataFrame
     return pd.DataFrame(rows)
 
 
+#: Observed matched-sequence measure -> its model-predicted counterpart and the
+#: factor converting the prediction onto the observed scale.
+_MATCHED_PREDICTED_MEASURES = {
+    "mean_accuracy": ("predicted_accuracy_after_convergence", 1.0),
+    "mean_dt_ms": ("predicted_mean_rt_after_convergence_s", 1000.0),
+}
+
+
+def matched_sequence_posterior_predictive(
+    predictions: pd.DataFrame,
+    matched: pd.DataFrame,
+) -> pd.DataFrame:
+    """Test each model's matched-sequence prediction against the observed one.
+
+    Parameters
+    ----------
+    predictions
+        Output of :func:`matched_sequence_model_predictions`.
+    matched
+        Output of :func:`matched_sequence_diagnostic`.
+
+    Returns
+    -------
+    pandas.DataFrame
+        One row per condition, model and measure, holding the within-subject
+        observed-minus-predicted against-minus-for contrast.
+
+    Notes
+    -----
+    The matched-sequence diagnostic is the only prespecified model-free test of
+    what separates urgency gating from integration, and on its own it returns a
+    null. A null is not evidence for the winning model unless the models'
+    *predictions* are compared with the observation, because a model can fail
+    the diagnostic in direction while the observed contrast fails to reach
+    significance in magnitude. Pairing observed and predicted contrasts within
+    subject turns the diagnostic into a posterior-predictive check, which is
+    the form in which it can discriminate at all.
+    """
+    if predictions.empty or matched.empty:
+        return pd.DataFrame()
+    if "post_convergence_eligible" in matched:
+        matched = matched.loc[
+            matched["post_convergence_eligible"].fillna(False).astype(bool)
+        ]
+    if matched.empty:
+        return pd.DataFrame()
+
+    def _subject_contrasts(
+        frame: pd.DataFrame, values: list[str]
+    ) -> pd.DataFrame:
+        pivot = frame.pivot_table(
+            index=["subject", "pair_id"], columns="early_bias",
+            values=values, aggfunc="mean",
+        )
+        out = {}
+        for measure in values:
+            if (measure, "for") not in pivot or (measure, "against") not in pivot:
+                continue
+            differences = (pivot[(measure, "against")] - pivot[(measure, "for")]).dropna()
+            out[measure] = differences.groupby(level="subject").mean()
+        return pd.DataFrame(out)
+
+    rows = []
+    for condition, observed_group in matched.groupby("condition", sort=True):
+        observed = _subject_contrasts(
+            observed_group, list(_MATCHED_PREDICTED_MEASURES)
+        )
+        # Conditions are cased differently in the two tables ("Fast"/"fast").
+        predicted_group = predictions.loc[
+            predictions["condition"].astype(str).str.lower()
+            == str(condition).lower()
+        ]
+        for model, model_group in predicted_group.groupby("model", sort=True):
+            predicted = _subject_contrasts(
+                model_group, [name for name, _ in _MATCHED_PREDICTED_MEASURES.values()]
+            )
+            for measure, (predicted_name, scale) in _MATCHED_PREDICTED_MEASURES.items():
+                if measure not in observed or predicted_name not in predicted:
+                    continue
+                aligned = pd.DataFrame({
+                    "observed": observed[measure],
+                    "predicted": predicted[predicted_name] * scale,
+                }).dropna()
+                if aligned.empty:
+                    continue
+                residual = aligned["observed"] - aligned["predicted"]
+                rows.append({
+                    "analysis": "ssm_matched_sequence_posterior_predictive",
+                    "condition": condition,
+                    "model": model,
+                    "measure": measure,
+                    "n_subjects": int(len(aligned)),
+                    "mean_observed": float(aligned["observed"].mean()),
+                    "mean_predicted": float(aligned["predicted"].mean()),
+                    "mean_observed_minus_predicted": float(residual.mean()),
+                    **_paired_contrast_from_differences(residual),
+                })
+    return pd.DataFrame(rows)
+
+
+def heldout_contrast_robustness(
+    heldout: pd.DataFrame,
+    fits: pd.DataFrame,
+    *,
+    model_a: str = "urgency",
+    model_b: str = "collapsing",
+    condition: str = "all",
+) -> pd.DataFrame:
+    """Stress the decisive held-out contrast against its three obvious objections.
+
+    Parameters
+    ----------
+    heldout
+        Held-out evaluation rows, as written to ``ssmheldout``.
+    fits
+        Primary fits, as written to ``ssmcomparison``, used only to classify
+        subjects by whether ``model_a``'s signature parameter is identified.
+    model_a, model_b
+        The ordered contrast to stress. The default is the comparison that
+        separates urgency gating from a collapsing bound, which is the one the
+        conclusion rests on.
+    condition
+        Condition whose per-subject scores are used.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Three analyses: ``ssm_heldout_identifiability_subset`` (the contrast
+        recomputed within subsets where the winning model's extra parameter is
+        actually identified), ``ssm_heldout_influence`` (leave-one-subject-out
+        and distribution-free tests), and ``ssm_heldout_condition_pooling``
+        (the pooled contrast against the within-condition ones).
+
+    Notes
+    -----
+    Each analysis answers one objection that the headline table cannot.
+    *Identifiability*: a model whose extra parameter is weakly recovered might
+    be winning because that parameter runs free, so the contrast is recomputed
+    among subjects whose estimate is neither pinned at its bound nor missing an
+    observed-information standard error. *Influence*: a group mean over 32
+    subjects can be carried by one of them, or by a normality assumption, so
+    the worst single deletion and two distribution-free tests are reported.
+    *Pooling*: fitting Fast and Slow together could reward the flexible models
+    for absorbing a mixture the fixed bound cannot represent, which would show
+    up as a pooled advantage exceeding the sum of the within-condition ones.
+    """
+    differences = heldout_pairwise_subject_differences(heldout, condition=condition)
+    if differences.empty:
+        return pd.DataFrame()
+    paired = differences.loc[
+        (differences["model_a"] == model_a) & (differences["model_b"] == model_b)
+    ].set_index("subject")["difference"].dropna()
+    if paired.empty:
+        return pd.DataFrame()
+
+    rows = []
+    base = {
+        "model_a": model_a, "model_b": model_b, "condition": condition,
+    }
+
+    # --- S1: is the win coming from the unidentified subjects? ---------------
+    winner = fits.loc[
+        (fits["model"] == model_a) & (fits["condition"].astype(str) == condition)
+    ].set_index("subject")
+    signature = next(
+        (
+            parameter
+            for parameter in MODEL_PARAMETERS.get(model_a, ())
+            if parameter not in MODEL_PARAMETERS.get("ddm", ())
+        ),
+        None,
+    )
+    subsets: list[tuple[str, pd.Index]] = [("all_subjects", paired.index)]
+    if signature is not None and signature in winner:
+        pinned = near_upper_bound(winner, signature).reindex(paired.index).fillna(False)
+        subsets.append((f"{signature}_not_pinned", paired.index[~pinned.astype(bool)]))
+        standard_error = pd.to_numeric(
+            winner.get(f"{signature}_se", pd.Series(dtype=float)), errors="coerce"
+        ).reindex(paired.index)
+        subsets.append(("finite_observed_information_se",
+                        paired.index[np.isfinite(standard_error)]))
+    for label, index in subsets:
+        subset = paired.reindex(index).dropna()
+        if subset.empty:
+            continue
+        rows.append({
+            "analysis": "ssm_heldout_identifiability_subset",
+            **base,
+            "subset": label,
+            "criterion": "heldout_per_trial_ll_difference",
+            **_paired_contrast_from_differences(subset),
+        })
+    # Are the pinned and unpinned subjects different from each other?
+    if len(subsets) > 1:
+        unpinned = paired.reindex(subsets[1][1]).dropna()
+        pinned_values = paired.drop(index=unpinned.index, errors="ignore").dropna()
+        if len(unpinned) > 1 and len(pinned_values) > 1:
+            statistic, p_value = stats.ttest_ind(
+                unpinned.to_numpy(dtype=float),
+                pinned_values.to_numpy(dtype=float),
+                equal_var=False,
+            )
+            rows.append({
+                "analysis": "ssm_heldout_identifiability_subset",
+                **base,
+                "subset": "pinned_versus_unpinned",
+                "criterion": "between_subset_difference",
+                "n_subjects": int(len(unpinned) + len(pinned_values)),
+                "mean_a": float(unpinned.mean()),
+                "mean_b": float(pinned_values.mean()),
+                "mean_difference": float(unpinned.mean() - pinned_values.mean()),
+                "t": float(statistic),
+                "p": float(p_value),
+            })
+
+    # --- S2: influence and distribution-free confirmation --------------------
+    deletions = []
+    for subject in paired.index:
+        remaining = paired.drop(index=subject)
+        summary = one_sample_statistics(remaining)
+        deletions.append((subject, float(summary["t"]), float(summary["p"])))
+    worst = max(deletions, key=lambda item: item[2]) if deletions else None
+    best = min(deletions, key=lambda item: item[2]) if deletions else None
+    if worst is not None:
+        rows.append({
+            "analysis": "ssm_heldout_influence",
+            **base,
+            "criterion": "leave_one_subject_out",
+            "n_subjects": int(len(paired)),
+            "least_favourable_subject": worst[0],
+            "least_favourable_t": worst[1],
+            "least_favourable_p": worst[2],
+            "most_favourable_subject": best[0],
+            "most_favourable_p": best[2],
+        })
+    values = paired.to_numpy(dtype=float)
+    if values.size > 1:
+        try:
+            wilcoxon_stat, wilcoxon_p = stats.wilcoxon(values)
+        except ValueError:
+            wilcoxon_stat = wilcoxon_p = float("nan")
+        positive = int((values > 0).sum())
+        sign_p = float(stats.binomtest(positive, values.size, 0.5).pvalue)
+        rows.append({
+            "analysis": "ssm_heldout_influence",
+            **base,
+            "criterion": "distribution_free",
+            "n_subjects": int(values.size),
+            "n_subjects_favoring_a": positive,
+            "wilcoxon_statistic": float(wilcoxon_stat),
+            "wilcoxon_p": float(wilcoxon_p),
+            "sign_test_p": sign_p,
+        })
+
+    # --- S3: does pooling manufacture the advantage? -------------------------
+    if "delta_bic" in fits:
+        for model in (model_a, model_b):
+            cells = fits.loc[fits["model"] == model]
+            pooled = pd.to_numeric(
+                cells.loc[cells["condition"].astype(str) == condition, "delta_bic"],
+                errors="coerce",
+            ).mean()
+            within = sum(
+                pd.to_numeric(
+                    cells.loc[cells["condition"].astype(str) == name, "delta_bic"],
+                    errors="coerce",
+                ).mean()
+                for name in ("fast", "slow")
+            )
+            rows.append({
+                "analysis": "ssm_heldout_condition_pooling",
+                **base,
+                "model": model,
+                "criterion": "pooled_versus_summed_within_condition_delta_bic",
+                "pooled_delta_bic": float(pooled),
+                "summed_within_condition_delta_bic": float(within),
+                "pooling_excess": float(pooled - within),
+            })
+    return pd.DataFrame(rows)
+
+
+def fitted_distribution_check_statistics(checks: pd.DataFrame) -> pd.DataFrame:
+    """Summarize absolute fit: observed minus predicted RT at each quantile.
+
+    Parameters
+    ----------
+    checks
+        Output of :func:`fitted_distribution_checks`.
+
+    Returns
+    -------
+    pandas.DataFrame
+        One row per condition, model, outcome and quantile, holding the
+        subject-averaged observed-minus-predicted decision time in seconds.
+
+    Notes
+    -----
+    Model selection says which model predicts best; it does not say whether
+    any of them fits. A comparison can be won by a model that misses the
+    observed distribution badly, as long as the alternatives miss it worse, so
+    this is the check that decides whether the winner is usable in absolute
+    terms rather than only in rank.
+    """
+    required = {
+        "condition", "model", "trial_class", "outcome", "quantile",
+        "observed_rt_s", "predicted_rt_s",
+    }
+    require_columns(checks, sorted(required))
+    frame = checks.copy()
+    for column in ("observed_rt_s", "predicted_rt_s"):
+        frame[column] = pd.to_numeric(frame[column], errors="coerce")
+    frame["residual_s"] = frame["observed_rt_s"] - frame["predicted_rt_s"]
+    rows = []
+    # ``trial_class`` carries its own pooled ``all`` level, so it has to be
+    # part of the key: collapsing over it would average the pooled row
+    # together with the class rows that already compose it.
+    grouping = ["condition", "model", "trial_class", "outcome", "quantile"]
+    for keys, group in frame.groupby(grouping, sort=True):
+        residuals = group.groupby("subject")["residual_s"].mean().dropna()
+        if residuals.empty:
+            continue
+        rows.append({
+            "analysis": "ssm_fitted_distribution_check_summary",
+            **dict(zip(grouping, keys)),
+            "n_subjects": int(len(residuals)),
+            "mean_observed_rt_s": float(group["observed_rt_s"].mean()),
+            "mean_predicted_rt_s": float(group["predicted_rt_s"].mean()),
+            "mean_residual_s": float(residuals.mean()),
+            **_paired_contrast_from_differences(residuals),
+        })
+    return pd.DataFrame(rows)
+
+
+def near_upper_bound(fits: pd.DataFrame, parameter: str) -> pd.Series:
+    """Per-row flag: `parameter` sits within 1% of its upper bound.
+
+    Uses the fit's own recorded bounds when present, since the robustness grid
+    deliberately widens them, and falls back to `PARAMETER_RANGES` for tables
+    written before the bounds were persisted. A censored estimate is not a
+    measurement, and every report that counts or marks one has to agree on
+    what "censored" means -- so the rule lives here rather than being spelled
+    out at each site.
+    """
+    values = pd.to_numeric(
+        fits.get(parameter, pd.Series(np.nan, index=fits.index)), errors="coerce"
+    )
+    upper = pd.to_numeric(
+        fits.get(
+            f"{parameter}_upper_bound",
+            pd.Series(PARAMETER_RANGES[parameter][1], index=fits.index),
+        ),
+        errors="coerce",
+    )
+    lower = pd.to_numeric(
+        fits.get(
+            f"{parameter}_lower_bound",
+            pd.Series(PARAMETER_RANGES[parameter][0], index=fits.index),
+        ),
+        errors="coerce",
+    )
+    return (upper - values).le(0.01 * (upper - lower)) & values.notna()
+
+
 def boundary_convergence_audit(fits: pd.DataFrame) -> pd.DataFrame:
     """Summarize convergence, boundary hits, and missing-information rates."""
     if fits.empty:
@@ -1833,8 +2256,6 @@ def _synthetic_frame(
     function ignorant of raw target labels prevents recovery from silently
     reorienting target-2 trials as if target 1 were correct.
     """
-    import pyddm
-
     lead_paths = lead_paths or tuple(
         _lead_path(sequence, correct_target=1)
         for sequence in (
@@ -1899,6 +2320,92 @@ def _recovery_truth_values(
     return values, fractions
 
 
+def fitted_truth_values(
+    fits: pd.DataFrame,
+    model_name: str,
+    *,
+    repetition: int,
+    repetitions: int,
+    seed: int,
+) -> tuple[dict[str, float], dict[str, float | str]]:
+    """Draw one truth point from the accepted fits themselves.
+
+    Parameters
+    ----------
+    fits
+        Accepted production fit table (``ssmcomparison``).
+    model_name
+        Model whose fitted cells supply the truth.
+    repetition, repetitions
+        Position in the truth design, and its total size.
+    seed
+        Base seed; the permutation is derived from it by SHA-256 so that
+        local and cluster runs pick identical cells.
+
+    Returns
+    -------
+    values
+        Fitted parameter vector for one subject x condition cell.
+    fractions
+        Each truth's quantile within the fitted distribution of that
+        parameter, the analogue of the hypercube's design fraction.
+    provenance
+        The cell the vector came from, recorded per row.
+
+    Raises
+    ------
+    ValueError
+        If no converged condition-specific cell exists for ``model_name``.
+
+    Notes
+    -----
+    :func:`_recovery_truth_values` stratifies inside ``PARAMETER_RANGES``, the
+    *optimizer bounds*, which do not overlap the region the data occupy --
+    urgency ``drift_scale`` is fitted at 0.072-0.415 against truths drawn from
+    1.0-4.0. A recovery study run there answers "are these models separable
+    somewhere in parameter space", not "are they separable here", and only the
+    second question bears on the Act 3 claim.
+
+    Real fitted vectors are used rather than a hypercube rescaled to the
+    fitted range because the parameters are correlated: a high ``drift_scale``
+    with a low ``urgency_scale`` may be a combination no subject shows, and
+    recovering it would say nothing about this cohort. Condition-specific
+    cells (``fast``/``slow``) are the sampling unit -- ``condition == "all"``
+    is a pooled refit of the same trials, so including it would double-count
+    subjects.
+    """
+    cells = fits.loc[
+        fits["converged"].astype(bool)
+        & (fits["model"].astype(str) == model_name)
+        & (fits["condition"].astype(str) != "all")
+    ]
+    parameters = MODEL_PARAMETERS[model_name]
+    cells = cells.dropna(subset=list(parameters))
+    if cells.empty:
+        raise ValueError(f"no converged condition-specific fits for {model_name}")
+    ordered = cells.sort_values(["subject", "condition"]).reset_index(drop=True)
+    permutation_seed = int.from_bytes(
+        hashlib.sha256(f"{seed}:{model_name}:truthcell".encode("utf-8")).digest()[:8],
+        "little",
+    ) % (2**32)
+    # Permuting once and indexing by repetition spreads the truth points over
+    # distinct cells; the modulo only bites if the design asks for more
+    # repetitions than there are fitted cells.
+    permutation = np.random.default_rng(permutation_seed).permutation(len(ordered))
+    row = ordered.iloc[int(permutation[int(repetition) % len(ordered)])]
+    values = {parameter: float(row[parameter]) for parameter in parameters}
+    fractions = {
+        parameter: float((ordered[parameter] <= values[parameter]).mean())
+        for parameter in parameters
+    }
+    provenance = {
+        "source_subject": str(row["subject"]),
+        "source_condition": str(row["condition"]),
+        "source_n_trials": float(row.get("n_trials", np.nan)),
+    }
+    return values, fractions, provenance
+
+
 def parameter_recovery(
     *,
     models: tuple[str, ...] = MECHANISTIC_MODELS,
@@ -1909,6 +2416,7 @@ def parameter_recovery(
     representative_paths: tuple[tuple[int, ...], ...] | None = None,
     repetition_indices: Sequence[int] | None = None,
     truth_design_repetitions: int | None = None,
+    truth_fits: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Recover known parameters from simulated trial paths.
 
@@ -1930,12 +2438,23 @@ def parameter_recovery(
     rows = []
     for repetition in indices:
         for model_name in models:
-            values, fractions = _recovery_truth_values(
-                model_name,
-                repetition=repetition,
-                repetitions=design_repetitions,
-                seed=seed,
-            )
+            if truth_fits is None:
+                values, fractions = _recovery_truth_values(
+                    model_name,
+                    repetition=repetition,
+                    repetitions=design_repetitions,
+                    seed=seed,
+                )
+                truth_source = {"truth_region": "parameter_range_hypercube"}
+            else:
+                values, fractions, truth_source = fitted_truth_values(
+                    truth_fits,
+                    model_name,
+                    repetition=repetition,
+                    repetitions=design_repetitions,
+                    seed=seed,
+                )
+                truth_source = {"truth_region": "accepted_fit", **truth_source}
             simulation_seed = int(seed + repetition * 100)
             frame = _synthetic_frame(
                 model_name,
@@ -1956,6 +2475,7 @@ def parameter_recovery(
                     "truth_design_index": repetition,
                     "truth_design_repetitions": design_repetitions,
                     "truth_design_fraction": fractions[parameter],
+                    "truth_source": json.dumps(truth_source, sort_keys=True),
                     "simulation_seed": simulation_seed,
                     "n_per_sequence": n_per_sequence,
                     "n_starts": n_starts,
@@ -1981,10 +2501,12 @@ def model_recovery(
     representative_paths: tuple[tuple[int, ...], ...] | None = None,
     repetition_indices: Sequence[int] | None = None,
     truth_design_repetitions: int | None = None,
+    truth_fits: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Fit every candidate to data simulated from every candidate model.
 
-    See :func:`parameter_recovery` for the repetition-indexed array contract.
+    See :func:`parameter_recovery` for the repetition-indexed array contract
+    and :func:`fitted_truth_values` for what ``truth_fits`` changes.
     """
     design_repetitions = int(truth_design_repetitions or repetitions)
     if design_repetitions < 1:
@@ -1999,12 +2521,23 @@ def model_recovery(
     rows = []
     for repetition in indices:
         for true_model in models:
-            true_values, truth_fractions = _recovery_truth_values(
-                true_model,
-                repetition=repetition,
-                repetitions=design_repetitions,
-                seed=seed,
-            )
+            if truth_fits is None:
+                true_values, truth_fractions = _recovery_truth_values(
+                    true_model,
+                    repetition=repetition,
+                    repetitions=design_repetitions,
+                    seed=seed,
+                )
+                truth_source = {"truth_region": "parameter_range_hypercube"}
+            else:
+                true_values, truth_fractions, truth_source = fitted_truth_values(
+                    truth_fits,
+                    true_model,
+                    repetition=repetition,
+                    repetitions=design_repetitions,
+                    seed=seed,
+                )
+                truth_source = {"truth_region": "accepted_fit", **truth_source}
             simulation_seed = int(seed + repetition * 100)
             frame = _synthetic_frame(
                 true_model,
@@ -2024,6 +2557,7 @@ def model_recovery(
                     "truth_design_index": repetition,
                     "truth_design_repetitions": design_repetitions,
                     "truth_design_fraction": json.dumps(truth_fractions, sort_keys=True),
+                    "truth_source": json.dumps(truth_source, sort_keys=True),
                     "simulation_seed": simulation_seed,
                     "n_per_sequence": n_per_sequence,
                     "n_starts": n_starts,
@@ -2045,8 +2579,35 @@ def model_recovery(
     return result
 
 
+def _correlation_interval(
+    correlation: float, n: int
+) -> tuple[float, float]:
+    """Fisher-z 95% interval for a Pearson correlation estimated from ``n``.
+
+    Returns ``(nan, nan)`` below ``n = 4``, where the transform has no
+    standard error to work with.
+    """
+    if not np.isfinite(correlation) or n < 4 or abs(correlation) >= 1.0:
+        return float("nan"), float("nan")
+    z = np.arctanh(correlation)
+    half_width = stats.norm.ppf(0.975) / np.sqrt(n - 3)
+    return float(np.tanh(z - half_width)), float(np.tanh(z + half_width))
+
+
 def parameter_recovery_statistics(recovery: pd.DataFrame) -> pd.DataFrame:
-    """Summarize parameter-recovery bias, error, and fit diagnostics."""
+    """Summarize parameter-recovery bias, error, and fit diagnostics.
+
+    Notes
+    -----
+    Each ``correlation`` is estimated from a handful of recovery cases, so it
+    is reported with a Fisher-z 95% interval
+    (``correlation_ci95_low``/``correlation_ci95_high``) and the ``n`` behind
+    it. At this sample size those intervals are wide enough to span most of the
+    range, which is the point: recovery correlations must not be compared with
+    one another, ranked, or quoted to three decimals as though they were
+    precise. Read them as "recovers well" versus "does not", never as a
+    measurement.
+    """
     required = {
         "true_model", "parameter", "true_value", "estimated_value",
         "converged", "boundary_hit",
@@ -2075,6 +2636,7 @@ def parameter_recovery_statistics(recovery: pd.DataFrame) -> pd.DataFrame:
             rmse = float(np.sqrt(np.mean(errors ** 2)))
         else:
             correlation = bias = rmse = float("nan")
+        ci_low, ci_high = _correlation_interval(correlation, int(finite.sum()))
         rows.append({
             "analysis": "ssm_parameter_recovery_summary",
             "true_model": true_model,
@@ -2084,6 +2646,8 @@ def parameter_recovery_statistics(recovery: pd.DataFrame) -> pd.DataFrame:
             "bias": bias,
             "rmse": rmse,
             "correlation": correlation,
+            "correlation_ci95_low": ci_low,
+            "correlation_ci95_high": ci_high,
             "convergence_rate": float(
                 group["converged"].fillna(False).astype(bool).mean()
             ),
@@ -2491,7 +3055,8 @@ def robustness_grid(
             rows.append(fits)
     finally:
         FILTER_TAU_S, SOLVER_STEP_S, EVIDENCE_AFTER_LAST = baseline_tau, baseline_step, baseline_after
-        PARAMETER_RANGES.clear(); PARAMETER_RANGES.update(baseline_ranges)
+        PARAMETER_RANGES.clear()
+        PARAMETER_RANGES.update(baseline_ranges)
     return pd.concat(rows, ignore_index=True) if rows else pd.DataFrame()
 
 
@@ -2513,31 +3078,11 @@ def robustness_statistics(
         ["configuration", "condition", "model"], sort=True
     ):
         values = pd.to_numeric(group["delta_bic"], errors="coerce")
-        finite = values.replace([np.inf, -np.inf], np.nan).dropna()
+        contrast = _paired_contrast_from_differences(values)
         targeted_near_upper = {}
         targeted_flags = []
         for parameter in ("urgency_scale", "urgency_onset_s", "collapse_rate"):
-            values_parameter = pd.to_numeric(
-                group.get(parameter, pd.Series(np.nan, index=group.index)),
-                errors="coerce",
-            )
-            upper = pd.to_numeric(
-                group.get(
-                    f"{parameter}_upper_bound",
-                    pd.Series(PARAMETER_RANGES[parameter][1], index=group.index),
-                ),
-                errors="coerce",
-            )
-            lower = pd.to_numeric(
-                group.get(
-                    f"{parameter}_lower_bound",
-                    pd.Series(PARAMETER_RANGES[parameter][0], index=group.index),
-                ),
-                errors="coerce",
-            )
-            near_upper = (upper - values_parameter).le(
-                0.01 * (upper - lower)
-            ) & values_parameter.notna()
+            near_upper = near_upper_bound(group, parameter)
             targeted_near_upper[parameter] = int(near_upper.sum())
             targeted_flags.append(near_upper)
         ndt = pd.to_numeric(
@@ -2577,9 +3122,9 @@ def robustness_statistics(
                 np.logical_or.reduce([flag.to_numpy(dtype=bool) for flag in targeted_flags]).sum()
             ) if targeted_flags else 0,
             "nondecision_s_near_lower": int(ndt_near_lower.sum()),
-            "n_subjects_favoring_candidate": int((finite < 0).sum()),
-            "n_subjects_favoring_ddm": int((finite > 0).sum()),
-            **one_sample_statistics(finite),
+            "n_subjects_favoring_candidate": contrast.pop("n_subjects_favoring_b"),
+            "n_subjects_favoring_ddm": contrast.pop("n_subjects_favoring_a"),
+            **contrast,
         })
     baseline = robustness.loc[
         robustness["configuration"] == baseline_configuration,
@@ -2599,6 +3144,7 @@ def robustness_statistics(
             pd.to_numeric(group["delta_bic"], errors="coerce")
             - pd.to_numeric(group["baseline_delta_bic"], errors="coerce")
         ).replace([np.inf, -np.inf], np.nan).dropna()
+        contrast = _paired_contrast_from_differences(differences)
         rows.append({
             "analysis": "ssm_robustness_paired_sensitivity",
             "configuration": configuration,
@@ -2611,10 +3157,47 @@ def robustness_statistics(
             "n_boundary_hit": np.nan,
             "boundary_rate": np.nan,
             "n_near_upper_or_boundary": np.nan,
-            "n_subjects_favoring_candidate": int((differences < 0).sum()),
-            "n_subjects_favoring_ddm": int((differences > 0).sum()),
-            **one_sample_statistics(differences),
+            "n_subjects_favoring_candidate": contrast.pop("n_subjects_favoring_b"),
+            "n_subjects_favoring_ddm": contrast.pop("n_subjects_favoring_a"),
+            **contrast,
         })
+    # The Fast-minus-Slow urgency contrast under every configuration. Without
+    # this the grid answers only "does the winning model change?", and the
+    # figure that draws the parameter contrast has no registered defence
+    # against the objection that its estimates are censored: `urgency_scale`
+    # sits on its upper bound in a minority of cells, and asymmetrically by
+    # condition. `expanded_bounds` is the configuration that answers it, since
+    # it removes the censoring outright.
+    # Robustness tables that carry only the criterion columns -- a grid run
+    # for delta BIC alone, or a fixture -- get no parameter rows rather than a
+    # KeyError on the first missing parameter.
+    has_parameters = set(MODEL_PARAMETERS["urgency"]).issubset(robustness.columns)
+    for configuration, group in (
+        robustness.groupby("configuration", sort=True) if has_parameters else []
+    ):
+        contrast = urgency_condition_contrast(group)
+        if contrast.empty:
+            continue
+        paired_cells = group.loc[
+            (group["model"] == "urgency") & group["condition"].isin(["fast", "slow"])
+        ]
+        for _, row in contrast.iterrows():
+            parameter = str(row["parameter"])
+            rows.append({
+                "analysis": "ssm_robustness_parameter_contrast",
+                "configuration": configuration,
+                "condition": "fast_minus_slow",
+                "model": "urgency",
+                "criterion": parameter,
+                "parameter": parameter,
+                "n_cells_near_upper_bound": int(
+                    near_upper_bound(paired_cells, parameter).sum()
+                ) if parameter in PARAMETER_RANGES else np.nan,
+                **{
+                    key: value for key, value in row.items()
+                    if key not in {"analysis", "parameter", "test"}
+                },
+            })
     return pd.DataFrame(rows)
 
 
@@ -2642,6 +3225,7 @@ def exclusion_robustness_statistics(
             pd.to_numeric(group["delta_bic"], errors="coerce")
             - pd.to_numeric(group["primary_delta_bic"], errors="coerce")
         ).replace([np.inf, -np.inf], np.nan).dropna()
+        contrast = _paired_contrast_from_differences(differences)
         row = {
             "analysis": "ssm_exclusion_robustness_summary",
             "rule": "complete_token_log_alignment",
@@ -2653,9 +3237,9 @@ def exclusion_robustness_statistics(
             "convergence_rate": float(group["converged"].fillna(False).astype(bool).mean()),
             "n_boundary_hit": int(group["boundary_hit"].fillna(False).astype(bool).sum()),
             "boundary_rate": float(group["boundary_hit"].fillna(False).astype(bool).mean()),
-            "n_subjects_favoring_strict": int((differences < 0).sum()),
-            "n_subjects_favoring_primary": int((differences > 0).sum()),
-            **one_sample_statistics(differences),
+            "n_subjects_favoring_strict": contrast.pop("n_subjects_favoring_b"),
+            "n_subjects_favoring_primary": contrast.pop("n_subjects_favoring_a"),
+            **contrast,
         }
         if audit is not None and not audit.empty:
             equivalence = audit.loc[
@@ -2671,6 +3255,192 @@ def exclusion_robustness_statistics(
                     "n_mask_symmetric_difference": census.get("n_symmetric_difference", np.nan),
                 })
         rows.append(row)
+    return pd.DataFrame(rows)
+
+
+def exclusion_evidence_decomposition(
+    strict_fits: pd.DataFrame,
+    primary_fits: pd.DataFrame,
+) -> pd.DataFrame:
+    """Separate the strict subset's sample-size loss from its evidence per trial.
+
+    Parameters
+    ----------
+    strict_fits
+        Refits on the strict complete-log/alignment subset.
+    primary_fits
+        Fits on the primary eligible trials, as written to ``ssmcomparison``.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Two analyses. ``ssm_exclusion_evidence_decomposition`` carries, per
+        condition and candidate model, the raw ``delta_bic`` on each trial set,
+        the strict ``delta_bic`` **expected from the trial count alone**, the
+        excess over that expectation, and the evidence per trial on each set,
+        each with its paired across-subject test.
+        ``ssm_exclusion_condition_composition`` carries the Fast/Slow trial
+        census behind those numbers.
+
+    Notes
+    -----
+    ``delta_bic`` scales with the number of trials, so comparing it across two
+    trial sets of different size measures the size difference, not the effect.
+    The decomposition ``delta_bic = -2 * delta_ll + delta_k * ln n`` makes that
+    explicit: holding evidence per trial fixed at its primary value and
+    re-evaluating at the strict trial count gives
+    ``expected_strict_delta_bic``, and only the residual ``excess_delta_bic``
+    is a change in the evidence itself.
+
+    Evidence per trial subtracts the in-sample overfitting bias ``delta_k /
+    (2 n)``, which is what an information criterion charges an extra parameter
+    per observation. It is reported in nats so that the two trial sets are on
+    one scale.
+
+    The composition rows exist because a pure subset of *trials* need not be a
+    pure subset of the *design*: a completeness rule that drops token logs
+    drops them unevenly across conditions, and the resulting reanalysis carries
+    a different condition mix from the one it is being compared with.
+    """
+    required = {
+        "subject", "condition", "model", "delta_bic",
+        "log_likelihood", "n_trials", "n_parameters",
+    }
+    require_columns(strict_fits, sorted(required))
+    require_columns(primary_fits, sorted(required))
+
+    def _reference(fits: pd.DataFrame) -> pd.DataFrame:
+        """Attach each cell's ``ddm`` log-likelihood and parameter count."""
+        baseline = fits.loc[fits["model"] == "ddm", [
+            "subject", "condition", "log_likelihood", "n_parameters",
+        ]].rename(columns={
+            "log_likelihood": "baseline_log_likelihood",
+            "n_parameters": "baseline_n_parameters",
+        })
+        merged = fits.merge(baseline, on=["subject", "condition"], how="inner")
+        merged = merged.loc[merged["model"] != "ddm"].copy()
+        for column in (
+            "log_likelihood", "baseline_log_likelihood", "n_trials",
+            "n_parameters", "baseline_n_parameters", "delta_bic",
+        ):
+            merged[column] = pd.to_numeric(merged[column], errors="coerce")
+        merged["delta_ll"] = (
+            merged["log_likelihood"] - merged["baseline_log_likelihood"]
+        )
+        merged["delta_k"] = (
+            merged["n_parameters"] - merged["baseline_n_parameters"]
+        )
+        # Evidence per trial, net of the parameter charge an information
+        # criterion applies per observation.
+        merged["per_trial"] = (
+            merged["delta_ll"] / merged["n_trials"]
+            - merged["delta_k"] / (2.0 * merged["n_trials"])
+        )
+        return merged
+
+    strict = _reference(strict_fits)
+    primary = _reference(primary_fits)
+    paired = strict.merge(
+        primary[[
+            "subject", "condition", "model", "delta_bic", "delta_ll",
+            "n_trials", "per_trial",
+        ]].rename(columns={
+            "delta_bic": "primary_delta_bic",
+            "delta_ll": "primary_delta_ll",
+            "n_trials": "primary_n_trials",
+            "per_trial": "primary_per_trial",
+        }),
+        on=["subject", "condition", "model"], how="inner",
+    )
+    # What the strict delta_bic would be if evidence per trial were unchanged
+    # and only the trial count had fallen.
+    paired["expected_strict_delta_bic"] = (
+        -2.0 * (paired["primary_delta_ll"] / paired["primary_n_trials"])
+        * paired["n_trials"]
+        + paired["delta_k"] * np.log(paired["n_trials"])
+    )
+    paired["excess_delta_bic"] = (
+        paired["delta_bic"] - paired["expected_strict_delta_bic"]
+    )
+    paired["per_trial_change"] = paired["per_trial"] - paired["primary_per_trial"]
+
+    rows = []
+    for (condition, model), group in paired.groupby(["condition", "model"], sort=True):
+        excess = _paired_contrast_from_differences(group["excess_delta_bic"])
+        change = _paired_contrast_from_differences(group["per_trial_change"])
+        rows.append({
+            "analysis": "ssm_exclusion_evidence_decomposition",
+            "rule": "complete_token_log_alignment",
+            "condition": condition,
+            "model": model,
+            "criterion": "strict_excess_delta_bic_over_trial_count_expectation",
+            "n_subjects": int(excess["n_subjects"]),
+            "mean_primary_delta_bic": float(group["primary_delta_bic"].mean()),
+            "mean_strict_delta_bic": float(group["delta_bic"].mean()),
+            "mean_expected_strict_delta_bic": float(
+                group["expected_strict_delta_bic"].mean()
+            ),
+            "mean_primary_per_trial": float(group["primary_per_trial"].mean()),
+            "mean_strict_per_trial": float(group["per_trial"].mean()),
+            "mean_overfitting_correction": float(
+                (group["delta_k"] / (2.0 * group["n_trials"])).mean()
+            ),
+            "n_subjects_favoring_strict": excess.pop("n_subjects_favoring_b"),
+            "n_subjects_favoring_primary": excess.pop("n_subjects_favoring_a"),
+            **excess,
+            "per_trial_change_mean": float(change["mean"]),
+            "per_trial_change_ci95_low": float(change["ci95_low"]),
+            "per_trial_change_ci95_high": float(change["ci95_high"]),
+            "per_trial_change_t": float(change["t"]),
+            "per_trial_change_p": float(change["p"]),
+            "per_trial_change_n_subjects_rising": int(change["n_subjects_favoring_a"]),
+        })
+
+    # Condition composition: one trial census per condition, taken from any one
+    # model's rows since every model is fitted to the same cell.
+    census = []
+    for condition in sorted(set(paired["condition"])):
+        cells = paired.loc[
+            (paired["condition"] == condition)
+            & (paired["model"] == paired["model"].iloc[0])
+        ]
+        strict_n = float(cells["n_trials"].sum())
+        primary_n = float(cells["primary_n_trials"].sum())
+        retention = cells["n_trials"] / cells["primary_n_trials"]
+        census.append({
+            "condition": condition,
+            "n_trials_primary": primary_n,
+            "n_trials_strict": strict_n,
+            "retention_fraction": strict_n / primary_n if primary_n else np.nan,
+            "min_subject_retention": float(retention.min()),
+            "max_subject_retention": float(retention.max()),
+            "n_subjects": int(len(cells)),
+        })
+    # Shares are of the pooled set, so they are taken against the ``all`` row
+    # rather than a sum over rows -- ``all`` is itself one of the conditions
+    # here and summing would count every trial twice.
+    pooled = next((row for row in census if row["condition"] == "all"), None)
+    total_primary = (
+        pooled["n_trials_primary"] if pooled is not None
+        else sum(row["n_trials_primary"] for row in census)
+    )
+    total_strict = (
+        pooled["n_trials_strict"] if pooled is not None
+        else sum(row["n_trials_strict"] for row in census)
+    )
+    for row in census:
+        rows.append({
+            "analysis": "ssm_exclusion_condition_composition",
+            "rule": "complete_token_log_alignment",
+            "criterion": "condition_share_of_trial_set",
+            "share_of_primary": (
+                row["n_trials_primary"] / total_primary if total_primary else np.nan
+            ),
+            "share_of_strict": (
+                row["n_trials_strict"] / total_strict if total_strict else np.nan
+            ),
+            **row,
+        })
     return pd.DataFrame(rows)
 
 
@@ -2944,94 +3714,3 @@ def _population_normal(
     weights = 1.0 / (variances + between_sd**2)
     mean = float(np.sum(weights * estimates) / np.sum(weights))
     return mean, float(np.sqrt(1.0 / np.sum(weights))), between_sd
-
-
-def population_parameters(
-    fits: pd.DataFrame,
-) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Pool the subject-level fits under a normal population model.
-
-    Parameters
-    ----------
-    fits
-        Output of :func:`fit_sequential_sampling_models`.
-
-    Returns
-    -------
-    subject_estimates
-        One row per subject, condition, model, and parameter, holding the
-        subject's own estimate, its standard error, the population-informed
-        estimate, and the weight the subject's own data carry in it.
-    population
-        One row per condition, model, and parameter, holding the population
-        mean, its standard error, the between-subject standard deviation, and
-        a test of the mean against zero.
-
-    Notes
-    -----
-    Every subject's estimate is shrunk toward the population mean in proportion
-    to its own uncertainty, so a poorly constrained subject moves further than
-    a well constrained one. Fitting the population by maximum marginal
-    likelihood over the subject-level estimates and their standard errors is
-    empirical Bayes, not a hierarchical posterior: it conditions on the
-    estimation errors rather than propagating their own uncertainty, which a
-    joint sampler would do. Subjects whose cell was not fitted, or whose
-    standard error is missing, are excluded from both tables. The population
-    mean is tested against zero, which is a meaningful null only for the
-    urgency rate: every parameter is constrained non-negative, so the other
-    tests restate that constraint.
-    """
-    subject_rows = []
-    population_rows = []
-    for (condition, model), group in fits.groupby(["condition", "model"], sort=True):
-        for parameter in MODEL_PARAMETERS[model]:
-            estimates = pd.to_numeric(group[parameter], errors="coerce").to_numpy(
-                dtype=float
-            )
-            errors = pd.to_numeric(group[f"{parameter}_se"], errors="coerce").to_numpy(
-                dtype=float
-            )
-            usable = np.isfinite(estimates) & np.isfinite(errors) & (errors > 0)
-            mean, mean_error, between_sd = _population_normal(
-                estimates[usable], errors[usable]
-            )
-            z_statistic = mean / mean_error if mean_error > 0 else float("nan")
-            population_rows.append(
-                {
-                    "analysis": "ssm_population",
-                    "condition": condition,
-                    "model": model,
-                    "parameter": parameter,
-                    "n_subjects": int(usable.sum()),
-                    "population_mean": mean,
-                    "population_mean_se": mean_error,
-                    "between_subject_sd": between_sd,
-                    "z": z_statistic,
-                    "p": (
-                        float(2.0 * stats.norm.sf(abs(z_statistic)))
-                        if np.isfinite(z_statistic)
-                        else float("nan")
-                    ),
-                }
-            )
-            if not np.isfinite(mean):
-                continue
-            for subject, estimate, error in zip(
-                group.loc[usable, "subject"], estimates[usable], errors[usable]
-            ):
-                weight = between_sd**2 / (between_sd**2 + error**2)
-                subject_rows.append(
-                    {
-                        "subject": subject,
-                        "condition": condition,
-                        "model": model,
-                        "parameter": parameter,
-                        "estimate": float(estimate),
-                        "standard_error": float(error),
-                        "population_informed_estimate": float(
-                            mean + weight * (estimate - mean)
-                        ),
-                        "own_data_weight": float(weight),
-                    }
-                )
-    return pd.DataFrame(subject_rows), pd.DataFrame(population_rows)

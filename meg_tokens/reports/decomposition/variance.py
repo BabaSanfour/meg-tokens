@@ -1,4 +1,3 @@
-import os
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -8,7 +7,7 @@ def run_batch_plot_pca_variance(
     variance_path: str,
     output_dir: str
 ) -> str:
-    print(f"=== Starting PCA Variance Explained Plotting ===")
+    print("=== Starting PCA Variance Explained Plotting ===")
     print(f"Loading variance data from: {variance_path}")
     
     output_path = ensure_dir(output_dir)
@@ -22,10 +21,10 @@ def run_batch_plot_pca_variance(
     ax.plot(cum_var, 'o', color=sns.color_palette("dark")[3], markersize=8)
     ax.plot(cum_var, '-', color='black', lw=2)
     
-    ax.set_ylabel('Cumulative Variance Explained (%)', fontsize=12)
-    ax.set_xlabel('Principal Component', fontsize=12)
+    ax.set_ylabel('Cumulative Variance Explained (%)')
+    ax.set_xlabel('Principal Component')
     ax.set_xticks(np.arange(0, len(cum_var), max(1, len(cum_var)//10)))
-    ax.set_title('PCA Scree Plot', fontsize=14)
+    ax.set_title('PCA Scree Plot')
     
     sns.despine(ax=ax)
     

@@ -1,4 +1,7 @@
-"""Cluster-side evaluation stages for the Thura et al. (2012) comparison."""
+"""Sequential-sampling model fitting and the Thura et al. (2012) mechanistic
+comparison: the primary per-subject fit, pooling/aggregation, held-out
+evaluation, recovery, and robustness/exclusion sensitivity stages.
+"""
 
 from __future__ import annotations
 
@@ -16,40 +19,48 @@ from meg_tokens.behavior.analyses.sequential_sampling import (
     EVIDENCE_AFTER_LAST,
     FILTER_TAU_S,
     FIT_SEED,
+    HESSIAN_STEP,
     MECHANISTIC_MODELS,
+    MINIMUM_FIT_TRIALS,
     MIXTURE_COEF,
     MODEL_PARAMETERS,
     PARAMETER_RANGES,
+    ROBUSTNESS_CONFIGURATIONS,
     SOLVER_STEP_S,
+    TIME_COURSE_STEP_S,
     TOKEN_INTERVAL_S,
     boundary_convergence_audit,
     empirical_lead_paths,
     eligibility_audit,
     exclusion_robustness_audit,
+    exclusion_evidence_decomposition,
+    exclusion_robustness_statistics,
     fit_mechanistic_model_set,
+    fit_sequential_sampling_models,
+    fitted_distribution_check_statistics,
     fitted_distribution_checks,
+    fitted_predictions,
     heldout_model_evaluation,
     heldout_fold_audit,
     heldout_model_statistics,
+    heldout_contrast_robustness,
     heldout_pairwise_model_statistics,
     influential_subject_sensitivity,
     matched_sequence_diagnostic,
     matched_sequence_audit,
     matched_sequence_model_predictions,
     matched_sequence_model_statistics,
+    matched_sequence_posterior_predictive,
     matched_sequence_statistics,
+    mechanistic_model_statistics,
+    model_comparison_statistics,
     model_recovery,
     model_recovery_confusion,
     parameter_recovery,
     parameter_recovery_statistics,
-    mechanistic_model_statistics,
-    model_comparison_statistics,
-    urgency_condition_contrast,
-    population_parameters,
     robustness_grid,
     robustness_statistics,
-    exclusion_robustness_statistics,
-ROBUSTNESS_CONFIGURATIONS,
+    urgency_condition_contrast,
 )
 from meg_tokens.behavior.tables import read_trial_features
 from meg_tokens.core import ProjectConfig, WorkflowResult, normalize_subject_id
@@ -73,6 +84,236 @@ def _package_version(name: str) -> str:
         return version(name)
     except PackageNotFoundError:
         return "unavailable"
+
+
+def _source_tree_sha256() -> str:
+    """Hash the source/docs/scripts that define this analysis.
+
+    The cluster deliberately receives an uncommitted working tree.  A commit
+    field alone would therefore misidentify the code that generated a result;
+    this deterministic manifest hash is stored alongside the dirty flag.
+    """
+    root = Path(__file__).resolve().parents[2]
+    paths = sorted(
+        path
+        for base in (root / "meg_tokens", root / "scripts")
+        if base.exists()
+        for path in base.rglob("*")
+        if path.is_file() and path.suffix in {".py", ".sh"}
+    )
+    # docs/behavior.md is the specification these fits are reported against,
+    # so a change to it is a change to the analysis and must move the digest.
+    paths.extend(
+        path for path in (root / "docs" / "behavior.md",) if path.is_file()
+    )
+    digest = hashlib.sha256()
+    for path in sorted(set(paths)):
+        digest.update(str(path.relative_to(root)).encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(path.read_bytes())
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
+def _model_provenance(*, timecourse_dt_s: float | None = None) -> dict[str, object]:
+    """Shared model/solver/likelihood/software provenance for every SSM stage.
+
+    Every stage below (primary fit, evaluate, aggregate, recovery,
+    robustness, exclusion) fits the same models under the same solver and
+    likelihood, so this is the single place that describes them; each
+    stage's own metadata layers its stage-specific fields on top.
+    """
+    solver: dict[str, object] = {
+        "dt_s": SOLVER_STEP_S,
+        "state_grid_step": SOLVER_STEP_S,
+        "state_grid_units": "decision-variable/noise units (not seconds)",
+        "boundary": "absorbing finite-grid first passage",
+        "overshoot_correction": "none; no separate correction beyond the numerical grid",
+    }
+    if timecourse_dt_s is not None:
+        solver["timecourse_dt_s"] = timecourse_dt_s
+    return {
+        "model_parameters": {model: list(names) for model, names in MODEL_PARAMETERS.items()},
+        "parameter_ranges": {name: list(bounds) for name, bounds in PARAMETER_RANGES.items()},
+        "condition_parameterization": (
+            "parameters are fit separately within each subject × condition × "
+            "model cell; pooled statistics are subject-level"
+        ),
+        "timing": {
+            "token_interval_s": TOKEN_INTERVAL_S,
+            "decision_time_origin": "first token jump; dt_ms is motor-baseline-corrected",
+            "evidence_after_last_token": EVIDENCE_AFTER_LAST,
+        },
+        "filter_tau_s": FILTER_TAU_S,
+        "solver": solver,
+        "likelihood": {
+            "loss": "PyDDM LossLikelihood",
+            "mixture_coef": MIXTURE_COEF,
+            "mixture_distribution": "uniform contaminant",
+        },
+        "fit_seed": FIT_SEED,
+        "git_commit": subprocess.run(
+            ["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=False
+        ).stdout.strip(),
+        "git_dirty": bool(subprocess.run(
+            ["git", "status", "--porcelain"], capture_output=True, text=True, check=False
+        ).stdout.strip()),
+        "source_tree_sha256": _source_tree_sha256(),
+        "python": sys.version,
+        "software": {
+            name: _package_version(name) for name in ("pyddm", "numpy", "pandas", "scipy")
+        },
+    }
+
+
+def _selected_features(
+    project: ProjectConfig,
+    subjects: Optional[Sequence[str]],
+) -> tuple[pd.DataFrame, Path, list[str], list[str]]:
+    """Load the trial-feature table and apply exclusions and subject selection.
+
+    Returns the selected rows, the path they were read from (for
+    provenance), the sorted retained subjects, and the sorted excluded
+    subjects. Shared by every stage below so eligibility/exclusion logic
+    cannot drift between the primary fit and its downstream stages.
+    """
+    layout = DerivativeLayout(project.bids_root, task=project.task)
+    path = layout.behavior_trial_features()
+    features = read_trial_features(require_file(path, purpose="trial features"))
+    excluded = set(project.subject_exclusions)
+    if excluded:
+        features = features.loc[~features["subject"].isin(excluded)]
+    if subjects:
+        wanted = {normalize_subject_id(subject) for subject in subjects}
+        features = features.loc[features["subject"].isin(wanted)]
+    if features.empty:
+        raise ValueError(
+            "No trial-feature rows remain after applying subject selection "
+            "and exclusions"
+        )
+    return features, path, sorted(features["subject"].astype(str).unique()), sorted(excluded)
+
+
+def _ssm_fit_metadata(
+    *,
+    models: tuple[str, ...],
+    n_jobs: int,
+    n_starts: int,
+    features_path: Path,
+    excluded: set[str],
+) -> dict[str, object]:
+    """Return complete reproducibility metadata for subject-level SSM fits."""
+    return {
+        "stage": "behavior_characterization_analysis",
+        "analysis": "ssm mechanistic model fit",
+        "models": list(models),
+        "input_files": [str(features_path)],
+        "excluded_subjects": sorted(excluded),
+        "minimum_fit_trials": MINIMUM_FIT_TRIALS,
+        "n_jobs": n_jobs,
+        "n_starts": n_starts,
+        "uncertainty": {
+            "final_full_data": "finite-difference observed-information Hessian",
+            "hessian_step": HESSIAN_STEP,
+            "outside_final_full_data": "disabled for held-out/recovery/robustness",
+        },
+        **_model_provenance(timecourse_dt_s=TIME_COURSE_STEP_S),
+    }
+
+
+def fit_subject_sequential_sampling(
+    project: ProjectConfig,
+    *,
+    subjects: Optional[Sequence[str]] = None,
+    n_jobs: int = 1,
+    models: tuple[str, ...] = ("ddm", "urgency"),
+    n_starts: int = 1,
+) -> WorkflowResult:
+    """Fit the sequential-sampling models and write one table per subject.
+
+    The fits are the whole runtime of Stage 2b and are independent across
+    subjects, so this splits them out of
+    :func:`~meg_tokens.workflows.behavior_characterization.analyze_behavior_characterization`:
+    run it once per subject, or once per batch of subjects, then run the
+    characterization, which pools the written tables instead of refitting.
+
+    Parameters
+    ----------
+    project
+        Project configuration.
+    subjects
+        Subjects to fit. Every retained subject when omitted.
+    n_jobs
+        Worker processes. Each subject contributes six independent fits (three
+        conditions by two models), so a batch of subjects is what fills a node
+        with more cores than that.
+
+    Returns
+    -------
+    WorkflowResult
+        Outputs are the per-subject fit tables, one per fitted subject.
+
+    Notes
+    -----
+    Every subject's table holds that subject's rows only, in the schema
+    :func:`~meg_tokens.behavior.analyses.sequential_sampling.fit_sequential_sampling_models`
+    returns, so pooling them is a concatenation. Writing per subject rather
+    than per batch keeps an array job's tasks from racing for one path.
+    """
+    layout = DerivativeLayout(project.bids_root, task=project.task)
+    features, features_path, _, excluded = _selected_features(project, subjects)
+    fits = fit_sequential_sampling_models(
+        features, n_jobs=n_jobs, models=models, n_starts=n_starts
+    )
+    time_courses, trial_predictions = fitted_predictions(features, fits)
+
+    written = {
+        "ssmcomparison": fits,
+        "ssmtimecourse": time_courses,
+        "ssmtrialpredictions": trial_predictions,
+    }
+    provenance = _ssm_fit_metadata(
+        models=models,
+        n_jobs=n_jobs,
+        n_starts=n_starts,
+        features_path=features_path,
+        excluded=set(excluded),
+    )
+    outputs = []
+    for subject in sorted(fits["subject"].astype(str).unique()):
+        for name, table in written.items():
+            # A cell too small to fit produces no prediction rows at all, and an
+            # empty table is not worth a file.
+            if table.empty:
+                continue
+            rows = table.loc[table["subject"].astype(str) == subject]
+            output_path = layout.behavior_subject_analysis(subject, name)
+            save_table(
+                output_path,
+                rows.reset_index(drop=True),
+                metadata={
+                    **provenance,
+                    "analysis": name,
+                    "subjects": [subject],
+                    "inference": (
+                        "maximum-likelihood fit per subject, condition and "
+                        "model; pooled by dedicated Thura et al. aggregation"
+                    ),
+                },
+            )
+            outputs.append(output_path)
+    return WorkflowResult(
+        stage="behavior_sequential_sampling_fit",
+        inputs=(features_path,),
+        outputs=tuple(outputs),
+        settings={
+            "subjects": sorted(fits["subject"].astype(str).unique()),
+            "n_jobs": n_jobs,
+            "models": list(models),
+            "n_starts": n_starts,
+            "n_converged_fits": int(fits["converged"].sum()),
+        },
+    )
 
 
 def _analysis_scope(name: str) -> tuple[str, str]:
@@ -108,24 +349,6 @@ def _analysis_scope(name: str) -> tuple[str, str]:
     )
 
 
-def _selected_features(
-    project: ProjectConfig,
-    subjects: Optional[Sequence[str]],
-) -> tuple[pd.DataFrame, Path, list[str], list[str]]:
-    layout = DerivativeLayout(project.bids_root, task=project.task)
-    path = layout.behavior_trial_features()
-    features = read_trial_features(require_file(path, purpose="trial features"))
-    excluded = set(project.subject_exclusions)
-    if excluded:
-        features = features.loc[~features["subject"].isin(excluded)]
-    if subjects:
-        wanted = {normalize_subject_id(subject) for subject in subjects}
-        features = features.loc[features["subject"].isin(wanted)]
-    if features.empty:
-        raise ValueError("No trial-feature rows remain for Thura et al. analysis")
-    return features, path, sorted(features["subject"].astype(str).unique()), sorted(excluded)
-
-
 def _write(
     layout,
     name: str,
@@ -155,28 +378,7 @@ def _write(
         "excluded_subjects": excluded or [],
         "input_files": [str(value) for value in inputs],
         "models": list(MECHANISTIC_MODELS),
-        "model_parameters": {model: list(parameters) for model, parameters in MODEL_PARAMETERS.items()},
-        "parameter_ranges": {name: list(bounds) for name, bounds in PARAMETER_RANGES.items()},
-        "condition_parameterization": "parameters are fit separately within each subject × condition × model cell; pooled statistics are subject-level",
-        "timing": {
-            "token_interval_s": TOKEN_INTERVAL_S,
-            "decision_time_origin": "first token jump; dt_ms is motor-baseline-corrected",
-            "evidence_after_last_token": EVIDENCE_AFTER_LAST,
-        },
-        "solver": {
-            "dt_s": SOLVER_STEP_S,
-            "state_grid_step": SOLVER_STEP_S,
-            "state_grid_units": "decision-variable/noise units (not seconds)",
-            "boundary": "absorbing finite-grid first passage",
-            "overshoot_correction": "none; no separate correction beyond the numerical grid",
-        },
-        "likelihood": {
-            "loss": "PyDDM LossLikelihood",
-            "mixture_coef": MIXTURE_COEF,
-            "mixture_distribution": "uniform contaminant",
-        },
-        "filter_tau_s": FILTER_TAU_S,
-        "fit_seed": FIT_SEED,
+        **_model_provenance(),
         "simulation_seeds": sorted(
             pd.to_numeric(table["simulation_seed"], errors="coerce")
             .dropna().astype(int).unique().tolist()
@@ -201,23 +403,6 @@ def _write(
         "uncertainty": "observed-information finite-difference Hessian for final full-data fits; disabled for held-out/recovery/robustness candidates",
         "eligibility": eligibility_scope,
         "source": "Thura et al. (2012), doi:10.1152/jn.01071.2011",
-        "git_commit": subprocess.run(
-            ["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=False
-        ).stdout.strip(),
-        "git_dirty": bool(
-            subprocess.run(
-                ["git", "status", "--porcelain"],
-                capture_output=True,
-                text=True,
-                check=False,
-            ).stdout.strip()
-        ),
-        "source_tree_sha256": _source_tree_sha256(),
-        "python": sys.version,
-        "software": {
-            package: _package_version(package)
-            for package in ("pyddm", "numpy", "pandas", "scipy")
-        },
     }
     if provenance:
         metadata.update(dict(provenance))
@@ -227,35 +412,6 @@ def _write(
         metadata=metadata,
     )
     return path
-
-
-def _source_tree_sha256() -> str:
-    """Hash the source/docs/scripts that define this analysis.
-
-    The cluster deliberately receives an uncommitted working tree.  A commit
-    field alone would therefore misidentify the code that generated a result;
-    this deterministic manifest hash is stored alongside the dirty flag.
-    """
-    root = Path(__file__).resolve().parents[2]
-    paths = sorted(
-        path
-        for base in (root / "meg_tokens", root / "scripts")
-        if base.exists()
-        for path in base.rglob("*")
-        if path.is_file() and path.suffix in {".py", ".sh"}
-    )
-    paths.extend(
-        path
-        for path in (root / "docs" / "behavior.md", root / "docs" / "behavior_reporting_session_handoff.md")
-        if path.is_file()
-    )
-    digest = hashlib.sha256()
-    for path in sorted(set(paths)):
-        digest.update(str(path.relative_to(root)).encode("utf-8"))
-        digest.update(b"\0")
-        digest.update(path.read_bytes())
-        digest.update(b"\0")
-    return digest.hexdigest()
 
 
 def _validate_heldout_coverage(
@@ -510,12 +666,21 @@ def aggregate_mechanistic_evaluation(
     )
     tables["ssmheldoutstats"] = heldout_model_statistics(tables["ssmheldout"])
     tables["ssmheldoutpairwise"] = heldout_pairwise_model_statistics(tables["ssmheldout"])
+    tables["ssmheldoutrobustness"] = heldout_contrast_robustness(
+        tables["ssmheldout"], fits
+    )
+    tables["ssmdistributioncheckstats"] = fitted_distribution_check_statistics(
+        tables["ssmdistributionchecks"]
+    )
     tables["ssmmatchedsequencestats"] = matched_sequence_statistics(tables["ssmmatchedsequence"])
     tables["ssmmatchedsequenceaudit"] = matched_sequence_audit(
         tables["ssmmatchedsequence"], features
     )
     tables["ssmmatchedsequencepredstats"] = matched_sequence_model_statistics(
         tables["ssmmatchedsequencepredictions"]
+    )
+    tables["ssmmatchedsequenceppc"] = matched_sequence_posterior_predictive(
+        tables["ssmmatchedsequencepredictions"], tables["ssmmatchedsequence"]
     )
     outputs = []
     for name, table in tables.items():
@@ -606,7 +771,7 @@ def _subject_fit_provenance(path: Path, *, subject: str) -> tuple[str, str]:
 def aggregate_mechanistic_fits(project: ProjectConfig) -> WorkflowResult:
     """Pool only complete subject SSM outputs; never rewrite other analyses."""
     layout = DerivativeLayout(project.bids_root, task=project.task)
-    features, features_path, subjects, excluded = _selected_features(project, None)
+    _, features_path, subjects, excluded = _selected_features(project, None)
     names = ("ssmcomparison", "ssmtimecourse", "ssmtrialpredictions")
     pooled: dict[str, list[pd.DataFrame]] = {name: [] for name in names}
     inputs = [features_path]
@@ -697,29 +862,6 @@ def aggregate_mechanistic_fits(project: ProjectConfig) -> WorkflowResult:
             provenance=accepted_provenance,
         )
     )
-    estimates, population = population_parameters(fits)
-    outputs.append(
-        _write(
-            layout,
-            "ssmpopulation",
-            estimates,
-            inputs=inputs,
-            subjects=subjects,
-            excluded=excluded,
-            provenance=accepted_provenance,
-        )
-    )
-    outputs.append(
-        _write(
-            layout,
-            "ssmpopulationstats",
-            population,
-            inputs=inputs,
-            subjects=subjects,
-            excluded=excluded,
-            provenance=accepted_provenance,
-        )
-    )
     return WorkflowResult(
         stage="thura2012_mechanistic_fit_aggregation",
         inputs=tuple(inputs),
@@ -733,11 +875,31 @@ def aggregate_mechanistic_fits(project: ProjectConfig) -> WorkflowResult:
     )
 
 
+def _recovery_trials_per_sequence(
+    fits: pd.DataFrame,
+    representative_paths: tuple[tuple[int, ...], ...],
+) -> int:
+    """Size a synthetic dataset to a real subject x condition cell.
+
+    Recovery is cited as evidence about *this design's* sample size, so the
+    simulated datasets have to carry it. The median condition-specific cell is
+    used rather than the mean because the distribution is right-skewed, and
+    the count is spread evenly over the empirical lead paths.
+    """
+    cells = fits.loc[
+        fits["converged"].astype(bool) & (fits["condition"].astype(str) != "all")
+    ]
+    counts = pd.to_numeric(cells.get("n_trials"), errors="coerce").dropna()
+    if counts.empty or not representative_paths:
+        return 40
+    return max(1, int(round(float(counts.median()) / len(representative_paths))))
+
+
 def run_recovery_stage(
     project: ProjectConfig,
     *,
     repetitions: int = 12,
-    n_starts: int = 2,
+    n_starts: int = 3,
     repetition_index: int | None = None,
 ) -> WorkflowResult:
     """Run one or all deterministic recovery truth points on a compute node.
@@ -745,6 +907,16 @@ def run_recovery_stage(
     The Slurm array passes ``repetition_index`` so each task writes unique
     repetition-scoped derivatives.  ``aggregate_recovery_stage`` validates
     and pools them only after every requested repetition is present.
+
+    Notes
+    -----
+    Truths are the accepted fits themselves and each synthetic dataset is
+    sized to the real median trials per subject x condition, so the study
+    answers whether these models are separable *in the region and at the
+    sample size this design actually has*. See
+    :func:`~meg_tokens.behavior.analyses.sequential_sampling.fitted_truth_values`
+    for why a hypercube over the optimizer bounds could not answer that.
+    ``n_starts`` defaults to the production fit's three.
     """
     if repetitions < 8:
         raise ValueError("recovery requires at least 8 truth repetitions")
@@ -753,21 +925,30 @@ def run_recovery_stage(
     layout = DerivativeLayout(project.bids_root, task=project.task)
     features, features_path, subjects, excluded = _selected_features(project, None)
     representative_paths = empirical_lead_paths(features)
-    inputs = [features_path]
+    fit_path = layout.behavior_analysis("ssmcomparison")
+    truth_fits = load_table(
+        require_file(fit_path, purpose="accepted fits supplying recovery truths")
+    )
+    inputs = [features_path, fit_path]
+    n_per_sequence = _recovery_trials_per_sequence(truth_fits, representative_paths)
     indices = (repetition_index,) if repetition_index is not None else None
     parameter = parameter_recovery(
         repetitions=repetitions,
+        n_per_sequence=n_per_sequence,
         n_starts=n_starts,
         representative_paths=representative_paths,
         repetition_indices=indices,
         truth_design_repetitions=repetitions,
+        truth_fits=truth_fits,
     )
     model = model_recovery(
         repetitions=repetitions,
+        n_per_sequence=n_per_sequence,
         n_starts=n_starts,
         representative_paths=representative_paths,
         repetition_indices=indices,
         truth_design_repetitions=repetitions,
+        truth_fits=truth_fits,
     )
     expected_parameter_rows = sum(
         len(MODEL_PARAMETERS[model_name]) for model_name in MECHANISTIC_MODELS
@@ -830,7 +1011,7 @@ def aggregate_recovery_stage(
     if repetitions < 8:
         raise ValueError("recovery requires at least 8 truth repetitions")
     layout = DerivativeLayout(project.bids_root, task=project.task)
-    features, features_path, subjects, excluded = _selected_features(project, None)
+    _, features_path, subjects, excluded = _selected_features(project, None)
     parameter_tables = []
     model_tables = []
     inputs = [features_path]
@@ -1070,10 +1251,18 @@ def aggregate_exclusion_robustness_stage(project: ProjectConfig) -> WorkflowResu
         subjects=subjects,
         excluded=excluded,
     )
+    decomposition_output = _write(
+        layout,
+        "ssmexclusiondecomposition",
+        exclusion_evidence_decomposition(merged, primary),
+        inputs=inputs,
+        subjects=subjects,
+        excluded=excluded,
+    )
     return WorkflowResult(
         stage="thura2012_exclusion_robustness_aggregation",
         inputs=tuple(inputs),
-        outputs=(output, stats_output),
+        outputs=(output, stats_output, decomposition_output),
         settings={"subjects": subjects, "n_rows": int(len(merged)), "strict_rule": "complete_token_log_alignment"},
     )
 
@@ -1081,7 +1270,7 @@ def aggregate_exclusion_robustness_stage(project: ProjectConfig) -> WorkflowResu
 def aggregate_robustness_stage(project: ProjectConfig) -> WorkflowResult:
     """Merge the subject × configuration robustness array outputs."""
     layout = DerivativeLayout(project.bids_root, task=project.task)
-    features, features_path, subjects, excluded = _selected_features(project, None)
+    _, features_path, subjects, excluded = _selected_features(project, None)
     tables = []
     inputs = [features_path]
     for subject in subjects:

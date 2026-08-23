@@ -1,4 +1,5 @@
-"""Smoke tests for F03, F06-F26 (Phases 2-6): each builder returns a Figure,
+"""Smoke tests for F01-F05, F09-F12, F15-F18: each
+builder returns a Figure,
 draws at least one statistical annotation where a test exists, and its
 columns_read metadata names real derivative columns. Not pixel-tested; see
 tests/reports/test_modeling.py and test_distributions.py for the more
@@ -6,11 +7,10 @@ detailed Phase 1 tests (including the dt_ms-not-rawRT regression guard).
 """
 
 import matplotlib.pyplot as plt
-import numpy as np
+import pandas as pd
 import pytest
 
 from meg_tokens.io import DerivativeLayout
-from meg_tokens.reports import style
 from meg_tokens.reports.behavior import design, evidence, individual, modeling, sequential
 from meg_tokens.reports.behavior._tables import BehaviorTableSet
 
@@ -21,8 +21,9 @@ from tests.reports.factories import (
     speciescomparison,
     ssmcomparison,
     ssmcomparisonstats,
-    ssmpopulation,
-    ssmtimecourse,
+    ssmrobustnessstats,
+    ssmboundaryaudit,
+    ssmrecovery,
     write_group_derivative,
 )
 
@@ -60,10 +61,12 @@ def modeling_tables(tmp_path_factory):
     fits = ssmcomparison()
     write_group_derivative(layout, "ssmcomparison", fits)
     write_group_derivative(layout, "ssmcomparisonstats", ssmcomparisonstats(fits))
-    write_group_derivative(layout, "ssmtimecourse", ssmtimecourse())
-    subject_estimates, population = ssmpopulation()
-    write_group_derivative(layout, "ssmpopulation", subject_estimates)
-    write_group_derivative(layout, "ssmpopulationstats", population)
+    write_group_derivative(layout, "ssmboundaryaudit", ssmboundaryaudit(fits))
+    write_group_derivative(layout, "ssmrobustnessstats", ssmrobustnessstats())
+    recovery, recovery_stats, confusion = ssmrecovery()
+    write_group_derivative(layout, "ssmparameterrecovery", recovery)
+    write_group_derivative(layout, "ssmparameterrecoverystats", recovery_stats)
+    write_group_derivative(layout, "ssmmodelrecoverystats", confusion)
     return BehaviorTableSet(layout=layout)
 
 
@@ -72,34 +75,45 @@ def _assert_basic_figure(figure, metadata, *, min_axes=1, require_stat_text=True
     assert len(figure.axes) >= min_axes
     assert metadata["columns_read"]
     if require_stat_text:
-        all_text = " ".join(t.get_text() for ax in figure.axes for t in ax.texts)
-        assert "p <" in all_text or "p =" in all_text, "no stat annotation reached the figure"
+        # Titles count as well as free text: a compact stat belongs in the
+        # axes title, which is the one place constrained_layout reserves room
+        # for, and several panels now put it there.
+        all_text = " ".join(
+            [t.get_text() for ax in figure.axes for t in ax.texts]
+            + [ax.get_title() for ax in figure.axes]
+        )
+        # Either convention counts: the spelled-out t/df/p under an estimation
+        # axis, or the compact "Δ = value marker" -- where the marker on a null
+        # the figure argues from is an equivalence bound, not a p at all.
+        assert any(
+            token in all_text
+            for token in ("p <", "p =", "***", "n.s.", "|Δ| <")
+        ), "no stat annotation reached the figure"
 
 
-# --- modeling.py (F03, F21, F22) -------------------------------------------
+# --- modeling.py (F14, F15) -------------------------------------------------
 
 
-def test_ssmcomparison_urgencyparams(modeling_tables):
-    figure, metadata = modeling.build_ssmcomparison_urgencyparams(modeling_tables)
-    _assert_basic_figure(figure, metadata, min_axes=4)
+def test_ssmcomparison_urgency(modeling_tables):
+    figure, metadata = modeling.build_ssmcomparison_urgency(modeling_tables)
+    _assert_basic_figure(figure, metadata, min_axes=5)
 
 
-def test_ssmtimecourse_fit(modeling_tables):
-    figure, metadata = modeling.build_ssmtimecourse_fit(modeling_tables)
-    _assert_basic_figure(figure, metadata, min_axes=3, require_stat_text=False)
+def test_ssmrecovery_identifiability(modeling_tables):
+    figure, metadata = modeling.build_ssmrecovery_identifiability(modeling_tables)
+    _assert_basic_figure(figure, metadata, min_axes=4, require_stat_text=False)
+    # The panel that explains the non-decision failures needs the solver step
+    # it divides by; without it the axis is a bare ratio of nothing.
+    assert metadata["solver_step_s"] > 0
+    assert metadata["boundary_rate"]
 
 
-def test_ssmpopulation_shrinkage(modeling_tables):
-    figure, metadata = modeling.build_ssmpopulation_shrinkage(modeling_tables)
-    _assert_basic_figure(figure, metadata, min_axes=7, require_stat_text=False)
-
-
-# --- design.py (F08-F13) ----------------------------------------------------
+# --- design.py (F01-F05) -----------------------------------------------------
 
 
 def test_conditionclass_anova(design_tables):
     figure, metadata = design.build_conditionclass_anova(design_tables)
-    # F08 annotates effect size plus a significance marker rather than
+    # F05 annotates effect size plus a significance marker rather than
     # spelled-out 'p = ...' text, so the shared p-value check does not apply.
     _assert_basic_figure(figure, metadata, min_axes=2, require_stat_text=False)
 
@@ -112,6 +126,13 @@ def test_conditionclass_anova(design_tables):
     # The per-class stretch factors are the figure's positive claim.
     assert "Slow ÷ Fast" in all_text
     assert set(metadata["stretch_factors"]) == {"easy", "ambiguous", "misleading"}
+    # Three decimals, not two: the factors differ by <0.01 and the claim is
+    # that they are indistinguishable, so two decimals straddles a rounding
+    # boundary and shows a step that is not in the data.
+    for factor in metadata["stretch_factors"].values():
+        assert f"{factor:.3f}" in all_text, "a stretch factor lost its precision"
+    # The null the figure argues *from* carries a bound, not a bare marker.
+    assert "] ms" in all_text, "the additive-interaction bound did not reach panel A"
 
 
 def test_choiceside_asymmetry(design_tables):
@@ -142,6 +163,10 @@ def test_timeontask_drift(design_tables):
     assert "ms per trial" in all_text, "within-block coefficient did not reach the figure"
     assert all_text.count("Fast − Slow") == 2, "a Fast/Slow contrast did not reach the figure"
     assert "p =" not in all_text and "p <" not in all_text
+    # Both Fast/Slow contrasts are null, and the figure's point is how tightly
+    # each is bounded -- so they must show an interval, never a bare 'n.s.'.
+    assert all_text.count("[") == 2, "a Fast/Slow contrast lost its interval"
+    assert "n.s." not in all_text
     # Raw column names must not surface as display labels.
     labels = [ax.get_ylabel() + " " + ax.get_xlabel() for ax in figure.axes]
     assert not any("dt_ms" in text or "dt_per" in text for text in labels)
@@ -183,54 +208,31 @@ def test_summary_cohort(design_tables):
     assert "Nothing is removed" in metadata["caveat"]
 
 
-# --- evidence.py ------------------------------------------------------------
+# --- evidence.py (F09-F12) ---------------------------------------------------
 
 
-def test_criteriondecline_sumloglr(design_tables):
-    figure, metadata = evidence.build_criteriondecline_sumloglr(design_tables)
-    _assert_basic_figure(
-        figure, metadata, min_axes=2, require_stat_text=False
-    )
-    assert metadata["kind"] == "first_order_criterion"
-    assert "design_time_alignment_valid" in metadata["eligibility"]
-    assert "decision_token_index > 0" in metadata["eligibility"]
-    assert "display-only" in metadata["method"]
-    assert metadata["display_window_s"][0] == 0.0
-    assert metadata["display_window_s"][1] > 0.0
-    assert metadata["display_min_subjects_per_200ms_bin"] >= 1
-    assert isinstance(metadata["n_eligible_trials_after_3s"], int)
-    assert isinstance(metadata["n_eligible_trials_beyond_display"], int)
-    assert isinstance(metadata["clipped_slope_outliers"], list)
-    assert metadata["caveat"] is not None
-    ax_data, ax_slopes = figure.axes
-    errorbar_segments = [
-        segment
-        for collection in ax_data.collections
-        if hasattr(collection, "get_segments")
-        for segment in collection.get_segments()
-        if len(segment)
-    ]
-    errorbar_ends = np.concatenate(errorbar_segments)[:, 1]
-    assert ax_data.get_ylim()[0] <= errorbar_ends.min()
-    assert ax_data.get_ylim()[1] >= errorbar_ends.max()
-    assert ax_data.get_yticks() == pytest.approx([0.0, 0.5, 1.0, 1.5])
-    assert ax_slopes.get_ylim()[0] == pytest.approx(-0.5)
-    assert ax_slopes.get_ylim()[1] > max(
-        point.get_offsets()[:, 1].max()
-        for point in ax_slopes.collections
-        if len(point.get_offsets())
-    )
-    assert any(
-        line.get_color() == style.SUBJECT_LINE for line in ax_data.lines
-    )
-    assert [tick.get_text() for tick in ax_slopes.get_xticklabels()] == [
-        "Fast", "Slow"
-    ]
+def test_criterionscale_comparison(design_tables):
+    figure, metadata = evidence.build_criterionscale_comparison(design_tables)
+    # Three panels: the two scales and the within-subject reversal.
+    _assert_basic_figure(figure, metadata, min_axes=3, require_stat_text=False)
+    assert len(figure.axes) == 3
 
-
-def test_urgency_decisiontime(design_tables):
-    figure, metadata = evidence.build_urgency_decisiontime(design_tables)
-    _assert_basic_figure(figure, metadata, min_axes=4)
+    all_text = " ".join(t.get_text() for ax in figure.axes for t in ax.texts)
+    # Both nulls are bounded, never a bare marker -- the Fast/Slow contrast is
+    # uninformative without the size of difference the test could detect.
+    assert all_text.count("|Δ| <") == 2, "a Fast/Slow bound did not reach the figure"
+    # The slope rows keep a significance marker (they test a real effect, and
+    # on synthetic fixture data that marker is legitimately 'n.s.'); it is the
+    # Fast/Slow rows that must never fall back to one.
+    assert "Fast − Slow  n.s." not in all_text
+    # The between-scale contrast is the figure's result, so it must be drawn --
+    # as a bracket over the two columns, with the paired difference and the
+    # across-subject correlation.
+    assert "Δ = " in all_text and "r = " in all_text
+    # Both scales must be sourced, so the reversal is attributable to the scale.
+    assert set(metadata["columns_read"]) == {
+        "criterionscale", "criterionscaleprofile", "criterionscalestats",
+    }
 
 
 def test_reversecorrelation_kernel(design_tables):
@@ -240,16 +242,67 @@ def test_reversecorrelation_kernel(design_tables):
 
 def test_conditionalaccuracy_caf(design_tables):
     figure, metadata = evidence.build_conditionalaccuracy_caf(design_tables)
-    _assert_basic_figure(figure, metadata, min_axes=1)
+    # Compact 'value marker' annotations, not spelled-out t/df/p, so the
+    # generic stat-text probe does not apply here.
+    _assert_basic_figure(figure, metadata, min_axes=2, require_stat_text=False)
+
+    text = " ".join(t.get_text() for ax in figure.axes for t in ax.texts)
+    # The classes are named by the legend, not by the annotation. Annotating
+    # all four repeated the legend and crowded the panel, so only the two a
+    # reader cannot get by looking are printed: the class that reverses and
+    # the null the figure argues from.
+    legends = [ax.get_legend() for ax in figure.axes if ax.get_legend()]
+    legends += list(figure.legends)  # the classes sit in a figure-level legend
+    labels = {t.get_text() for legend in legends for t in legend.get_texts()}
+    assert {"easy", "ambiguous", "misleading", "unclassified"} <= labels
+    assert {"observed", "class-adjusted"} <= labels
+    assert "misl." in text and "ambig." in text
+    assert "easy" not in text, "the legend already names the classes"
+    # The pooled panel states the adjusted slope beside the observed one --
+    # the claim the figure exists to make.
+    assert "observed" in text and "adjusted" in text
+    # Accuracy is read against chance, and a null slope is quoted as a bound.
+    assert "chance" in text
+    assert "|slope| <" in text
 
 
 def test_continuousevidence_effects(design_tables):
     figure, metadata = evidence.build_continuousevidence_effects(design_tables)
-    _assert_basic_figure(figure, metadata, min_axes=4)
+    # Compact 'value marker' annotations, not spelled-out t/df/p.
+    _assert_basic_figure(figure, metadata, min_axes=2, require_stat_text=False)
     assert metadata["includes_unclassified"] is True
 
+    text = " ".join(t.get_text() for ax in figure.axes for t in ax.texts)
+    # The class contrast at a level is a marker over its cluster, not a block
+    # of text: one per cluster that holds two classes, and none over the two
+    # that hold one. The effect sizes stay in the derivative.
+    # On the real derivatives both are '***'; on this fixture's random data
+    # they are legitimately 'n.s.', so the test counts markers rather than
+    # assuming significance.
+    markers = [t.get_text() for ax in figure.axes for t in ax.texts
+               if t.get_text() in {"*", "**", "***", "n.s.", "n/a"}]
+    assert len(markers) == 4, f"expected one marker per comparable cluster, got {markers}"
+    labels = {
+        t.get_text() for ax in figure.axes
+        for t in (ax.get_legend().get_texts() if ax.get_legend() else [])
+    }
+    assert labels == {"easy", "ambiguous", "misleading"}, (
+        "F11 draws the designed classes only; F10 is the figure that needs "
+        "the unclassified stratum"
+    )
+    # Accuracy is read against chance, not zero.
+    assert "chance" in text
+    # The predictor's four-level nature is stated where a reader will find it.
+    assert "not continuous" in metadata["caveat"]
+    assert "n_predictor_levels" in metadata["caveat"]
+    # Nothing is read from trialfeatures any more; the binning moved into the
+    # analysis layer, so `requires` and `columns_read` can agree.
+    assert set(metadata["columns_read"]) == {
+        "continuousevidenceprofile", "continuousevidencestats",
+    }
 
-# --- sequential.py (F19, F20) -----------------------------------------------
+
+# --- sequential.py (F16, F17) -----------------------------------------------
 
 
 def test_posterror_slowing(design_tables):
@@ -259,56 +312,162 @@ def test_posterror_slowing(design_tables):
 
 def test_choicehistory_effects(design_tables):
     figure, metadata = sequential.build_choicehistory_effects(design_tables)
-    _assert_basic_figure(figure, metadata, min_axes=4)
+    _assert_basic_figure(figure, metadata, min_axes=2)
 
 
-# --- individual.py (F23-F26) ------------------------------------------------
+# --- individual.py (F18) ----------------------------------------------------
 
 
-def test_individualcorrelations_matrix(design_tables):
-    figure, metadata = individual.build_individualcorrelations_matrix(design_tables)
-    _assert_basic_figure(figure, metadata, min_axes=1, require_stat_text=False)
+def test_individualcorrelations_structure(design_tables):
+    figure, metadata = individual.build_individualcorrelations_structure(design_tables)
+    # No `require_stat_text`: the fixture's four synthetic subjects reach
+    # significance on nothing, so there is no marker to find -- correctly, and
+    # the figure note below carries the conventions either way.
+    _assert_basic_figure(figure, metadata, min_axes=6, require_stat_text=False)
+
+    # The figure carries no note of its own, so the two things that make an
+    # uncorrected matrix honest -- the multiplicity statement and what a blank
+    # cell means -- have to survive in the sidecar for the caption to quote.
+    assert metadata["multiplicity_correction"] == "none"
+    assert "uncorrected" in metadata["caption_required"]
+    assert "blank cell is tested and not significant" in metadata["caption_required"]
 
 
-def test_individualprofile_scatter(design_tables):
-    figure, metadata = individual.build_individualprofile_scatter(design_tables)
-    _assert_basic_figure(figure, metadata, min_axes=6)
+def test_the_structure_figure_draws_the_matrix_and_every_scatter(design_tables):
+    """The matrix and the scatters are one argument: at n = 32 an r can be
+    outlier-driven and the matrix cannot show that, so a merged figure missing
+    either half is back to the problem the merge was for."""
+    figure, metadata = individual.build_individualcorrelations_structure(design_tables)
+    correlations = design_tables.analysis("individualcorrelations")
+    pairs = individual._scatter_pairs(correlations)
+
+    # One labelled scatter per selected pair, plus the matrix, which labels
+    # neither axis. Counting raw axes would also count the colorbar, whose
+    # presence in `figure.axes` depends on how it was attached and says nothing
+    # about whether the argument is complete.
+    labelled = [
+        ax for ax in figure.axes
+        if ax.get_visible() and ax.get_xlabel() and ax.get_ylabel()
+    ]
+    assert len(labelled) == len(pairs)
+    assert any(not ax.get_xlabel() for ax in figure.axes), "the matrix is missing"
+    # Every scatter names the measures it draws, in this figure's vocabulary.
+    for (measure_a, measure_b), ax in zip(pairs, labelled):
+        assert ax.get_xlabel() == individual._axis_label(measure_a)
+        assert ax.get_ylabel() == individual._axis_label(measure_b)
+    assert metadata["scatter_pairs"] == [list(pair) for pair in pairs]
+    # Every scatter is a cell of the matrix, so both halves must read the same
+    # derivative and neither may invent a pair the other does not hold.
+    for measure_a, measure_b in pairs:
+        assert individual._correlation_row(correlations, measure_a, measure_b) is not None
+    assert metadata["multiplicity_correction"] == "none"
 
 
-def test_speciescomparison_forest(design_tables):
-    figure, metadata = individual.build_speciescomparison_forest(design_tables)
-    assert isinstance(figure, plt.Figure)
-    assert len(figure.axes) == 5
-    assert "comparable_to_source" in metadata
-
-
-def test_individualprofile_neural_requires_flag(design_tables):
-    with pytest.raises(FileNotFoundError, match="neural-metrics"):
-        individual.build_individualprofile_neural(design_tables)
-
-
-def test_individualprofile_neural_end_to_end(tmp_path):
-    import pandas as pd
-    from meg_tokens.io import save_table
-
-    layout = DerivativeLayout(tmp_path)
-    features = rich_trial_features()
-    derivatives = group_derivatives_from_rich_features(features)
-    save_table(layout.behavior_summary(), derivatives["summary"], metadata={"stage": "test_fixture"})
-    species = individual_and_species_derivatives(
-        derivatives["summary"], derivatives["criteriondecline"], derivatives["urgency"],
-        derivatives["continuousevidence"], derivatives["lapses"],
+def test_the_scatters_are_the_strongest_significant_pairs_in_order():
+    """Which cells deserve magnifying is a property of the data, so the panels
+    are a rule read off the derivative rather than a list that silently keeps
+    drawing yesterday's answer."""
+    correlations = pd.DataFrame(
+        [
+            # Big but not significant: must not be selected.
+            {"measure_a": "mean_dt_ms", "measure_b": "lapse_rate",
+             "pearson_r": 0.95, "pearson_p": 0.40, "n_subjects": 32},
+            {"measure_a": "mean_dt_ms", "measure_b": "percent_correct",
+             "pearson_r": -0.30, "pearson_p": 0.01, "n_subjects": 32},
+            {"measure_a": "urgency_slope_per_second",
+             "measure_b": "criterion_slope_sum_log_lr_per_second",
+             "pearson_r": 0.70, "pearson_p": 0.001, "n_subjects": 32},
+            {"measure_a": "mean_dt_ms", "measure_b": "sat_adjustment_ms",
+             "pearson_r": -0.50, "pearson_p": 0.02, "n_subjects": 32},
+        ]
     )
-    write_group_derivative(layout, "individualprofile", species["individualprofile"])
 
-    neural_path = tmp_path / "neural.csv"
-    neural = pd.DataFrame({
-        "subject": species["individualprofile"]["subject"],
-        "neural_peak_ms": species["individualprofile"]["mean_dt_ms"] * 0.8 + 50,
-    })
-    neural.to_csv(neural_path, index=False)
+    pairs = individual._scatter_pairs(correlations)
 
-    tables = BehaviorTableSet(layout=layout, neural_metrics_path=str(neural_path))
-    figure, metadata = individual.build_individualprofile_neural(tables)
-    assert isinstance(figure, plt.Figure)
-    assert metadata["statistics_source"] == "computed_in_report"
+    # Largest |r| first, and the r = .95 pair is absent because p = .40.
+    assert pairs == [
+        ("criterion_slope_sum_log_lr_per_second", "urgency_slope_per_second"),
+        ("mean_dt_ms", "sat_adjustment_ms"),
+        ("mean_dt_ms", "percent_correct"),
+    ]
+
+
+def test_a_pair_with_mean_dt_always_puts_it_on_x():
+    """So every panel holding it reads as another view of the same speed
+    factor rather than an unrelated plane."""
+    assert individual._orient("percent_correct", "mean_dt_ms")[0] == "mean_dt_ms"
+    assert individual._orient("mean_dt_ms", "percent_correct")[0] == "mean_dt_ms"
+    # Without it, the longer label goes on x, where labels have room.
+    x, y = individual._orient(
+        "urgency_slope_per_second", "criterion_slope_sum_log_lr_per_second"
+    )
+    assert len(individual._axis_label(x)) > len(individual._axis_label(y))
+
+
+def test_fewer_significant_pairs_than_cells_hides_the_spare_axes(design_tables):
+    """An empty framed axes reads as a panel whose data failed to draw, and the
+    fixture's four synthetic subjects reach significance on nothing -- which is
+    the case the real cohort will hit under any stricter selection."""
+    figure, _ = individual.build_individualcorrelations_structure(design_tables)
+    correlations = design_tables.analysis("individualcorrelations")
+    pairs = individual._scatter_pairs(correlations)
+
+    drawn = [ax for ax in figure.axes if ax.get_visible() and ax.get_xlabel()]
+    assert len(drawn) == len(pairs)
+    # The spare cells are hidden, not left as empty frames.
+    hidden = [ax for ax in figure.axes if not ax.get_visible()]
+    assert len(hidden) == individual.SCATTER_PANEL_COUNT - len(pairs)
+
+
+def test_a_table_with_no_significant_pair_still_draws_the_matrix(design_tables):
+    """"None of them reached the bar" is a result, and A is the panel that can
+    say it."""
+    correlations = design_tables.analysis("individualcorrelations").copy()
+    correlations["pearson_p"] = 0.9
+
+    assert individual._scatter_pairs(correlations) == []
+
+
+def test_the_correlation_matrix_is_symmetric_whichever_way_a_pair_was_stored():
+    """The derivative stores each pair once, in whichever order the analysis
+    emitted. The heatmap draws one triangle, so a pair stored the other way
+    round used to land in the masked half and disappear -- as a blank cell
+    reading "not measured" rather than "measured, near zero". Four of the
+    twenty-one real pairs went that way."""
+    correlations = pd.DataFrame(
+        [
+            # Deliberately stored with the *later* measure first, which is the
+            # orientation that used to be dropped.
+            {"measure_a": "percent_correct", "measure_b": "mean_dt_ms",
+             "pearson_r": 0.46, "pearson_p": 0.008, "n_subjects": 32},
+            {"measure_a": "mean_dt_ms", "measure_b": "lapse_rate",
+             "pearson_r": 0.08, "pearson_p": 0.68, "n_subjects": 32},
+        ]
+    )
+
+    r_matrix, p_matrix = individual._correlation_matrices(correlations)
+
+    for matrix, forward, reverse in (
+        (r_matrix, 0.46, 0.46), (p_matrix, 0.008, 0.008),
+    ):
+        assert matrix.loc["percent_correct", "mean_dt_ms"] == pytest.approx(forward)
+        assert matrix.loc["mean_dt_ms", "percent_correct"] == pytest.approx(reverse)
+    assert r_matrix.loc["lapse_rate", "mean_dt_ms"] == pytest.approx(0.08)
+    assert r_matrix.loc["mean_dt_ms", "lapse_rate"] == pytest.approx(0.08)
+
+
+def test_every_stored_pair_reaches_the_drawn_triangle(design_tables):
+    """Whatever triangle the heatmap draws, no pair the derivative holds may
+    be missing from it."""
+    correlations = design_tables.analysis("individualcorrelations")
+    r_matrix, _ = individual._correlation_matrices(correlations)
+    measures = list(r_matrix.columns)
+
+    for _, row in correlations.iterrows():
+        a, b = row["measure_a"], row["measure_b"]
+        if a not in measures or b not in measures:
+            continue
+        lower = max(measures.index(a), measures.index(b))
+        upper = min(measures.index(a), measures.index(b))
+        # The cell the lower triangle actually renders for this pair.
+        assert r_matrix.iloc[lower, upper] == pytest.approx(row["pearson_r"])

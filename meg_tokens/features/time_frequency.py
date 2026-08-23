@@ -236,7 +236,7 @@ def compute_band_power(
     
     if is_mne_stc:
         raw_data = data.data  # shape: (n_vertices, n_times) or (n_vertices, 3, n_times)
-        tmin, tstep = data.tmin, data.tstep
+        tmin = data.tmin
     elif is_mne_epochs:
         raw_data = data.get_data()  # shape: (n_epochs, n_channels, n_times)
         # Swap axes to be (n_channels, n_epochs, n_times) to treat epochs as trial dimension

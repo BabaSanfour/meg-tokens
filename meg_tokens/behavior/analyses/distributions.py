@@ -14,11 +14,17 @@ import numpy as np
 import pandas as pd
 from scipy import stats
 
-from meg_tokens.behavior.math.inference import paired_subject_statistics
+from meg_tokens.behavior.math.inference import (
+    confidence_interval,
+    one_sample_statistics,
+    paired_subject_statistics,
+)
 from meg_tokens.behavior.trials import (
     CLASS_NAMES,
     TASK_CONDITIONS,
+    classified_trials,
     finite_values,
+    require_columns,
     task_trials,
 )
 
@@ -306,8 +312,12 @@ def spd_cumulative_distributions(
     pipeline.  This function does not reconstruct, validate, or guess SPD.
     It also does not perform hypothesis tests; it returns descriptive
     empirical cumulative distributions only.
+
+    Every row is keyed by trial class, so the unclassified 43% is excluded by
+    name rather than falling out of the per-class comparison below. The
+    distributions are unchanged either way.
     """
-    trials = task_trials(features)
+    trials = classified_trials(features)
     rows = []
     for view, column in SPD_VIEWS.items():
         for code, class_name in CLASS_NAMES.items():
@@ -348,4 +358,266 @@ def spd_cumulative_distributions(
                         ),
                     }
                 )
+    return pd.DataFrame(rows)
+
+
+GEOMETRY_CONTRASTS: Final[tuple[tuple[str, str, str], ...]] = (
+    ("condition", "fast", "slow"),
+    ("class", "easy", "ambiguous"),
+    ("class", "easy", "misleading"),
+    ("class", "ambiguous", "misleading"),
+)
+
+
+def _geometry_samples(trials: pd.DataFrame) -> dict[tuple[str, str], np.ndarray]:
+    """Decision times per ``(stratum_type, label)`` for one subject."""
+    condition = trials["condition"].astype(str).str.lower()
+    class_name = trials["trial_class_name"].astype(str).str.lower()
+    samples: dict[tuple[str, str], np.ndarray] = {}
+    for name in TASK_CONDITIONS:
+        label = name.lower()
+        samples[("condition", label)] = finite_values(
+            trials.loc[condition == label, "dt_ms"]
+        )
+    for label in CLASS_NAMES.values():
+        samples[("class", label)] = finite_values(
+            trials.loc[class_name == label, "dt_ms"]
+        )
+    return samples
+
+
+def decision_time_geometry(
+    features: pd.DataFrame,
+    quantiles: Sequence[float] = DEFAULT_QUANTILES,
+    min_trials: int = MIN_TRIALS_FOR_SHAPE,
+) -> pd.DataFrame:
+    """Per-subject geometry of one decision-time distribution against another.
+
+    Two distributions can differ because a constant was *added* to every trial
+    (a delay), because the whole process ran proportionally slower (a stretch),
+    or because the distribution changed *shape*. Distinguishing the three is
+    the standing audit procedure for this dataset, and it is what the report
+    argues from for both the Fast/Slow contrast and the difficulty contrasts.
+    It was being done by hand; this makes it a derivative.
+
+    Parameters
+    ----------
+    features
+        Canonical trial-feature table.
+    quantiles
+        Quantile probabilities compared across the pair.
+    min_trials
+        Minimum finite trials required on *each* side of a contrast.
+
+    Returns
+    -------
+    pandas.DataFrame
+        One row per subject and contrast in :data:`GEOMETRY_CONTRASTS`,
+        reporting per-quantile differences and log ratios, the two sides'
+        means/SDs/CVs together with what a pure delay and a pure stretch each
+        predict for side ``b``, a per-subject stretch factor, and
+        Kolmogorov-Smirnov p-values before and after removing a median offset
+        and a median factor.
+
+    Notes
+    -----
+    Differences are ``a - b`` and ratios are ``b / a``, matching
+    :func:`decision_time_distribution_statistics` so the two tables can be read
+    together; for ``fast`` vs ``slow`` that makes the difference negative and
+    the ratio the familiar stretch above one.
+
+    The delay and stretch predictions are each given the *best per-subject fit*
+    of their own model -- that subject's own offset ``mean_b - mean_a`` or
+    their own factor ``mean_b / mean_a`` -- so neither is handicapped by a
+    group-level parameter. A delay leaves the SD alone and lowers the CV; a
+    stretch scales the SD and leaves the CV alone, which is what makes the two
+    separable.
+
+    The stretch factor is the least-squares slope of ``b``'s quantiles on
+    ``a``'s through the origin: it uses the whole quantile ladder rather than
+    the means, so a pair that differs only in the tail cannot masquerade as a
+    uniform stretch.
+
+    The KS ladder is deliberately per subject and reported as p-values, not as
+    a count: subtracting each side's median should remove a pure delay, and
+    dividing by it should remove a pure stretch, so the *number of subjects
+    still differing* after each is the discriminating quantity. Counting is
+    left to :func:`decision_time_geometry_statistics`, which also records the
+    number expected by chance.
+    """
+    trials = task_trials(features)
+    require_columns(trials, ["subject", "condition", "trial_class_name", "dt_ms"])
+    probabilities = tuple(float(value) for value in quantiles)
+    labels = [f"q{int(round(value * 100)):02d}" for value in probabilities]
+
+    rows = []
+    for subject, subject_trials in trials.groupby("subject", sort=True):
+        samples = _geometry_samples(subject_trials)
+        for stratum_type, label_a, label_b in GEOMETRY_CONTRASTS:
+            values_a = samples.get((stratum_type, label_a), np.array([]))
+            values_b = samples.get((stratum_type, label_b), np.array([]))
+            row = {
+                "subject": subject,
+                "stratum_type": stratum_type,
+                "contrast": f"{label_a}_vs_{label_b}",
+                "label_a": label_a,
+                "label_b": label_b,
+                "n_a": int(values_a.size),
+                "n_b": int(values_b.size),
+            }
+            if values_a.size < min_trials or values_b.size < min_trials:
+                rows.append(row)
+                continue
+
+            quantiles_a = np.quantile(values_a, probabilities)
+            quantiles_b = np.quantile(values_b, probabilities)
+            for label, first, second in zip(labels, quantiles_a, quantiles_b):
+                row[f"delta_{label}_ms"] = float(first - second)
+                row[f"log_ratio_{label}"] = (
+                    float(np.log(second / first)) if first > 0 and second > 0 else np.nan
+                )
+
+            mean_a, mean_b = float(values_a.mean()), float(values_b.mean())
+            sd_a = float(values_a.std(ddof=1))
+            sd_b = float(values_b.std(ddof=1))
+            factor = mean_b / mean_a if mean_a > 0 else np.nan
+            row.update(
+                {
+                    "mean_a_ms": mean_a,
+                    "mean_b_ms": mean_b,
+                    "sd_a_ms": sd_a,
+                    "sd_b_ms": sd_b,
+                    "cv_a": sd_a / mean_a if mean_a > 0 else np.nan,
+                    "cv_b": sd_b / mean_b if mean_b > 0 else np.nan,
+                    # A delay shifts the mean and leaves the spread alone.
+                    "sd_b_delay_predicted_ms": sd_a,
+                    "cv_b_delay_predicted": sd_a / mean_b if mean_b > 0 else np.nan,
+                    # A stretch scales both, so the CV is unchanged.
+                    "sd_b_stretch_predicted_ms": sd_a * factor,
+                    "cv_b_stretch_predicted": sd_a / mean_a if mean_a > 0 else np.nan,
+                    "mean_factor": factor,
+                    "stretch_factor": (
+                        float(np.dot(quantiles_a, quantiles_b) / np.dot(quantiles_a, quantiles_a))
+                        if np.dot(quantiles_a, quantiles_a) > 0
+                        else np.nan
+                    ),
+                    "ks_p_raw": float(stats.ks_2samp(values_a, values_b).pvalue),
+                }
+            )
+            median_a, median_b = float(np.median(values_a)), float(np.median(values_b))
+            row["ks_p_median_subtracted"] = float(
+                stats.ks_2samp(values_a - median_a, values_b - median_b).pvalue
+            )
+            row["ks_p_median_divided"] = (
+                float(stats.ks_2samp(values_a / median_a, values_b / median_b).pvalue)
+                if median_a > 0 and median_b > 0
+                else np.nan
+            )
+            rows.append(row)
+    return pd.DataFrame(rows)
+
+
+def decision_time_geometry_statistics(
+    geometry: pd.DataFrame,
+    alpha: float = 0.05,
+) -> pd.DataFrame:
+    """Group tests deciding delay versus stretch versus shape change.
+
+    Parameters
+    ----------
+    geometry
+        Output of :func:`decision_time_geometry`.
+    alpha
+        Per-subject significance level for the KS ladder counts.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Per contrast: a ``fixed_delay`` test (do the quantile *differences*
+        change across the ladder?), a ``proportional_stretch`` test (do the
+        *log ratios*?), the SD and CV of side ``b`` against what each model
+        predicts, the stretch factor against one, and KS ladder counts before
+        and after removing a median offset and a median factor.
+
+    Notes
+    -----
+    The two geometry tests are deliberately opposed. A fixed delay predicts a
+    constant difference, so evidence *against* it is a reliable change in the
+    difference between the extreme quantiles. A stretch predicts a constant
+    ratio, so evidence against it is a reliable change in the log ratio.
+    Rejecting the first and not the second is the signature of a stretch;
+    rejecting both is a shape change. Because a non-rejection carries the
+    claim here, both rows report an interval and must be quoted as bounds.
+
+    ``n_expected_by_chance`` is ``alpha`` times the number of subjects tested.
+    A ladder count is only interpretable against it -- with 32 subjects roughly
+    1.6 will differ at ``alpha`` even when the distributions are identical.
+    """
+    rows: list[dict] = []
+    if geometry.empty:
+        return pd.DataFrame(rows)
+
+    for (stratum_type, contrast), group in geometry.groupby(
+        ["stratum_type", "contrast"], sort=True
+    ):
+        common = {
+            "analysis": "decision_time_geometry",
+            "stratum_type": stratum_type,
+            "contrast": contrast,
+        }
+
+        def _add(term: str, values, *, coverage: float = 0.95, null: float = 0.0):
+            statistics = one_sample_statistics(np.asarray(values, dtype=float) - null)
+            low, high = confidence_interval(
+                statistics["mean"], statistics["sem"], statistics["df"], coverage=coverage
+            )
+            rows.append({
+                **common, "term": term, "test": "one_sample_vs_zero" if not null
+                else "one_sample_vs_null",
+                "estimate": statistics["mean"] + null,
+                "ci_low": low + null, "ci_high": high + null, "coverage": coverage,
+                **{key: statistics[key] for key in ("n_subjects", "t", "p", "df", "cohens_dz")},
+            })
+
+        # A delay predicts a constant difference across the ladder; a stretch
+        # predicts a constant ratio. Each row is evidence *against* one model.
+        if {"delta_q90_ms", "delta_q10_ms"}.issubset(group.columns):
+            _add("fixed_delay_q90_minus_q10_ms",
+                 group["delta_q90_ms"] - group["delta_q10_ms"])
+        if {"log_ratio_q90", "log_ratio_q10"}.issubset(group.columns):
+            _add("proportional_stretch_log_ratio_q90_minus_q10",
+                 group["log_ratio_q90"] - group["log_ratio_q10"])
+
+        for measure in ("sd", "cv"):
+            observed = f"{measure}_b_ms" if measure == "sd" else "cv_b"
+            for model in ("delay", "stretch"):
+                predicted = (
+                    f"sd_b_{model}_predicted_ms" if measure == "sd"
+                    else f"cv_b_{model}_predicted"
+                )
+                if {observed, predicted}.issubset(group.columns):
+                    _add(f"{measure}_observed_minus_{model}_predicted",
+                         group[observed] - group[predicted])
+
+        if "stretch_factor" in group.columns:
+            _add("stretch_factor", group["stretch_factor"], null=1.0)
+
+        for column, label in (
+            ("ks_p_raw", "raw"),
+            ("ks_p_median_subtracted", "median_subtracted"),
+            ("ks_p_median_divided", "median_divided"),
+        ):
+            if column not in group.columns:
+                continue
+            values = pd.to_numeric(group[column], errors="coerce").dropna()
+            if not len(values):
+                continue
+            rows.append({
+                **common, "term": "ks_subjects_differing", "test": "count",
+                "normalization": label,
+                "n_subjects": int(len(values)),
+                "estimate": float((values < alpha).sum()),
+                "n_expected_by_chance": float(alpha * len(values)),
+                "alpha": alpha,
+            })
     return pd.DataFrame(rows)

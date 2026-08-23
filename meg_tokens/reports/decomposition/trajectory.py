@@ -15,7 +15,7 @@ def run_batch_plot_pca_trajectory(
     conditions: Optional[Sequence[str]] = None,
     components: Sequence[int] = (1, 2, 3),
 ) -> str:
-    print(f"=== Starting PCA 3D Trajectory Plotting ===")
+    print("=== Starting PCA 3D Trajectory Plotting ===")
     
     output_path = ensure_dir(output_dir)
     loaded = load_array(timecourse_path, require_sidecar=True)

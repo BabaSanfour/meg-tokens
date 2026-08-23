@@ -38,6 +38,7 @@ from meg_tokens.behavior.analyses.sequential_sampling import (
     mechanistic_model_statistics,
     heldout_model_statistics,
     heldout_pairwise_model_statistics,
+    heldout_pairwise_subject_differences,
     heldout_model_evaluation,
     heldout_fold_audit,
     fitted_predictions,
@@ -47,12 +48,15 @@ from meg_tokens.behavior.analyses.sequential_sampling import (
     parameter_recovery,
     model_recovery,
     robustness_statistics,
+    exclusion_evidence_decomposition,
+    fitted_distribution_check_statistics,
+    heldout_contrast_robustness,
+    matched_sequence_posterior_predictive,
     exclusion_robustness_statistics,
     fitted_distribution_checks,
-    population_parameters,
     urgency_condition_contrast,
 )
-from meg_tokens.workflows.thura2012 import (
+from meg_tokens.workflows.sequential_sampling import (
     _analysis_scope,
     _validate_heldout_coverage,
     _validate_primary_fit_diagnostics,
@@ -121,8 +125,11 @@ def test_a_cell_with_too_few_trials_is_reported_rather_than_fitted():
 
     fits = fit_sequential_sampling_models(features)
 
-    assert len(fits) == 6  # pooled, Fast, and Slow, each with both models
-    assert set(fits["model"]) == {"ddm", "urgency"}
+    # Pooled, Fast and Slow, each with every prespecified model. Written
+    # against the constant rather than a literal: this assertion used to read
+    # 6 and so pinned the retired two-model default in place.
+    assert len(fits) == 3 * len(MECHANISTIC_MODELS)
+    assert set(fits["model"]) == set(MECHANISTIC_MODELS)
     assert not fits["converged"].any()
     assert fits["drift_scale"].isna().all()
     assert fits.loc[fits["condition"] == "all", "n_trials"].eq(4).all()
@@ -171,7 +178,7 @@ def test_eligibility_audit_preserves_primary_trial_counts():
 
 
 def test_subject_fit_provenance_labels_state_grid_units_not_seconds(tmp_path):
-    from meg_tokens.workflows.behavior_characterization import _ssm_fit_metadata
+    from meg_tokens.workflows.sequential_sampling import _ssm_fit_metadata
 
     metadata = _ssm_fit_metadata(
         models=MECHANISTIC_MODELS,
@@ -787,6 +794,119 @@ def test_exclusion_statistics_compare_within_population_delta_bic():
     assert summary.iloc[0]["mean"] == pytest.approx(-1.0)
 
 
+def test_exclusion_decomposition_separates_trial_count_from_evidence():
+    """A strict subset that only loses trials must show no excess and no
+    per-trial change; one that also gains evidence per trial must show both."""
+    primary = _fits(
+        model=["ddm", "urgency"], subject=["H01", "H01"],
+        condition=["all", "all"], n_trials=[400, 400],
+        n_parameters=[3, 5], log_likelihood=[-500.0, -400.0],
+        delta_bic=[0.0, -187.0],
+    )
+    # Half the trials, identical evidence per trial: delta_ll halves.
+    shrunk = _fits(
+        model=["ddm", "urgency"], subject=["H01", "H01"],
+        condition=["all", "all"], n_trials=[200, 200],
+        n_parameters=[3, 5], log_likelihood=[-250.0, -200.0],
+        delta_bic=[0.0, -89.4],
+    )
+    summary = exclusion_evidence_decomposition(shrunk, primary)
+    decomposition = summary.loc[
+        summary["analysis"] == "ssm_exclusion_evidence_decomposition"
+    ].iloc[0]
+    # Raw delta_bic roughly halves, but that is the trial count, not the
+    # effect: the expectation absorbs it and the excess is ~0.
+    assert decomposition["mean_expected_strict_delta_bic"] == pytest.approx(
+        decomposition["mean_strict_delta_bic"], abs=1.0
+    )
+    assert decomposition["mean"] == pytest.approx(0.0, abs=1.0)
+    # Evidence per trial is unchanged apart from the parameter charge.
+    assert decomposition["per_trial_change_mean"] == pytest.approx(0.0, abs=0.01)
+
+    composition = summary.loc[
+        summary["analysis"] == "ssm_exclusion_condition_composition"
+    ].iloc[0]
+    assert composition["retention_fraction"] == pytest.approx(0.5)
+    assert composition["share_of_primary"] == pytest.approx(1.0)
+
+
+def test_exclusion_decomposition_shares_are_taken_against_the_pooled_row():
+    """``all`` is one of the conditions, so summing rows would double-count."""
+    def _set(n_fast, n_slow, n_all, ll_scale):
+        rows = []
+        for condition, n in (("all", n_all), ("fast", n_fast), ("slow", n_slow)):
+            for model, k, ll in (("ddm", 3, -n * 1.0), ("urgency", 5, -n * ll_scale)):
+                rows.append({
+                    "subject": "H01", "condition": condition, "model": model,
+                    "n_trials": n, "n_parameters": k, "log_likelihood": ll,
+                    "delta_bic": 0.0 if model == "ddm" else -10.0,
+                })
+        return pd.DataFrame(rows)
+
+    summary = exclusion_evidence_decomposition(
+        _set(90, 30, 120, 0.8), _set(100, 100, 200, 0.8)
+    )
+    composition = summary.loc[
+        summary["analysis"] == "ssm_exclusion_condition_composition"
+    ].set_index("condition")
+    assert composition.loc["fast", "share_of_strict"] == pytest.approx(0.75)
+    assert composition.loc["slow", "share_of_strict"] == pytest.approx(0.25)
+    assert composition.loc["fast", "share_of_primary"] == pytest.approx(0.5)
+
+
+def test_distribution_check_summary_keeps_the_pooled_trial_class_separate():
+    """``trial_class`` carries its own ``all`` level; collapsing over it would
+    average the pooled row together with the classes composing it."""
+    rows = []
+    for trial_class, observed in (("all", 1.0), ("easy", 0.5), ("misleading", 1.5)):
+        rows.append({
+            "subject": "H01", "condition": "all", "model": "urgency",
+            "trial_class": trial_class, "outcome": "correct", "quantile": 0.5,
+            "observed_rt_s": observed, "predicted_rt_s": 1.0,
+        })
+    summary = fitted_distribution_check_statistics(pd.DataFrame(rows))
+    pooled = summary.loc[summary["trial_class"] == "all"].iloc[0]
+    assert pooled["mean_residual_s"] == pytest.approx(0.0)
+    assert set(summary["trial_class"]) == {"all", "easy", "misleading"}
+
+
+def test_heldout_contrast_robustness_reports_subsets_influence_and_pooling():
+    heldout = pd.DataFrame([
+        {"subject": subject, "condition": "all", "model": model, "fold": fold,
+         "n_test": 10, "heldout_log_likelihood_per_trial": score}
+        for subject, offset in zip([f"H{i:02d}" for i in range(1, 9)], range(8))
+        for model, score in (
+            ("urgency", -1.0 + 0.01 * offset), ("collapsing", -1.1),
+        )
+        for fold in range(3)
+    ])
+    fits = _fits(
+        model=["urgency"] * 8, subject=[f"H{i:02d}" for i in range(1, 9)],
+        condition=["all"] * 8, delta_bic=[-100.0] * 8,
+        urgency_scale=[2.0, 2.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0],
+        urgency_scale_se=[np.nan, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1],
+    )
+    fits["urgency_scale_lower_bound"] = 0.01
+    fits["urgency_scale_upper_bound"] = 2.0
+    summary = heldout_contrast_robustness(heldout, fits)
+    assert set(summary["analysis"]) == {
+        "ssm_heldout_identifiability_subset",
+        "ssm_heldout_influence",
+        "ssm_heldout_condition_pooling",
+    }
+    subsets = summary.loc[
+        summary["analysis"] == "ssm_heldout_identifiability_subset"
+    ].set_index("subset")
+    # The two subjects pinned at the upper bound are dropped from the
+    # identified subset, and the one missing an SE from the SE subset.
+    assert subsets.loc["all_subjects", "n_subjects"] == 8
+    assert subsets.loc["urgency_scale_not_pinned", "n_subjects"] == 6
+    assert subsets.loc["finite_observed_information_se", "n_subjects"] == 7
+    influence = summary.loc[summary["analysis"] == "ssm_heldout_influence"]
+    assert "least_favourable_subject" in influence.columns
+    assert influence["sign_test_p"].notna().any()
+
+
 def test_recovery_summaries_are_machine_readable():
     parameter = pd.DataFrame([
         {"true_model": "ddm", "parameter": "bound", "true_value": 1.0,
@@ -868,57 +988,55 @@ def test_a_subject_fitted_in_only_one_condition_is_left_out_of_the_contrast():
 # --- population layer ---------------------------------------------------------
 
 
-def test_the_population_mean_and_spread_are_estimated_from_the_subject_fits():
-    """With negligible estimation error the population reduces to the subjects'
-    own mean and their maximum-likelihood standard deviation."""
-    estimates = [0.8, 1.0, 1.2]
-    fits = _fits(urgency_scale=estimates, urgency_scale_se=[0.001] * 3)
+def test_heldout_pairwise_subject_differences_weights_folds_by_test_count():
+    """Unequal folds: the subject score is n_test-weighted, not a fold mean.
 
-    _, population = population_parameters(fits)
-    scale = population.set_index("parameter").loc["urgency_scale"]
-
-    assert scale["n_subjects"] == 3
-    assert scale["population_mean"] == pytest.approx(1.0)
-    assert scale["between_subject_sd"] == pytest.approx(
-        np.sqrt(np.mean((np.array(estimates) - 1.0) ** 2)), rel=1e-3
-    )
-
-
-def test_an_uncertain_subject_is_pulled_further_toward_the_population():
-    fits = _fits(
-        urgency_scale=[1.0, 1.0, 1.0, 2.0, 2.0],
-        urgency_scale_se=[0.05, 0.05, 0.05, 0.05, 0.8],
-    )
-
-    estimates, _ = population_parameters(fits)
-    scales = estimates.loc[estimates["parameter"] == "urgency_scale"].set_index("subject")
-
-    certain = scales.loc["H04"]
-    uncertain = scales.loc["H05"]
-    assert uncertain["own_data_weight"] < certain["own_data_weight"]
-    assert abs(uncertain["population_informed_estimate"] - 2.0) > abs(
-        certain["population_informed_estimate"] - 2.0
-    )
+    A figure that drew per-subject dots as an unweighted fold mean would put
+    them under an interval fitted to a different estimator.
+    """
+    rows = []
+    # Fold sizes 10 and 90, so the two weightings differ by a wide margin.
+    for fold, (n_test, per_trial) in enumerate([(10, 0.0), (90, -1.0)]):
+        rows.append({
+            "subject": "H01", "condition": "all", "model": "urgency", "fold": fold,
+            "n_test": n_test, "heldout_log_likelihood": per_trial * n_test,
+            "heldout_log_likelihood_per_trial": per_trial,
+        })
+        rows.append({
+            "subject": "H01", "condition": "all", "model": "ddm", "fold": fold,
+            "n_test": n_test, "heldout_log_likelihood": -2.0 * n_test,
+            "heldout_log_likelihood_per_trial": -2.0,
+        })
+    differences = heldout_pairwise_subject_differences(pd.DataFrame(rows))
+    row = differences.loc[
+        (differences["model_a"] == "urgency") & (differences["model_b"] == "ddm")
+    ]
+    assert len(row) == 1
+    # Weighted: (0*10 + -1*90)/100 = -0.9, against ddm's -2.0.
+    assert row["difference"].iloc[0] == pytest.approx(1.1)
+    # The unweighted fold mean would have been (0 + -1)/2 = -0.5 -> 1.5.
+    assert row["difference"].iloc[0] != pytest.approx(1.5)
 
 
-def test_a_subject_without_a_usable_standard_error_is_left_out():
-    fits = _fits(urgency_scale=[1.0, 1.2, np.nan], urgency_scale_se=[0.1, 0.1, np.nan])
+def test_heldout_pairwise_subject_differences_carries_both_orientations():
+    rows = [
+        {
+            "subject": subject, "condition": "all", "model": model, "fold": 0,
+            "n_test": 50, "heldout_log_likelihood": score * 50,
+            "heldout_log_likelihood_per_trial": score,
+        }
+        for subject, offset in (("H01", 0.0), ("H02", 0.1))
+        for model, score in (("urgency", -0.5 + offset), ("ddm", -0.8 + offset))
+    ]
+    differences = heldout_pairwise_subject_differences(pd.DataFrame(rows))
+    forward = differences.loc[
+        (differences["model_a"] == "urgency") & (differences["model_b"] == "ddm"),
+        "difference",
+    ].to_numpy()
+    reverse = differences.loc[
+        (differences["model_a"] == "ddm") & (differences["model_b"] == "urgency"),
+        "difference",
+    ].to_numpy()
+    assert forward == pytest.approx(-reverse)
+    assert forward == pytest.approx([0.3, 0.3])
 
-    estimates, population = population_parameters(fits)
-
-    assert population.set_index("parameter").loc["urgency_scale", "n_subjects"] == 2
-    assert set(estimates.loc[estimates["parameter"] == "urgency_scale", "subject"]) == {
-        "H01",
-        "H02",
-    }
-
-
-def test_a_parameter_no_subject_could_be_fitted_for_is_still_reported():
-    fits = _fits(urgency_scale=[np.nan] * 3, urgency_scale_se=[np.nan] * 3)
-
-    estimates, population = population_parameters(fits)
-
-    scale = population.set_index("parameter").loc["urgency_scale"]
-    assert scale["n_subjects"] == 0
-    assert np.isnan(scale["population_mean"])
-    assert estimates.loc[estimates["parameter"] == "urgency_scale"].empty

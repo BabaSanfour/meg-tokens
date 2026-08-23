@@ -1,4 +1,4 @@
-"""Decision-time and SPD distribution figures: F04, F05, F06."""
+"""Decision-time and SPD distribution figures: F06, F07, F08."""
 
 from __future__ import annotations
 
@@ -12,8 +12,7 @@ from matplotlib.ticker import MaxNLocator
 from meg_tokens.reports import style
 from meg_tokens.reports.annotations import (
     annotate_stat_block,
-    format_stat,
-    significance_marker,
+    marker_or_missing,
     stat_from_row,
 )
 from meg_tokens.reports.behavior._tables import BehaviorTableSet
@@ -24,9 +23,9 @@ _QUANTILE_COLUMNS = ("q10", "q25", "q50", "q75", "q90")
 
 
 def build_dtdistribution_condition(tables: BehaviorTableSet) -> tuple[Figure, dict[str, Any]]:
-    """F04: Fast vs. Slow decision time. Replaces the rawRT-based, pooled figure."""
-    trial_features = tables.trial_features()
+    """F06: Fast vs. Slow decision time. Replaces the rawRT-based, pooled figure."""
     dtdistribution = tables.analysis("dtdistribution")
+    geometry = tables.analysis("dtgeometry")
     dtdistributionstats = tables.analysis("dtdistributionstats")
     groupstats = tables.group_statistics()
 
@@ -42,18 +41,6 @@ def build_dtdistribution_condition(tables: BehaviorTableSet) -> tuple[Figure, di
         )
         for condition in style.CONDITION_ORDER
     }
-    # Subject-aligned mean/SD, used for panel A's CV note. Indexed by subject
-    # and reindexed onto a common order so the per-subject CV pairs up.
-    _subject_order = (
-        condition_rows.loc[condition_rows["stratum"] == style.CONDITION_ORDER[0], "subject"]
-        .tolist()
-    )
-    per_subject_mean, per_subject_sd = {}, {}
-    for condition in style.CONDITION_ORDER:
-        rows = condition_rows.loc[condition_rows["stratum"] == condition].set_index("subject")
-        per_subject_mean[condition] = rows["mean"].reindex(_subject_order).to_numpy(dtype=float)
-        per_subject_sd[condition] = rows["sd"].reindex(_subject_order).to_numpy(dtype=float)
-
     contrast_stats = dtdistributionstats.loc[
         (dtdistributionstats["stratum_type"] == "condition")
         & (dtdistributionstats["contrast"] == "fast_vs_slow")
@@ -75,7 +62,7 @@ def build_dtdistribution_condition(tables: BehaviorTableSet) -> tuple[Figure, di
         # that the *gap between the curves widens* with the quantile, and a
         # density filling the panel behind them is exactly the wrong
         # background to judge a widening gap against. The distribution now
-        # lives on B (half-violins), matching F05's grammar.
+        # lives on B (half-violins), matching F07's grammar.
         display_range = (500, 2000)
         quantile_function(
             ax_a,
@@ -87,7 +74,7 @@ def build_dtdistribution_condition(tables: BehaviorTableSet) -> tuple[Figure, di
         ax_a.set_xticks(list(display_range))
         ax_a.set_yticks([0.1, 0.5, 0.9])
         ax_a.set_xlabel("Decision time (ms)")
-        ax_a.legend(loc="lower right", fontsize=12)
+        ax_a.legend(loc="lower right")
 
         # Per-quantile significance markers (q10/q50/q90), placed on panel A
         # next to the quantile the contrast is about -- not as text on B.
@@ -95,7 +82,7 @@ def build_dtdistribution_condition(tables: BehaviorTableSet) -> tuple[Figure, di
             rows = contrast_stats.loc[contrast_stats["metric"] == metric]
             if not len(rows):
                 continue
-            marker = significance_marker(stat_from_row(rows.iloc[0], label=metric).p)
+            marker = marker_or_missing(stat_from_row(rows.iloc[0], label=metric).p)
             column = _QUANTILE_COLUMNS.index(metric)
             x_right = max(
                 np.nanmean(subject_quantiles["fast"][:, column]),
@@ -105,8 +92,8 @@ def build_dtdistribution_condition(tables: BehaviorTableSet) -> tuple[Figure, di
             # window narrowed to 500-2000 ms and a literal would silently
             # stop clamping.
             ax_a.text(
-                min(x_right + 60, display_range[1] - 50), probability, marker or "n.s.",
-                ha="left", va="center", fontsize=13, color=style.INK,
+                min(x_right + 60, display_range[1] - 50), probability, marker,
+                ha="left", va="center", fontsize=style.ANNOTATION_PT, color=style.INK,
             )
 
         # The shape note reports CV, not skewness. Skewness is invariant
@@ -118,16 +105,15 @@ def build_dtdistribution_condition(tables: BehaviorTableSet) -> tuple[Figure, di
         # delay would have driven it down to ~0.36, a stretch leaves it put.
         # Observed value and the counterfactual side by side, since the
         # contrast between them is the whole point.
+        # Read from `dtgeometry`, not recomputed here: this annotation is the
+        # panel's argument against the additive model, and the write-up quotes
+        # it, so it is an analysis result.
+        geometry_row = geometry.loc[geometry["contrast"] == "fast_vs_slow"]
         cv = {
-            condition: float(np.nanmean(
-                per_subject_sd[condition] / per_subject_mean[condition]
-            ))
-            for condition in style.CONDITION_ORDER
+            "fast": float(np.nanmean(geometry_row["cv_a"])),
+            "slow": float(np.nanmean(geometry_row["cv_b"])),
         }
-        shifted_cv = float(np.nanmean(
-            per_subject_sd["fast"]
-            / (per_subject_mean["fast"] + (per_subject_mean["slow"] - per_subject_mean["fast"]))
-        ))
+        shifted_cv = float(np.nanmean(geometry_row["cv_b_delay_predicted"]))
         # Top-left: bottom-right is the legend's corner, and every quantile
         # curve/marker in this figure sits at x >= ~650 ms, so the
         # low-x/high-probability corner is the one that's actually empty.
@@ -136,7 +122,7 @@ def build_dtdistribution_condition(tables: BehaviorTableSet) -> tuple[Figure, di
             f"CV {cv['fast']:.2f} → {cv['slow']:.2f}\n"
             f"(fixed delay predicts {shifted_cv:.2f})",
             transform=ax_a.transAxes, ha="left", va="top",
-            fontsize=11, color=style.INK_SECONDARY, linespacing=1.4,
+            fontsize=style.ANNOTATION_PT, color=style.INK_SECONDARY, linespacing=1.4,
         )
 
         pooled_fast = (
@@ -150,7 +136,7 @@ def build_dtdistribution_condition(tables: BehaviorTableSet) -> tuple[Figure, di
         slow_values = pooled_slow.loc[paired_index].to_numpy(dtype=float)
         # Raincloud rather than a bare paired slope: half-violins put the
         # distribution back in the figure (it left panel A), and this is the
-        # same chart type as F05 panel A, so the two decision-time figures
+        # same chart type as F07 panel A, so the two decision-time figures
         # now share one grammar. Subject connectors and the direction
         # coloring survive the swap.
         raincloud(
@@ -170,7 +156,7 @@ def build_dtdistribution_condition(tables: BehaviorTableSet) -> tuple[Figure, di
         )
 
         # Bracket + compact stat text directly on the comparison, same idiom
-        # as F05 panel A's class brackets -- not a text block off to the side.
+        # as F07 panel A's class brackets -- not a text block off to the side.
         mean_contrast = groupstats.loc[
             (groupstats["analysis"] == "decision_time") & (groupstats["contrast"] == "fast_vs_slow")
         ]
@@ -180,15 +166,15 @@ def build_dtdistribution_condition(tables: BehaviorTableSet) -> tuple[Figure, di
             y_bottom = min(fast_values.min(), slow_values.min())
             bracket_y = y_top + 0.08 * (y_top - y_bottom)
             # One line, tightly boxed: "Delta + marker" is the report-wide
-            # convention for a bracket comparison now (matches F05 panel A)
+            # convention for a bracket comparison now (matches F07 panel A)
             # -- t and dz stay in dtdistributionstats/the sidecar rather than
             # being spelled out on every figure.
             ax_b.set_ylim(top=bracket_y + 0.14 * (y_top - y_bottom))
             ax_b.plot([0, 0, 1, 1], [bracket_y * 0.99, bracket_y, bracket_y, bracket_y * 0.99], color=style.INK, linewidth=0.8)
-            marker = significance_marker(result.p) or "n.s."
+            marker = marker_or_missing(result.p)
             ax_b.text(
                 0.5, bracket_y * 1.02, f"Δ = {result.mean:.0f} ms {marker}", ha="center", va="bottom",
-                fontsize=12, color=style.INK,
+                fontsize=style.ANNOTATION_PT, color=style.INK,
             )
         ax_b.yaxis.set_major_locator(MaxNLocator(nbins=4, steps=[1, 2, 5, 10]))
 
@@ -198,8 +184,10 @@ def build_dtdistribution_condition(tables: BehaviorTableSet) -> tuple[Figure, di
         "kind": "condition_distribution",
         "title": "Decision time, Fast vs. Slow",
         "columns_read": {
-            "trialfeatures": ["subject", "condition", "dt_ms", "primary_analysis_eligible"],
-            "dtdistribution": ["subject", "stratum_type", "stratum", "mean", "q10", "q25", "q50", "q75", "q90", "n_trials"],
+            # `n_trials` and `sd` are no longer read: the CV note that used
+            # the SD now comes from `dtgeometry`.
+            "dtdistribution": ["subject", "stratum_type", "stratum", "mean", "q10", "q25", "q50", "q75", "q90"],
+            "dtgeometry": ["subject", "contrast", "cv_a", "cv_b", "cv_b_delay_predicted"],
             "dtdistributionstats": ["stratum_type", "contrast", "metric", "mean_a", "mean_b", "t", "p", "df", "cohens_dz"],
             "groupstats": ["analysis", "contrast", "mean_a", "mean_b", "t", "p", "df", "cohens_dz"],
         },
@@ -210,7 +198,7 @@ def build_dtdistribution_condition(tables: BehaviorTableSet) -> tuple[Figure, di
 
 
 def build_dtdistribution_class(tables: BehaviorTableSet) -> tuple[Figure, dict[str, Any]]:
-    """F05: decision time by trial class. Replaces the dead
+    """F07: decision time by trial class. Replaces the dead
     plot_trial_class_distributions (pooled tri-KDE, never wired to the CLI)."""
     dtdistribution = tables.analysis("dtdistribution")
     dtdistributionstats = tables.analysis("dtdistributionstats")
@@ -238,7 +226,7 @@ def build_dtdistribution_class(tables: BehaviorTableSet) -> tuple[Figure, dict[s
     class_contrasts = dtdistributionstats.loc[dtdistributionstats["stratum_type"] == "class"]
 
     with style.apply_publication_style():
-        # Taller than the shared default, same reason as F04: at the bigger
+        # Taller than the shared default, same reason as F06: at the bigger
         # publication font sizes, three stacked brackets on A and a legend +
         # note on B both need more room than the old default gave them.
         fig, axes = style.figure_grid(1, 2, width="double", panel_height_in=3.8)
@@ -251,7 +239,7 @@ def build_dtdistribution_class(tables: BehaviorTableSet) -> tuple[Figure, dict[s
             groups={name: values.to_numpy(dtype=float) for name, values in subject_means.items()},
             colors=style.CLASS_COLORS,
             ylabel="Subject mean DT (ms)",
-            # Report-wide convention (see F04 panel B): gray with the
+            # Report-wide convention (see F06 panel B): gray with the
             # step's own direction, red against it. Per-leg, not per-subject
             # -- a subject can go up easy->ambiguous and down
             # ambiguous->misleading, and both legs are worth seeing.
@@ -265,7 +253,7 @@ def build_dtdistribution_class(tables: BehaviorTableSet) -> tuple[Figure, dict[s
             label.set_ha("right")
         ax_a.yaxis.set_major_locator(MaxNLocator(nbins=4, steps=[1, 2, 5, 10]))
 
-        # "Delta + marker" on the bracket, matching F04 panel B -- t and dz
+        # "Delta + marker" on the bracket, matching F06 panel B -- t and dz
         # stay in dtdistributionstats/the sidecar. Two of these three
         # brackets span just one category (~1/3 of the panel), so even this
         # short a string is close to the limit.
@@ -279,11 +267,11 @@ def build_dtdistribution_class(tables: BehaviorTableSet) -> tuple[Figure, dict[s
             if not len(row):
                 continue
             result = stat_from_row(row.iloc[0], label=contrast_name)
-            marker = significance_marker(result.p) or "n.s."
+            marker = marker_or_missing(result.p)
             x_a, x_b = style.CLASS_ORDER.index(first), style.CLASS_ORDER.index(second)
             y = bracket_y * (1 + 0.11 * offset)
             ax_a.plot([x_a, x_a, x_b, x_b], [y * 0.99, y, y, y * 0.99], color=style.INK, linewidth=0.9)
-            ax_a.text((x_a + x_b) / 2, y, f"Δ = {result.mean:.0f} {marker}", ha="center", va="bottom", fontsize=11, color=style.INK)
+            ax_a.text((x_a + x_b) / 2, y, f"Δ = {result.mean:.0f} {marker}", ha="center", va="bottom", fontsize=style.SIGNIFICANCE_PT, color=style.INK)
         ax_a.set_ylim(top=bracket_y * (1 + 0.11 * (len(contrasts) - 1)) * 1.02)
 
         # No pooled-trial KDE here: panel A's violins already show
@@ -291,7 +279,7 @@ def build_dtdistribution_class(tables: BehaviorTableSet) -> tuple[Figure, dict[s
         # functions -- zoomed to 500-2000 ms (class quantiles run roughly
         # 600-2000 ms; a little margin past 2000 so the q90 marker and its
         # SEM whisker for ambiguous/misleading, ~1971 and ~1958, don't clip
-        # the right edge) instead of F04's 0-3000 ms, since there's no
+        # the right edge) instead of F06's 0-3000 ms, since there's no
         # trial-level long tail here that needs the wider window.
         quantile_function(
             ax_b,
@@ -306,7 +294,7 @@ def build_dtdistribution_class(tables: BehaviorTableSet) -> tuple[Figure, dict[s
         # ambiguous's q25 SEM whisker grazes a default-sized legend's top-left
         # corner here; tighter handles/padding pulls the box in just enough
         # to clear it without moving off lower-right.
-        ax_b.legend(loc="lower right", fontsize=12, handlelength=1.3, handletextpad=0.4, borderpad=0.4, labelspacing=0.3)
+        ax_b.legend(loc="lower right", handlelength=1.3, handletextpad=0.4, borderpad=0.4, labelspacing=0.3)
 
         fig.suptitle("Decision time by trial class")
 
@@ -328,7 +316,7 @@ _SPD_VIEW = "validated_15row"
 
 
 def build_spdcumulative_class(tables: BehaviorTableSet) -> tuple[Figure, dict[str, Any]]:
-    """F06: SPD at decision, cumulative by class.
+    """F08: SPD at decision, cumulative by class.
 
     validated_15row only, not both logging views: the two views were checked
     against each other (they agree -- validated_15row's proportions land
@@ -382,24 +370,35 @@ def build_spdcumulative_class(tables: BehaviorTableSet) -> tuple[Figure, dict[st
         # Linestyle meaning as its own two legend rows (neutral gray, not
         # tied to a class color) instead of a text note explaining it --
         # matches how the class rows already key color.
-        class_handles, class_labels = ax.get_legend_handles_labels()
+        class_handles, _ = ax.get_legend_handles_labels()
         style_handles = [
             Line2D([0], [0], color=style.INK_MUTED, linewidth=1.6, linestyle="-", label="mean of subjects"),
             Line2D([0], [0], color=style.INK_MUTED, linewidth=0.9, linestyle="--", label="pooled across trials"),
         ]
-        ax.legend(handles=class_handles + style_handles, loc="lower right", fontsize=10)
+        ax.legend(handles=class_handles + style_handles, loc="lower right")
 
         # Δ + marker, not full t/p text: this is a single narrow (single-
         # column) panel, and "ambiguous vs misleading: t(31) = ..., p = ..."
         # for all three contrasts collapsed the axes to zero width -- same
-        # bug class fixed on F04/F05, spelled-out stats don't fit a panel
+        # bug class fixed on F06/F07, spelled-out stats don't fit a panel
         # this size regardless of figure.
         lines = []
         for first, second in (("easy", "ambiguous"), ("easy", "misleading"), ("ambiguous", "misleading")):
             row = view_stats.loc[view_stats["contrast"] == f"{first}_vs_{second}"]
-            if len(row):
-                result = stat_from_row(row.iloc[0], label=f"{first}_vs_{second}")
-                marker = significance_marker(result.p) or "n.s."
+            if not len(row):
+                continue
+            result = stat_from_row(row.iloc[0], label=f"{first}_vs_{second}")
+            marker = marker_or_missing(result.p)
+            # The ambiguous/misleading null is a claim this figure makes -- the
+            # dissociation from F07 is that these two classes are reached at
+            # the same confidence -- so it carries the smallest difference the
+            # data can exclude rather than an 'n.s.' that only reports a
+            # failure to reject. Same treatment as F04's and F05's bounded
+            # nulls. Significant contrasts keep the marker.
+            bound = row.iloc[0].get("equivalence_bound")
+            if marker == "n.s." and bound is not None and np.isfinite(bound):
+                lines.append(f"{first}-{second}: Δ = {result.mean:.2f}, |Δ| < {bound:.3f}")
+            else:
                 lines.append(f"{first}-{second}: Δ = {result.mean:.2f} {marker}")
         annotate_stat_block(ax, lines=lines, loc="upper left")
 
@@ -413,7 +412,7 @@ def build_spdcumulative_class(tables: BehaviorTableSet) -> tuple[Figure, dict[st
                 "view", "trial_class_name", "threshold", "n_trials", "n_subjects",
                 "pooled_proportion", "mean_subject_proportion", "sem_subject_proportion",
             ],
-            "groupstats": ["analysis", "view", "contrast", "mean_a", "mean_b", "t", "p", "df", "cohens_dz"],
+            "groupstats": ["analysis", "view", "contrast", "mean_a", "mean_b", "t", "p", "df", "cohens_dz", "equivalence_bound"],
         },
         "statistics_source": f"groupstats[analysis=spd,view={_SPD_VIEW}]",
         "palette": dict(style.CLASS_COLORS),

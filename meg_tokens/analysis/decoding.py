@@ -5,7 +5,6 @@ from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
 from sklearn.model_selection import LeaveOneGroupOut
 from sklearn.utils import resample
 from mne.decoding import SlidingEstimator, cross_val_multiscore
-import mne
 
 def balance_classes(X: np.ndarray, y: np.ndarray, groups: np.ndarray = None) -> tuple:
     """

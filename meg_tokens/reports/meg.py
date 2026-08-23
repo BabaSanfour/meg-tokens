@@ -34,7 +34,7 @@ def plot_roi_timecourse(
         Matplotlib axis.
     """
     if ax is None:
-        fig, ax = plt.subplots(figsize=(10, 6))
+        _, ax = plt.subplots(figsize=(10, 6))
         
     mean1 = np.mean(data_cond1, axis=0)
     sem1 = np.std(data_cond1, axis=0) / np.sqrt(data_cond1.shape[0])
@@ -54,9 +54,9 @@ def plot_roi_timecourse(
             if start_idx < len(times) and end_idx < len(times):
                 ax.axvspan(times[start_idx], times[end_idx], color='gray', alpha=0.2, label='p < 0.05' if start_idx == significance_windows[0][0] else "")
                 
-    ax.set_title(f"Source Activity: {roi_name}", fontsize=14)
-    ax.set_xlabel("Time", fontsize=12)
-    ax.set_ylabel("Source Amplitude (A.U.)", fontsize=12)
+    ax.set_title(f"Source Activity: {roi_name}")
+    ax.set_xlabel("Time")
+    ax.set_ylabel("Source Amplitude (A.U.)")
     
     # Deduplicate labels in legend
     handles, labels = ax.get_legend_handles_labels()
@@ -89,7 +89,7 @@ def plot_correlation(
         Matplotlib axis.
     """
     if ax is None:
-        fig, ax = plt.subplots(figsize=(8, 8))
+        _, ax = plt.subplots(figsize=(8, 8))
         
     # Use seaborn's regplot for a beautiful scatter + regression line + confidence interval
     sns.regplot(
@@ -104,9 +104,9 @@ def plot_correlation(
     corr_matrix = np.corrcoef(x_data, y_data)
     r_val = corr_matrix[0, 1]
     
-    ax.set_title(f"{title}\n(r = {r_val:.3f})", fontsize=14)
-    ax.set_xlabel(x_label, fontsize=12)
-    ax.set_ylabel(y_label, fontsize=12)
+    ax.set_title(f"{title}\n(r = {r_val:.3f})")
+    ax.set_xlabel(x_label)
+    ax.set_ylabel(y_label)
     
     sns.despine(ax=ax)
     return ax
@@ -183,7 +183,7 @@ def plot_tfr_spectrogram(
         Matplotlib axis.
     """
     if ax is None:
-        fig, ax = plt.subplots(figsize=(10, 6))
+        _, ax = plt.subplots(figsize=(10, 6))
         
     # Plot TFR using MNE's built in plotter wrapped in our style
     tfr.plot(
@@ -225,7 +225,7 @@ def plot_sensor_topomap(
         Matplotlib axis.
     """
     if ax is None:
-        fig, ax = plt.subplots(figsize=(6, 6))
+        _, ax = plt.subplots(figsize=(6, 6))
         
     mask_params = dict(marker='o', markerfacecolor='white', markersize=5, markeredgecolor='black')
     
@@ -241,7 +241,7 @@ def plot_sensor_topomap(
         contours=0
     )
     
-    ax.set_title(title, fontsize=14)
+    ax.set_title(title)
     return ax
 
 def save_brain_movie_frames(
@@ -271,8 +271,8 @@ def save_brain_movie_frames(
         brain.set_time(t)
         for view in views:
             brain.show_view(view)
-            out_file = os.path.join(output_dir, f"{prefix}_{view}_{t_idx}.png")
             # In a real environment, uncomment this to save:
-            # brain.save_image(out_file)
-            pass
+            # brain.save_image(
+            #     os.path.join(output_dir, f"{prefix}_{view}_{t_idx}.png")
+            # )
     print("Export complete.")

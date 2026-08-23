@@ -356,10 +356,8 @@ fit needs both columns present. `ssmcomparisonstats` carries two analyses,
 distinguished by its `analysis` column: `ssm_model_comparison`, the
 per-condition group test of the criterion difference, and
 `ssm_urgency_condition_contrast`, the paired Fast-minus-Slow contrast on
-every fitted urgency-model parameter. `ssmpopulation` holds the
-subject-level parameters pooled under a normal population model, with
-`ssmpopulationstats` carrying the population mean and between-subject
-spread. The two models do not share a parameter set: `ddm` carries
+every fitted urgency-model parameter. The two models do not share a
+parameter set: `ddm` carries
 `drift_scale`, `bound`, `nondecision_s`, and `urgency` carries
 `drift_scale`, `urgency_scale`, `urgency_onset_s`, `nondecision_s`, with
 every column present in the table and missing where a model does not use it.

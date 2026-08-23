@@ -9,8 +9,15 @@ unit, workflow, traceability, and golden-reference tests.
 The canonical records are:
 
 - `docs/data_contract.md` for persisted data and metadata
-- `docs/legacy_traceability.md` for legacy analysis coverage
+- `docs/behavior.md` for the behavioral analyses, their results, and the
+  figure conventions
+- `docs/meg.md` for the MEG pipeline
 - `docs/refactor/migration_map.md` for final module ownership
+
+The legacy-coverage matrix that used to be listed here was retired once the
+refactor closed: it indexed `archive/replicated/`, which is untracked local
+scratch, and its validation column had drifted from the test names in the
+suite. Its history is in git.
 
 ## Target Layers
 

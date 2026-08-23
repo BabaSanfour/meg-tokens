@@ -8,7 +8,6 @@ result before it crosses into the table layer.
 
 import re
 from dataclasses import dataclass
-from pathlib import Path
 
 import pandas as pd
 from nptdms import TdmsFile

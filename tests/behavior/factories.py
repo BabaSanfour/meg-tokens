@@ -233,6 +233,14 @@ def trial_features(**columns) -> pd.DataFrame:
         table["logged_spd_validated_15row"] = spd.where(
             table["token_log_rows"] == 15
         )
+    if "sum_log_lr_design_early" not in columns:
+        # The real contract keeps these two exactly consistent: early evidence
+        # in log odds *is* logit(sp_design_early). A test that varies one and
+        # leaves the other at a default would assert against a pair the
+        # pipeline can never produce.
+        early = pd.to_numeric(table["sp_design_early"], errors="coerce")
+        with np.errstate(divide="ignore", invalid="ignore"):
+            table["sum_log_lr_design_early"] = np.log(early / (1.0 - early))
     table["trial_id"] = [
         f"sub-{row.subject}_task-tokens_run-{row.run}"
         f"_desc-{str(row.condition).lower()}_trial-{row.run_trial_index:03d}"

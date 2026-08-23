@@ -5,7 +5,12 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from meg_tokens.behavior.math.inference import paired_subject_statistics
+from meg_tokens.behavior.math.inference import (
+    confidence_interval,
+    equivalence_bound,
+    one_sample_statistics,
+    paired_subject_statistics,
+)
 from meg_tokens.behavior.schema import validate_boolean_values
 from meg_tokens.behavior.trials import (
     CLASS_NAMES,
@@ -318,9 +323,22 @@ def behavior_group_statistics(summary: pd.DataFrame) -> pd.DataFrame:
     )
     rows = []
     for contrast in contrasts:
-        result = paired_subject_statistics(
-            summary[contrast["column_a"]],
-            summary[contrast["column_b"]],
+        values_a = pd.to_numeric(summary[contrast["column_a"]], errors="coerce")
+        values_b = pd.to_numeric(summary[contrast["column_b"]], errors="coerce")
+        result = paired_subject_statistics(values_a, values_b)
+        # Non-finite pairs are dropped exactly as paired_subject_statistics
+        # drops them, so the interval below describes the same subjects its
+        # t and p do.
+        differences = (values_a - values_b).replace([np.inf, -np.inf], np.nan).dropna()
+        statistics = one_sample_statistics(differences)
+        # The interval is the 90% one the equivalence bound is read off, so
+        # every null in this table can be quoted as what it excludes.
+        low, high = confidence_interval(
+            statistics["mean"], statistics["sem"], statistics["df"], coverage=0.90
         )
-        rows.append({**contrast, **result})
+        rows.append({
+            **contrast, **result,
+            "ci_low": low, "ci_high": high, "coverage": 0.90,
+            **equivalence_bound(differences),
+        })
     return pd.DataFrame(rows)
