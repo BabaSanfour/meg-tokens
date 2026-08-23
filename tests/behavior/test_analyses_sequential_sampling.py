@@ -33,6 +33,7 @@ from meg_tokens.behavior.analyses.sequential_sampling import (
     empirical_lead_paths,
     exclusion_robustness_audit,
     _recovery_truth_values,
+    _truth_runs,
     _lead_path,
     fit_sequential_sampling_models,
     eligibility_audit,
@@ -710,6 +711,64 @@ def test_the_recovery_truth_design_is_a_deterministic_interior_permutation():
     ]
     for parameter in MODEL_PARAMETERS["urgency"]:
         assert len({design[parameter] for design in designs}) == 12
+
+
+def test_both_recovery_studies_read_the_same_truth_for_a_repetition(monkeypatch):
+    """Parameter recovery and model recovery are two questions about one
+    simulation, so repetition 7 has to mean the same truth vector and the same
+    dataset in both. Nothing downstream can detect a divergence: each study is
+    internally consistent whichever truth it used, and they are published as
+    separate tables. The check is here because it is the only place it fits.
+    """
+    import meg_tokens.behavior.analyses.sequential_sampling as sequential_sampling
+
+    simulated = []
+
+    def _record(model, values, *, n_per_sequence, seed, lead_paths):
+        simulated.append((model, dict(values), seed))
+        return pd.DataFrame({"rt": [0.5] * 20})
+
+    monkeypatch.setattr(sequential_sampling, "_synthetic_frame", _record)
+    monkeypatch.setattr(
+        sequential_sampling, "_fit_one",
+        lambda model, frame, **kwargs: {
+            **{parameter: 1.0 for parameter in MODEL_PARAMETERS[model]},
+            "log_likelihood": -10.0, "optimizer_success": True, "boundary_hit": False,
+        },
+    )
+
+    parameter = parameter_recovery(
+        repetitions=12, repetition_indices=[7], truth_design_repetitions=12
+    )
+    from_parameter, simulated[:] = list(simulated), []
+    model = model_recovery(
+        repetitions=12, repetition_indices=[7], truth_design_repetitions=12
+    )
+
+    assert from_parameter == simulated
+    # And the tables agree on what they say that truth was.
+    for column in ("truth_design_index", "truth_design_repetitions", "simulation_seed"):
+        assert set(parameter[column]) == set(model[column])
+    assert set(parameter["truth_source"]) == set(model["truth_source"])
+
+
+def test_a_truth_run_is_refused_when_the_repetition_is_outside_the_design():
+    """An array task asking for a repetition the design does not hold would
+    otherwise silently fall back onto another task's truth."""
+    for indices, design in (([0], 0), ([4], 4), ([-1], 4)):
+        with pytest.raises(ValueError):
+            list(
+                _truth_runs(
+                    models=("ddm",),
+                    repetitions=4,
+                    n_per_sequence=4,
+                    seed=0,
+                    representative_paths=None,
+                    repetition_indices=indices,
+                    truth_design_repetitions=design,
+                    truth_fits=None,
+                )
+            )
 
 
 def test_one_recovery_repetition_writes_complete_machine_readable_rows(monkeypatch):

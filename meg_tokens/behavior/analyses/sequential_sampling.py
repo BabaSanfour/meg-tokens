@@ -55,7 +55,7 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 import hashlib
 from itertools import combinations
 import json
-from typing import Final, Sequence
+from typing import Final, Iterator, Mapping, NamedTuple, Sequence
 
 import numpy as np
 import pandas as pd
@@ -2392,6 +2392,112 @@ def fitted_truth_values(
     return values, fractions, provenance
 
 
+class _TruthRun(NamedTuple):
+    """One recovery truth point and the dataset simulated from it."""
+
+    repetition: int
+    design_repetitions: int
+    true_model: str
+    values: dict[str, float]
+    fractions: dict[str, float]
+    truth_source: str
+    simulation_seed: int
+    frame: pd.DataFrame
+
+
+def _truth_runs(
+    *,
+    models: tuple[str, ...],
+    repetitions: int,
+    n_per_sequence: int,
+    seed: int,
+    representative_paths: tuple[tuple[int, ...], ...] | None,
+    repetition_indices: Sequence[int] | None,
+    truth_design_repetitions: int | None,
+    truth_fits: pd.DataFrame | None,
+) -> Iterator[_TruthRun]:
+    """Yield one simulated dataset per requested repetition and true model.
+
+    ``repetition_indices`` lets a Slurm array run one truth point at a time.
+    ``truth_design_repetitions`` keeps the Latin-hypercube-like design fixed
+    across those independent tasks, so task 7 of a 12-point array has exactly
+    the same truth and seed as repetition 7 of a local pooled run.
+
+    Notes
+    -----
+    :func:`parameter_recovery` and :func:`model_recovery` both draw their
+    truth points from here rather than each deriving their own, which is what
+    makes them comparable: repetition 7 means one truth vector and one
+    simulated dataset, not two that merely happen to agree while the seed
+    arithmetic is copied correctly in both places. The two studies answer
+    different questions about the same simulation, so a silent divergence
+    between them would be invisible in either one alone.
+    """
+    # Not `or repetitions`: zero is falsy, so an explicit zero used to be
+    # replaced by the local repetition count instead of being refused, and a
+    # task would then have run against a design size nobody asked for.
+    design_repetitions = int(
+        repetitions if truth_design_repetitions is None else truth_design_repetitions
+    )
+    if design_repetitions < 1:
+        raise ValueError("truth_design_repetitions must be positive")
+    indices = tuple(
+        range(int(repetitions))
+        if repetition_indices is None
+        else (int(index) for index in repetition_indices)
+    )
+    if any(index < 0 or index >= design_repetitions for index in indices):
+        raise ValueError("repetition_indices must lie within the truth design")
+    for repetition in indices:
+        for true_model in models:
+            if truth_fits is None:
+                values, fractions = _recovery_truth_values(
+                    true_model,
+                    repetition=repetition,
+                    repetitions=design_repetitions,
+                    seed=seed,
+                )
+                truth_source = {"truth_region": "parameter_range_hypercube"}
+            else:
+                values, fractions, truth_source = fitted_truth_values(
+                    truth_fits,
+                    true_model,
+                    repetition=repetition,
+                    repetitions=design_repetitions,
+                    seed=seed,
+                )
+                truth_source = {"truth_region": "accepted_fit", **truth_source}
+            simulation_seed = int(seed + repetition * 100)
+            yield _TruthRun(
+                repetition=repetition,
+                design_repetitions=design_repetitions,
+                true_model=true_model,
+                values=values,
+                fractions=fractions,
+                truth_source=json.dumps(truth_source, sort_keys=True),
+                simulation_seed=simulation_seed,
+                frame=_synthetic_frame(
+                    true_model,
+                    values,
+                    n_per_sequence=n_per_sequence,
+                    seed=simulation_seed,
+                    lead_paths=representative_paths,
+                ),
+            )
+
+
+def _fit_diagnostics(estimate: Mapping[str, object]) -> dict:
+    """The per-fit audit trail both recovery studies record for every row."""
+    return {
+        "converged": bool(estimate.get("optimizer_success", False)),
+        "optimizer_success": bool(estimate.get("optimizer_success", False)),
+        "best_start": int(estimate.get("best_start", -1)),
+        "start_objectives": estimate.get("start_objectives", "{}"),
+        "start_converged": estimate.get("start_converged", "{}"),
+        "fit_error": estimate.get("fit_error", ""),
+    }
+
+
 def parameter_recovery(
     *,
     models: tuple[str, ...] = MECHANISTIC_MODELS,
@@ -2406,74 +2512,43 @@ def parameter_recovery(
 ) -> pd.DataFrame:
     """Recover known parameters from simulated trial paths.
 
-    ``repetition_indices`` lets a Slurm array run one truth point at a time.
-    ``truth_design_repetitions`` keeps the Latin-hypercube-like design fixed
-    across those independent tasks, so task 7 of a 12-point array has exactly
-    the same truth and seed as repetition 7 of a local pooled run.
+    See :func:`_truth_runs` for the repetition-indexed array contract and
+    :func:`fitted_truth_values` for what ``truth_fits`` changes.
     """
-    design_repetitions = int(truth_design_repetitions or repetitions)
-    if design_repetitions < 1:
-        raise ValueError("truth_design_repetitions must be positive")
-    indices = tuple(
-        range(int(repetitions))
-        if repetition_indices is None
-        else (int(index) for index in repetition_indices)
-    )
-    if any(index < 0 or index >= design_repetitions for index in indices):
-        raise ValueError("repetition_indices must lie within the truth design")
     rows = []
-    for repetition in indices:
-        for model_name in models:
-            if truth_fits is None:
-                values, fractions = _recovery_truth_values(
-                    model_name,
-                    repetition=repetition,
-                    repetitions=design_repetitions,
-                    seed=seed,
-                )
-                truth_source = {"truth_region": "parameter_range_hypercube"}
-            else:
-                values, fractions, truth_source = fitted_truth_values(
-                    truth_fits,
-                    model_name,
-                    repetition=repetition,
-                    repetitions=design_repetitions,
-                    seed=seed,
-                )
-                truth_source = {"truth_region": "accepted_fit", **truth_source}
-            simulation_seed = int(seed + repetition * 100)
-            frame = _synthetic_frame(
-                model_name,
-                values,
-                n_per_sequence=n_per_sequence,
-                seed=simulation_seed,
-                lead_paths=representative_paths,
-            )
-            estimate = _fit_one(model_name, frame, n_starts=n_starts, compute_uncertainty=False)
-            for parameter in MODEL_PARAMETERS[model_name]:
-                rows.append({
-                    "analysis": "ssm_parameter_recovery",
-                    "repetition": repetition,
-                    "true_model": model_name,
-                    "parameter": parameter,
-                    "true_value": values[parameter],
-                    "estimated_value": estimate.get(parameter, np.nan),
-                    "truth_design_index": repetition,
-                    "truth_design_repetitions": design_repetitions,
-                    "truth_design_fraction": fractions[parameter],
-                    "truth_source": json.dumps(truth_source, sort_keys=True),
-                    "simulation_seed": simulation_seed,
-                    "n_per_sequence": n_per_sequence,
-                    "n_starts": n_starts,
-                    "fit_seed": seed,
-                    "converged": bool(estimate.get("optimizer_success", False)),
-                    "boundary_hit": bool(estimate.get("boundary_hit", False)),
-                    "optimizer_success": bool(estimate.get("optimizer_success", False)),
-                    "best_start": int(estimate.get("best_start", -1)),
-                    "start_objectives": estimate.get("start_objectives", "{}"),
-                    "start_converged": estimate.get("start_converged", "{}"),
-                    "fit_error": estimate.get("fit_error", ""),
-                })
+    for run in _truth_runs(
+        models=models,
+        repetitions=repetitions,
+        n_per_sequence=n_per_sequence,
+        seed=seed,
+        representative_paths=representative_paths,
+        repetition_indices=repetition_indices,
+        truth_design_repetitions=truth_design_repetitions,
+        truth_fits=truth_fits,
+    ):
+        estimate = _fit_one(
+            run.true_model, run.frame, n_starts=n_starts, compute_uncertainty=False
+        )
+        for parameter in MODEL_PARAMETERS[run.true_model]:
+            rows.append({
+                "analysis": "ssm_parameter_recovery",
+                "repetition": run.repetition,
+                "true_model": run.true_model,
+                "parameter": parameter,
+                "true_value": run.values[parameter],
+                "estimated_value": estimate.get(parameter, np.nan),
+                "truth_design_index": run.repetition,
+                "truth_design_repetitions": run.design_repetitions,
+                "truth_design_fraction": run.fractions[parameter],
+                "truth_source": run.truth_source,
+                "simulation_seed": run.simulation_seed,
+                "n_per_sequence": n_per_sequence,
+                "n_starts": n_starts,
+                "fit_seed": seed,
+                "converged": bool(estimate.get("optimizer_success", False)),
+                "boundary_hit": bool(estimate.get("boundary_hit", False)),
+                **_fit_diagnostics(estimate),
+            })
     return pd.DataFrame(rows)
 
 
@@ -2491,72 +2566,44 @@ def model_recovery(
 ) -> pd.DataFrame:
     """Fit every candidate to data simulated from every candidate model.
 
-    See :func:`parameter_recovery` for the repetition-indexed array contract
-    and :func:`fitted_truth_values` for what ``truth_fits`` changes.
+    See :func:`_truth_runs` for the repetition-indexed array contract and
+    :func:`fitted_truth_values` for what ``truth_fits`` changes.
     """
-    design_repetitions = int(truth_design_repetitions or repetitions)
-    if design_repetitions < 1:
-        raise ValueError("truth_design_repetitions must be positive")
-    indices = tuple(
-        range(int(repetitions))
-        if repetition_indices is None
-        else (int(index) for index in repetition_indices)
-    )
-    if any(index < 0 or index >= design_repetitions for index in indices):
-        raise ValueError("repetition_indices must lie within the truth design")
     rows = []
-    for repetition in indices:
-        for true_model in models:
-            if truth_fits is None:
-                true_values, truth_fractions = _recovery_truth_values(
-                    true_model,
-                    repetition=repetition,
-                    repetitions=design_repetitions,
-                    seed=seed,
-                )
-                truth_source = {"truth_region": "parameter_range_hypercube"}
-            else:
-                true_values, truth_fractions, truth_source = fitted_truth_values(
-                    truth_fits,
-                    true_model,
-                    repetition=repetition,
-                    repetitions=design_repetitions,
-                    seed=seed,
-                )
-                truth_source = {"truth_region": "accepted_fit", **truth_source}
-            simulation_seed = int(seed + repetition * 100)
-            frame = _synthetic_frame(
-                true_model,
-                true_values,
-                n_per_sequence=n_per_sequence,
-                seed=simulation_seed,
-                lead_paths=representative_paths,
+    for run in _truth_runs(
+        models=models,
+        repetitions=repetitions,
+        n_per_sequence=n_per_sequence,
+        seed=seed,
+        representative_paths=representative_paths,
+        repetition_indices=repetition_indices,
+        truth_design_repetitions=truth_design_repetitions,
+        truth_fits=truth_fits,
+    ):
+        for fitted_model in models:
+            estimate = _fit_one(
+                fitted_model, run.frame, n_starts=n_starts, compute_uncertainty=False
             )
-            for fitted_model in models:
-                estimate = _fit_one(fitted_model, frame, n_starts=n_starts, compute_uncertainty=False)
-                ll = float(estimate.get("log_likelihood", np.nan))
-                rows.append({
-                    "analysis": "ssm_model_recovery",
-                    "repetition": repetition,
-                    "true_model": true_model,
-                    "fitted_model": fitted_model,
-                    "truth_design_index": repetition,
-                    "truth_design_repetitions": design_repetitions,
-                    "truth_design_fraction": json.dumps(truth_fractions, sort_keys=True),
-                    "truth_source": json.dumps(truth_source, sort_keys=True),
-                    "simulation_seed": simulation_seed,
-                    "n_per_sequence": n_per_sequence,
-                    "n_starts": n_starts,
-                    "fit_seed": seed,
-                    "log_likelihood": ll,
-                    "bic": (len(MODEL_PARAMETERS[fitted_model]) * np.log(len(frame)) - 2 * ll) if np.isfinite(ll) else np.nan,
-                    "converged": bool(estimate.get("optimizer_success", False)),
-                    "optimizer_success": bool(estimate.get("optimizer_success", False)),
-                    "best_start": int(estimate.get("best_start", -1)),
-                    "start_objectives": estimate.get("start_objectives", "{}"),
-                    "start_converged": estimate.get("start_converged", "{}"),
-                    "fit_error": estimate.get("fit_error", ""),
-                })
+            ll = float(estimate.get("log_likelihood", np.nan))
+            rows.append({
+                "analysis": "ssm_model_recovery",
+                "repetition": run.repetition,
+                "true_model": run.true_model,
+                "fitted_model": fitted_model,
+                "truth_design_index": run.repetition,
+                "truth_design_repetitions": run.design_repetitions,
+                "truth_design_fraction": json.dumps(run.fractions, sort_keys=True),
+                "truth_source": run.truth_source,
+                "simulation_seed": run.simulation_seed,
+                "n_per_sequence": n_per_sequence,
+                "n_starts": n_starts,
+                "fit_seed": seed,
+                "log_likelihood": ll,
+                "bic": (
+                    len(MODEL_PARAMETERS[fitted_model]) * np.log(len(run.frame)) - 2 * ll
+                ) if np.isfinite(ll) else np.nan,
+                **_fit_diagnostics(estimate),
+            })
     result = pd.DataFrame(rows)
     if result.empty:
         return result
