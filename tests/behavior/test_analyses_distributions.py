@@ -21,9 +21,8 @@ from tests.behavior.factories import trial_features
 # --- descriptive summary ------------------------------------------------------
 
 
-def test_the_summary_reports_moments_and_the_requested_quantiles():
+def test_the_summary_reports_bias_corrected_moments_and_the_requested_quantiles():
     values = list(range(1, 25))
-
     summary = distribution_summary(values, quantiles=(0.25, 0.5, 0.75))
 
     assert summary["n_trials"] == 24
@@ -33,47 +32,25 @@ def test_the_summary_reports_moments_and_the_requested_quantiles():
     assert summary["q25"] == pytest.approx(np.quantile(values, 0.25))
     assert summary["q50"] == pytest.approx(12.5)
     assert summary["q75"] == pytest.approx(np.quantile(values, 0.75))
-
-
-def test_quantile_keys_are_named_by_integer_percentage():
-    summary = distribution_summary(list(range(100)), quantiles=(0.1, 0.9))
-
-    assert {"q10", "q90"} <= set(summary)
-
-
-def test_shape_statistics_are_bias_corrected():
-    values = list(range(1, 25))
-
-    summary = distribution_summary(values)
-
     assert summary["skewness"] == pytest.approx(float(stats.skew(values, bias=False)))
-    assert summary["kurtosis"] == pytest.approx(
-        float(stats.kurtosis(values, bias=False))
-    )
+    assert summary["kurtosis"] == pytest.approx(float(stats.kurtosis(values, bias=False)))
+    # Quantile keys are named by integer percentage.
+    assert {"q10", "q90"} <= set(distribution_summary(list(range(100)), quantiles=(0.1, 0.9)))
 
 
-def test_shape_statistics_are_withheld_on_a_sample_too_small_to_trust_them():
+def test_the_summary_withholds_what_the_sample_cannot_support():
     short = distribution_summary(list(range(MIN_TRIALS_FOR_SHAPE - 1)))
     enough = distribution_summary(list(range(MIN_TRIALS_FOR_SHAPE)))
-
     assert np.isnan(short["skewness"]) and np.isnan(short["kurtosis"])
     assert np.isfinite(enough["skewness"])
 
+    finite = distribution_summary([1.0, float("nan"), 3.0, float("inf")])
+    assert finite["n_trials"] == 2
+    assert finite["mean"] == pytest.approx(2.0)
 
-def test_non_finite_observations_are_discarded_before_summarizing():
-    summary = distribution_summary([1.0, float("nan"), 3.0, float("inf")])
-
-    assert summary["n_trials"] == 2
-    assert summary["mean"] == pytest.approx(2.0)
-
-
-def test_an_empty_sample_reports_missing_statistics_not_zeros():
-    summary = distribution_summary([])
-
-    assert summary["n_trials"] == 0
-    assert all(
-        np.isnan(summary[field]) for field in ("mean", "sd", "min", "max", "q50")
-    )
+    empty = distribution_summary([])
+    assert empty["n_trials"] == 0
+    assert all(np.isnan(empty[field]) for field in ("mean", "sd", "min", "max", "q50"))
 
 
 # --- decision-time distributions ----------------------------------------------
@@ -100,10 +77,21 @@ def _distribution_session(subject="H01", shift=0.0):
     )
 
 
+def _subject_distributions(n_subjects=3, **kwargs):
+    return pd.concat(
+        [
+            decision_time_distributions(
+                _distribution_session(f"H{index:02d}", shift=50.0 * index), **kwargs
+            )
+            for index in range(1, n_subjects + 1)
+        ],
+        ignore_index=True,
+    )
+
+
 def test_the_distributions_are_built_from_dt_ms_and_ignore_rawrt():
-    """Regression guard for the defect rule 2 exists to fix
-    (docs/behavior.md, Figure conventions: decision time is `dt_ms`,
-    never `rawRT`).
+    """Regression guard for the defect rule 2 exists to fix (docs/behavior.md,
+    Figure conventions: decision time is `dt_ms`, never `rawRT`).
 
     The preprint's analysis used ``rawRT``, which carries the motor component.
     This asserts the property rather than the spelling: the quantiles track
@@ -126,73 +114,50 @@ def test_the_distributions_are_built_from_dt_ms_and_ignore_rawrt():
     pd.testing.assert_frame_equal(baseline, decision_time_distributions(shifted))
 
 
-def test_distributions_are_reported_for_every_declared_stratum():
+def test_every_declared_stratum_is_reported_from_its_own_trials_within_each_subject():
     distributions = decision_time_distributions(_distribution_session())
-
     assert set(distributions["stratum_type"]) == {
         "overall", "condition", "class", "condition_class",
     }
-    assert set(distributions.loc[distributions["stratum_type"] == "class", "stratum"]) == (
-        {"easy", "ambiguous", "misleading"}
-    )
+    assert set(distributions.loc[distributions["stratum_type"] == "class", "stratum"]) == {
+        "easy", "ambiguous", "misleading",
+    }
     # 1 overall + 2 conditions + 3 classes + 6 cells.
     assert len(distributions) == 12
 
+    indexed = distributions.set_index("stratum")
+    assert indexed.loc["all_task_trials", "n_trials"] == 12
+    assert indexed.loc["fast", "mean"] == pytest.approx(1083.3333333333333)
+    assert indexed.loc["easy", "n_trials"] == 4
+    assert indexed.loc["fast_easy", "mean"] == pytest.approx(850.0)
 
-def test_each_stratum_summarizes_only_its_own_trials():
-    distributions = decision_time_distributions(_distribution_session()).set_index("stratum")
-
-    assert distributions.loc["all_task_trials", "n_trials"] == 12
-    assert distributions.loc["fast", "mean"] == pytest.approx(1083.3333333333333)
-    assert distributions.loc["easy", "n_trials"] == 4
-    assert distributions.loc["fast_easy", "mean"] == pytest.approx(850.0)
-
-
-def test_an_empty_declared_cell_is_kept_with_no_statistics():
+    # A declared cell nobody ran is kept with no statistics.
     features = _distribution_session()
-    features = features.loc[
-        ~((features["condition"] == "Slow") & (features["trial_class"] == 3))
-    ]
+    sparse = decision_time_distributions(
+        features.loc[~((features["condition"] == "Slow") & (features["trial_class"] == 3))]
+    ).set_index("stratum")
+    assert sparse.loc["slow_misleading", "n_trials"] == 0
+    assert np.isnan(sparse.loc["slow_misleading", "mean"])
 
-    distributions = decision_time_distributions(features).set_index("stratum")
-
-    assert distributions.loc["slow_misleading", "n_trials"] == 0
-    assert np.isnan(distributions.loc["slow_misleading", "mean"])
-
-
-def test_distributions_are_computed_within_each_subject():
-    features = pd.concat(
-        [_distribution_session("H01"), _distribution_session("H02", shift=500.0)],
-        ignore_index=True,
-    )
-
-    distributions = decision_time_distributions(features).set_index(["subject", "stratum"])
-
-    assert distributions.loc[("H02", "fast"), "mean"] == pytest.approx(
-        distributions.loc[("H01", "fast"), "mean"] + 500.0
+    # Each subject is summarized on their own trials.
+    per_subject = decision_time_distributions(
+        pd.concat(
+            [_distribution_session("H01"), _distribution_session("H02", shift=500.0)],
+            ignore_index=True,
+        )
+    ).set_index(["subject", "stratum"])
+    assert per_subject.loc[("H02", "fast"), "mean"] == pytest.approx(
+        per_subject.loc[("H01", "fast"), "mean"] + 500.0
     )
 
 
-def test_distribution_statistics_run_the_declared_paired_contrasts():
-    distributions = pd.concat(
-        [
-            decision_time_distributions(
-                _distribution_session(f"H{index:02d}", shift=50.0 * index),
-            )
-            for index in range(1, 5)
-        ],
-        ignore_index=True,
-    )
-
+def test_the_distribution_statistics_run_the_declared_contrasts_and_skip_what_is_absent():
+    distributions = _subject_distributions(n_subjects=4)
     statistics = decision_time_distribution_statistics(
         distributions, metrics=("q50", "skewness")
     )
-
     assert set(statistics["contrast"]) == {
-        "easy_vs_ambiguous",
-        "easy_vs_misleading",
-        "ambiguous_vs_misleading",
-        "fast_vs_slow",
+        "easy_vs_ambiguous", "easy_vs_misleading", "ambiguous_vs_misleading", "fast_vs_slow",
     }
     assert set(statistics["metric"]) == {"q50", "skewness"}
     median = statistics.loc[
@@ -201,61 +166,26 @@ def test_distribution_statistics_run_the_declared_paired_contrasts():
     assert median["n_subjects"] == 4
     assert median["mean_difference"] < 0
 
+    # A missing stratum drops its contrasts rather than inventing them.
+    partial = _subject_distributions()
+    partial = partial.loc[partial["stratum"] != "misleading"]
+    assert set(
+        decision_time_distribution_statistics(partial, metrics=("q50",))["contrast"]
+    ) == {"easy_vs_ambiguous", "fast_vs_slow"}
 
-def _subject_distributions(n_subjects=3, **kwargs):
-    return pd.concat(
-        [
-            decision_time_distributions(
-                _distribution_session(f"H{index:02d}", shift=50.0 * index),
-                **kwargs,
-            )
-            for index in range(1, n_subjects + 1)
-        ],
-        ignore_index=True,
+    # A caller may name a column the summary does not produce; that must not
+    # take the other metrics down with it.
+    mixed = decision_time_distribution_statistics(
+        _subject_distributions(), metrics=("q50", "not_a_column")
     )
-
-
-def test_a_contrast_whose_stratum_is_missing_is_omitted_not_invented():
-    distributions = _subject_distributions()
-    distributions = distributions.loc[distributions["stratum"] != "misleading"]
-
-    statistics = decision_time_distribution_statistics(
-        distributions, metrics=("q50",)
-    )
-
-    assert set(statistics["contrast"]) == {"easy_vs_ambiguous", "fast_vs_slow"}
-
-
-def test_a_metric_the_distributions_do_not_carry_is_skipped():
-    """A caller may name a column the summary does not produce; that must not
-    take the other metrics down with it."""
-    distributions = _subject_distributions()
-
-    statistics = decision_time_distribution_statistics(
-        distributions, metrics=("q50", "not_a_column")
-    )
-
-    assert set(statistics["metric"]) == {"q50"}
-
-
-def test_no_available_metric_yields_an_empty_table():
-    distributions = _subject_distributions()
-
+    assert set(mixed["metric"]) == {"q50"}
     assert decision_time_distribution_statistics(
-        distributions, metrics=("not_a_column",)
+        _subject_distributions(), metrics=("not_a_column",)
     ).empty
 
-
-def test_duplicate_subject_strata_are_refused_rather_than_averaged():
-    distributions = pd.concat(
-        [
-            decision_time_distributions(_distribution_session())
-        ] * 2,
-        ignore_index=True,
-    )
-
+    duplicated = pd.concat([decision_time_distributions(_distribution_session())] * 2)
     with pytest.raises(ValueError):
-        decision_time_distribution_statistics(distributions, metrics=("q50",))
+        decision_time_distribution_statistics(duplicated, metrics=("q50",))
 
 
 # --- cumulative logged SPD ----------------------------------------------------
@@ -266,53 +196,48 @@ def _spd_session(subject="H01"):
         subject=[subject] * 6,
         run_trial_index=list(range(1, 7)),
         trial_class=[1, 1, 2, 2, 3, 3],
-        trial_class_name=[
-            "easy", "easy", "ambiguous", "ambiguous", "misleading", "misleading",
-        ],
+        trial_class_name=["easy", "easy", "ambiguous", "ambiguous", "misleading", "misleading"],
         logged_spd=[0.55, 0.95, 0.60, 0.75, 0.45, 0.85],
     )
 
 
-def test_the_cumulative_curve_is_monotone_and_spans_zero_to_one():
+def test_the_cumulative_curve_is_monotone_spans_zero_to_one_and_covers_both_views():
     curves = spd_cumulative_distributions(_spd_session())
+    assert set(curves["view"]) == {"all_logged", "validated_15row"}
+    assert set(curves["trial_class_name"]) == {"easy", "ambiguous", "misleading"}
+
     easy = curves.loc[
         (curves["view"] == "all_logged") & (curves["trial_class_name"] == "easy")
     ].sort_values("threshold")
-
     assert easy["pooled_proportion"].is_monotonic_increasing
     assert easy["pooled_proportion"].iloc[0] == pytest.approx(0.0)
     assert easy["pooled_proportion"].iloc[-1] == pytest.approx(1.0)
 
-
-def test_both_logged_spd_views_are_reported_for_every_class():
-    curves = spd_cumulative_distributions(_spd_session())
-
-    assert set(curves["view"]) == {"all_logged", "validated_15row"}
-    assert set(curves["trial_class_name"]) == {"easy", "ambiguous", "misleading"}
-
-
-def test_the_curve_is_evaluated_at_the_thresholds_supplied():
-    curves = spd_cumulative_distributions(_spd_session(), thresholds=(0.6, 0.9))
-    easy = curves.loc[
-        (curves["view"] == "all_logged") & (curves["trial_class_name"] == "easy")
+    # Evaluated at the thresholds supplied, not at ones of its own choosing.
+    chosen = spd_cumulative_distributions(_spd_session(), thresholds=(0.6, 0.9))
+    chosen = chosen.loc[
+        (chosen["view"] == "all_logged") & (chosen["trial_class_name"] == "easy")
     ].set_index("threshold")
+    assert chosen.loc[0.6, "pooled_proportion"] == pytest.approx(0.5)
+    assert chosen.loc[0.9, "pooled_proportion"] == pytest.approx(0.5)
 
-    assert easy.loc[0.6, "pooled_proportion"] == pytest.approx(0.5)
-    assert easy.loc[0.9, "pooled_proportion"] == pytest.approx(0.5)
+    # With no complete log the validated view reports zero trials, not zeros.
+    withheld = _spd_session()
+    withheld["logged_spd_validated_15row"] = float("nan")
+    validated = spd_cumulative_distributions(withheld)
+    validated = validated.loc[validated["view"] == "validated_15row"]
+    assert (validated["n_trials"] == 0).all()
+    assert validated["pooled_proportion"].isna().all()
 
 
 def test_the_pooled_and_per_subject_readings_are_reported_side_by_side():
     """Pooling weights trials equally; the subject mean weights subjects
     equally, and they differ when subjects contribute unevenly."""
-    heavy = _spd_session("H01")
     light = trial_features(
-        subject=["H02"],
-        run_trial_index=[1],
-        trial_class=[1],
-        logged_spd=[0.95],
+        subject=["H02"], run_trial_index=[1], trial_class=[1], logged_spd=[0.95]
     )
     curves = spd_cumulative_distributions(
-        pd.concat([heavy, light], ignore_index=True), thresholds=(0.6,)
+        pd.concat([_spd_session("H01"), light], ignore_index=True), thresholds=(0.6,)
     )
     easy = curves.loc[
         (curves["view"] == "all_logged") & (curves["trial_class_name"] == "easy")
@@ -325,17 +250,6 @@ def test_the_pooled_and_per_subject_readings_are_reported_side_by_side():
     assert np.isfinite(easy["sem_subject_proportion"])
 
 
-def test_the_validated_view_reports_no_trials_when_no_log_is_complete():
-    features = _spd_session()
-    features["logged_spd_validated_15row"] = float("nan")
-
-    curves = spd_cumulative_distributions(features)
-    validated = curves.loc[curves["view"] == "validated_15row"]
-
-    assert (validated["n_trials"] == 0).all()
-    assert validated["pooled_proportion"].isna().all()
-
-
 # --- decision-time geometry ---------------------------------------------------
 
 
@@ -343,12 +257,11 @@ def _two_condition_session(subject="H01", *, delay=0.0, factor=1.0, seed=0):
     """One subject whose Slow trials are Fast trials delayed and/or stretched.
 
     Built so the two models are separable: a delay moves the mean and leaves
-    the spread, a stretch scales both.
-
-    Slow is an *independent* draw from the transformed distribution, not the
-    same trials transformed. Fast and Slow are different trials in the real
-    design, and a noiseless one-to-one transform gives the quantile contrasts
-    zero variance, which makes their t undefined rather than non-significant.
+    the spread, a stretch scales both. Slow is an *independent* draw from the
+    transformed distribution, not the same trials transformed — Fast and Slow
+    are different trials in the real design, and a noiseless one-to-one
+    transform gives the quantile contrasts zero variance, which makes their t
+    undefined rather than non-significant.
     """
     rng = np.random.default_rng(seed)
     fast = 600.0 + rng.gamma(shape=3.0, scale=150.0, size=120)
@@ -362,65 +275,49 @@ def _two_condition_session(subject="H01", *, delay=0.0, factor=1.0, seed=0):
     )
 
 
-def _geometry(builder, n_subjects=8, **kwargs):
+def _geometry_rows(n_subjects=8, **kwargs):
     features = pd.concat(
-        [builder(f"H{index:02d}", seed=index, **kwargs) for index in range(1, n_subjects + 1)],
+        [
+            _two_condition_session(f"H{index:02d}", seed=index, **kwargs)
+            for index in range(1, n_subjects + 1)
+        ],
         ignore_index=True,
     )
-    return decision_time_geometry(features)
+    statistics = decision_time_geometry_statistics(decision_time_geometry(features))
+    return statistics.loc[statistics["contrast"] == "fast_vs_slow"]
 
 
-def test_a_pure_delay_is_identified_as_a_delay_and_not_a_stretch():
-    statistics = decision_time_geometry_statistics(
-        _geometry(_two_condition_session, delay=200.0)
-    )
-    rows = statistics.loc[statistics["contrast"] == "fast_vs_slow"].set_index("term")
+def test_a_pure_delay_and_a_pure_stretch_are_each_identified_as_themselves():
+    delay = _geometry_rows(delay=200.0).set_index("term")
+    # A delay predicts constant quantile differences and changing ratios, and
+    # leaves the SD alone, so the delay model's SD prediction is the right one.
+    assert delay.loc["fixed_delay_q90_minus_q10_ms", "p"] > 0.05
+    assert delay.loc["proportional_stretch_log_ratio_q90_minus_q10", "p"] < 0.05
+    assert delay.loc["sd_observed_minus_delay_predicted", "p"] > 0.05
+    assert delay.loc["sd_observed_minus_stretch_predicted", "p"] < 0.05
 
-    # A delay predicts constant quantile differences and changing ratios.
-    assert rows.loc["fixed_delay_q90_minus_q10_ms", "p"] > 0.05
-    assert rows.loc["proportional_stretch_log_ratio_q90_minus_q10", "p"] < 0.05
-    # It leaves the SD alone, so the delay model's SD prediction is the right one.
-    assert rows.loc["sd_observed_minus_delay_predicted", "p"] > 0.05
-    assert rows.loc["sd_observed_minus_stretch_predicted", "p"] < 0.05
-
-
-def test_a_pure_stretch_is_identified_as_a_stretch_and_not_a_delay():
-    statistics = decision_time_geometry_statistics(
-        _geometry(_two_condition_session, factor=1.30)
-    )
-    rows = statistics.loc[statistics["contrast"] == "fast_vs_slow"].set_index("term")
-
-    # Mirror image of the delay case: ratios stable, differences not.
-    assert rows.loc["proportional_stretch_log_ratio_q90_minus_q10", "p"] > 0.05
-    assert rows.loc["fixed_delay_q90_minus_q10_ms", "p"] < 0.05
-    assert rows.loc["cv_observed_minus_stretch_predicted", "p"] > 0.05
-    assert rows.loc["cv_observed_minus_delay_predicted", "p"] < 0.05
-    # And the factor is recovered.
-    assert rows.loc["stretch_factor", "estimate"] == pytest.approx(1.30, abs=0.03)
+    stretch = _geometry_rows(factor=1.30).set_index("term")
+    # Mirror image: ratios stable, differences not, and the factor recovered.
+    assert stretch.loc["proportional_stretch_log_ratio_q90_minus_q10", "p"] > 0.05
+    assert stretch.loc["fixed_delay_q90_minus_q10_ms", "p"] < 0.05
+    assert stretch.loc["cv_observed_minus_stretch_predicted", "p"] > 0.05
+    assert stretch.loc["cv_observed_minus_delay_predicted", "p"] < 0.05
+    assert stretch.loc["stretch_factor", "estimate"] == pytest.approx(1.30, abs=0.03)
 
 
 def test_the_ks_ladder_removes_the_transform_that_generated_the_difference():
-    ladder = decision_time_geometry_statistics(
-        _geometry(_two_condition_session, factor=1.40)
-    )
-    rows = ladder.loc[
-        (ladder["contrast"] == "fast_vs_slow")
-        & (ladder["term"] == "ks_subjects_differing")
-    ].set_index("normalization")
-
+    ladder = _geometry_rows(factor=1.40)
+    ladder = ladder.loc[ladder["term"] == "ks_subjects_differing"].set_index("normalization")
     # Dividing out each side's median should remove a pure stretch; subtracting
     # a median should not, since a stretch is not an offset.
-    assert rows.loc["median_divided", "estimate"] < rows.loc["raw", "estimate"]
-    assert rows.loc["median_divided", "estimate"] <= rows.loc["median_subtracted", "estimate"]
+    assert ladder.loc["median_divided", "estimate"] < ladder.loc["raw", "estimate"]
+    assert ladder.loc["median_divided", "estimate"] <= ladder.loc["median_subtracted", "estimate"]
     # A count is only readable against what chance produces.
-    assert rows.loc["raw", "n_expected_by_chance"] == pytest.approx(0.05 * 8)
+    assert ladder.loc["raw", "n_expected_by_chance"] == pytest.approx(0.05 * 8)
 
 
 def test_a_contrast_without_enough_trials_is_reported_rather_than_measured():
-    geometry = decision_time_geometry(
-        _two_condition_session(), min_trials=500
-    )
+    geometry = decision_time_geometry(_two_condition_session(), min_trials=500)
     row = geometry.loc[geometry["contrast"] == "fast_vs_slow"].iloc[0]
-
     assert row["n_a"] == 120 and row["n_b"] == 120
     assert "stretch_factor" not in row or pd.isna(row.get("stretch_factor"))
