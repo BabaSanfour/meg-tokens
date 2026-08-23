@@ -1,10 +1,12 @@
 # Behavior cleanup — handoff
 
 Working session of 2026-08-23. **The session is finished and committed** in
-eight commits, `58e4412..d1a3284`, plus the one that carries this rewrite. Every
-commit was checked out in turn and run against the full suite in isolation —
-all nine are green. §2 records what each of the three planned steps turned out
-to be worth; the verification commands are in §4.
+eleven commits, `dc5300a..HEAD`, every one of which was checked out in turn and
+run against the full suite in isolation — all eleven are green. §2 records what
+each planned step turned out to be worth; the verification commands are in §4.
+
+None of them carries a co-authorship trailer; the hashes above are post-rewrite
+and will move again if the history is ever rewritten a second time.
 
 ---
 
@@ -33,7 +35,7 @@ It does **not** cover per-subject model fitting (`ssm-fit`, `ssm-evaluate`,
 merge, whose outputs it consumes. Changes to the likelihood, the solver or the
 model set still have to be verified on the cluster.
 
-Current state: **EQUIVALENT**, 513 passed / 27 skipped / 6 failed, and all seven
+Current state: **EQUIVALENT**, 515 passed / 27 skipped / 6 failed, and all seven
 `scripts/verify/` scripts pass against the real derivatives. All six failures
 are in `tests/test_batch_erp_parcellation.py`, predate this work, and are
 outside behavior scope.
@@ -185,7 +187,7 @@ per assertion, sharing the expensive fixtures, keeping every distinct claim:
   the recovery-merge hazard documented so nobody "fixes" the error by
   restoring the repetition files.
 
-**Net over the whole session (`554adc5..d1a3284`): 62 files changed, 4,303
+**Net over the whole session (`554adc5..c203c37`): 62 files changed, 4,303
 insertions, 6,220 deletions — −1,917 tracked lines. 316 of the insertions are
 this document.**
 
@@ -195,7 +197,7 @@ this document.**
 
 ### Step 1 — Commit the verified state ✅
 
-Eight commits, `58e4412..d1a3284`. The planned split was seven; two pairs had to
+Eight commits, `dc5300a..c203c37`. The planned split was seven; two pairs had to
 merge because the *files* do not separate — the fit-array flag fix lives in the
 script that was renamed in the same breath, and the tests for the deleted
 analyses sit in files that were also regrouped. Splitting those would have meant
@@ -206,21 +208,21 @@ Each commit was then checked out in turn and run against the full suite
 (`git rebase --exec`): 861 → 863 → 730 → 676 → 589 → 589 → 513 → 513 passed,
 **zero failures at any step**. The history bisects.
 
-    58e4412  fix(scripts): repair the ssm-fit array and name every launcher…
-    c9a7aef  refactor(cli): replace the dispatch chain with a handler table
-    b4ce299  refactor(behavior): drop fourteen derivatives nothing reads
-    bf828e3  refactor(behavior): remove dead helpers and signature-restating…
-    9263ab6  test(behavior): group the suites by behaviour rather than by…
-    cfe9b85  feat(scripts): add the before/after equivalence harness
-    73767a5  test(behavior): group the last seven suites by behaviour
-    d1a3284  refactor: finish the source trim — rename the figure battery…
+    dc5300a  fix(scripts): repair the ssm-fit array and name every launcher…
+    ab33f40  refactor(cli): replace the dispatch chain with a handler table
+    2dd2aaf  refactor(behavior): drop fourteen derivatives nothing reads
+    37f60de  refactor(behavior): remove dead helpers and signature-restating…
+    2a745b8  test(behavior): group the suites by behaviour rather than by…
+    bd9830b  feat(scripts): add the before/after equivalence harness
+    f6db257  test(behavior): group the last seven suites by behaviour
+    c203c37  refactor: finish the source trim — rename the figure battery…
 
 Still open: delete branch `worktree-agent-a993d156c19a4c105` once reviewed.
 
 ### Step 2 — Finish the test trim ✅ (625 → 546 collected, not ~450)
 
 All seven remaining files were grouped: **147 test functions → 81**, 2,577 →
-2,358 lines. Per-file numbers are in commit `73767a5`.
+2,358 lines. Per-file numbers are in commit `f6db257`.
 
 The ~450 target was not reached and should not be chased. What is left is not
 scaffolding: the suite is now 546 collected of which 130 are `pytest.raises`
@@ -235,7 +237,7 @@ nothing — every factory it exports is still called.
 - **Docstring scaffolding — nothing left of that class.** The behavior stack is
   11,975 lines with 4,001 docstring lines (33%). Scanned with `ast`: **zero**
   `Returns` sections name a type without saying something about it, and **zero**
-  `Parameters` blocks restate every annotation — commit `bf828e3` took the last
+  `Parameters` blocks restate every annotation — commit `37f60de` took the last
   of them. What remains earns its space (`individual_profile` explains which
   slope becomes which column and that joins never drop subjects). Do not sweep
   further, and **do not touch `Notes` sections**: that is where the scientific
@@ -264,11 +266,39 @@ nothing — every factory it exports is still called.
   (§0). Their coverage lives on the cluster; do not read that 25% as slack.
 
   The one genuine find: `_population_normal`, 50 lines with no callers, removed
-  in `d1a3284` along with the module's last `scipy.optimize` import.
+  in `c203c37` along with the module's last `scipy.optimize` import.
 - **`reports/behavior_summary.py` renamed** to `reports/behavior_battery.py`,
   which is what its own docstring calls it. The old name collided with
   `layout.behavior_summary()`, a different thing entirely (the Stage 1 subject
   table).
+
+### Step 4 — the duplication pass over the behavior stack ✅
+
+A follow-up survey looked for what was left to trim, scoped to behavior. Dead
+code: none. Docstring scaffolding: none. Figure builders: already sharing
+`figure_grid` / `panel_label` / `apply_publication_style` across all eighteen.
+CLI argument duplication: real, but almost entirely MEG-side — the nine
+behavior subparsers repeat ten lines between them, and the `--n-starts`
+defaults that do differ are deliberate.
+
+Four things were left, and all four were done:
+
+- `condition_class_contrasts`'s four stat-row stanzas became one
+  `_contrast_row`, 161 → 114 lines. The rule that a scale transform applies to
+  the estimate *and* both interval bounds now lives in one place instead of
+  being implicit in four.
+- `evidence.py`'s three copies of the `_dt`/`_correct`/`_class` preamble became
+  `_decision_columns`, which is now the single place recording that `_correct`
+  passes through nullable `boolean` so an undefined outcome becomes NaN rather
+  than 0.0.
+- The five SSM aggregation stages bound `inputs`/`subjects`/`excluded` once
+  instead of repeating them across sixteen `_write` calls.
+- `parameter_recovery` and `model_recovery` now draw from one `_truth_runs`
+  generator. See the trap in §5: this is the one that was worth doing for a
+  reason other than length.
+
+Net −40 lines of source, +59 of test. The first three are harness-proved
+EQUIVALENT; the fourth is covered by the A/B described in §5.
 
 ### What is left for a future session
 
@@ -314,7 +344,7 @@ fitting layer has, because the harness cannot reach it.
 ## 4. Verification commands
 
 Run all four before committing anything. Expected results are stated, and are
-what `d1a3284` produces today.
+what `c203c37` produces today.
 
 ```bash
 # 1. Test suite — expect 513 passed, 27 skipped, 6 failed.
@@ -352,7 +382,21 @@ python -m pytest tests/test_cluster_scripts.py -q
 - **`--figures all` renders all 18.** Any script or habit that enumerates
   figure keys is working around a problem that no longer exists.
 - **`reports.behavior_battery` is the figure battery; `layout.behavior_summary()`
-  is the Stage 1 subject table.** They were one word apart until `d1a3284`, and
+  is the Stage 1 subject table.** They were one word apart until `c203c37`, and
   the import path is the half that moved.
+- **Both recovery studies must simulate the same data for a repetition, and
+  nothing downstream can tell you if they stop.** `parameter_recovery` and
+  `model_recovery` are two questions about one simulation. Each is internally
+  consistent whichever truth it used, and they are published as separate
+  tables, so a divergence is invisible in either one. They share `_truth_runs`
+  for exactly this reason; do not give either its own truth derivation back.
+  Two tests pin it.
+- **Recovery cannot be checked with the harness, so check it by A/B instead.**
+  The recipe that worked: load the committed module beside the working-tree one
+  with `importlib`, stub `_fit_one` identically in both (it is the slow part
+  and rarely the part under change), run both studies pooled *and*
+  array-indexed, and `assert_frame_equal(..., check_exact=True)`. That catches
+  column-order drift too, which matters because these tables are merged by the
+  aggregate stage.
 - The 6 MEG `erp_parcellation` failures are untouched and out of scope. They
   are a separate job.
