@@ -115,7 +115,7 @@ DENSE_PT: Final[float] = 7.5          # small multiples: per-subject panels, mat
 PANEL_LETTER_PT: Final[float] = 12.0  # A, B, C... panel letters
 
 # Raster save resolution. Exported so callers saving a figure *outside* an
-# `apply_publication_style()` block (behavior_summary._render_one always
+# `apply_publication_style()` block (behavior_battery._render_one always
 # does -- the builder returns the figure, then the rc_context has already
 # exited by the time savefig() runs) can still request it explicitly instead
 # of silently falling back to matplotlib's 100 dpi default.

@@ -8,7 +8,7 @@ from meg_tokens.behavior.analyses.sequential_sampling import (
     heldout_pairwise_model_statistics,
 )
 from meg_tokens.io import DerivativeLayout, save_table, sidecar_path
-from meg_tokens.reports.behavior_summary import run_behavior_plotting
+from meg_tokens.reports.behavior_battery import run_behavior_plotting
 
 from tests.reports.factories import (
     ssmcomparison,

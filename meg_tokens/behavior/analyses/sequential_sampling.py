@@ -59,7 +59,7 @@ from typing import Final, Sequence
 
 import numpy as np
 import pandas as pd
-from scipy import optimize, stats
+from scipy import stats
 
 from meg_tokens.behavior.math.inference import (
     one_sample_statistics,
@@ -3626,55 +3626,3 @@ def _mean_decision_variable(
         state += rate * SOLVER_STEP_S
         trajectory[index] = state
     return trajectory
-
-
-def _population_normal(
-    estimates: np.ndarray,
-    errors: np.ndarray,
-) -> tuple[float, float, float]:
-    """Fit a normal population distribution to estimates with known errors.
-
-    Parameters
-    ----------
-    estimates
-        Subject-level maximum-likelihood values.
-    errors
-        Their standard errors, one per estimate.
-
-    Returns
-    -------
-    population_mean
-        Precision-weighted population mean.
-    population_mean_error
-        Standard error of that mean.
-    between_subject_sd
-        Population standard deviation net of estimation error.
-
-    Notes
-    -----
-    Each estimate is treated as its subject's true value plus independent
-    normal estimation error, giving the marginal variance
-    ``between_subject_sd ** 2 + error ** 2``. The mean has a closed form given
-    the population standard deviation, so only the latter is optimized. A
-    population standard deviation of zero is a genuine solution and means the
-    spread between subjects is no wider than their estimation error.
-    """
-    if estimates.size < 2:
-        return float("nan"), float("nan"), float("nan")
-    variances = errors**2
-
-    def negative_log_marginal(between_sd: float) -> float:
-        total = variances + between_sd**2
-        weights = 1.0 / total
-        mean = float(np.sum(weights * estimates) / np.sum(weights))
-        return 0.5 * float(np.sum(np.log(total) + (estimates - mean) ** 2 / total))
-
-    result = optimize.minimize_scalar(
-        negative_log_marginal,
-        bounds=(0.0, 10.0 * float(np.std(estimates, ddof=1)) + 1.0),
-        method="bounded",
-    )
-    between_sd = float(result.x)
-    weights = 1.0 / (variances + between_sd**2)
-    mean = float(np.sum(weights * estimates) / np.sum(weights))
-    return mean, float(np.sqrt(1.0 / np.sum(weights))), between_sd

@@ -1073,7 +1073,7 @@ def _analyze_spatial_decoding(project: ProjectConfig, args: argparse.Namespace) 
 
 
 def _report_behavior(project: ProjectConfig, args: argparse.Namespace) -> object:
-    from meg_tokens.reports.behavior_summary import (
+    from meg_tokens.reports.behavior_battery import (
         list_behavior_figures,
         run_behavior_plotting,
     )
