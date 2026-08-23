@@ -46,28 +46,21 @@ def _condition_table(column, values, condition="all", **extra):
 # --- assembling the profile ---------------------------------------------------
 
 
-def test_the_profile_derives_the_speed_accuracy_adjustment_per_subject():
+def test_the_profile_derives_its_own_measures_from_the_condition_means():
     profile = individual_profile(_subject_summary())
 
     assert profile["sat_adjustment_ms"].tolist() == pytest.approx(
         [200.0, 300.0, 300.0, 500.0]
     )
-
-
-def test_the_overall_decision_time_weights_the_two_conditions_equally():
-    """Not a trial-weighted mean: a subject with more Fast trials must not pull
-    their overall decision time toward the Fast block."""
-    profile = individual_profile(_subject_summary())
-
+    # Not a trial-weighted mean: a subject with more Fast trials must not pull
+    # their overall decision time toward the Fast block.
     assert profile["mean_dt_ms"].tolist() == pytest.approx(
         [1000.0, 1150.0, 1250.0, 1450.0]
     )
 
-
-def test_a_subject_missing_one_condition_keeps_the_other_but_loses_the_adjustment():
+    # A subject missing one condition keeps the other but loses the adjustment.
     summary = _subject_summary()
     summary.loc[0, "mean_slow_dt_ms"] = float("nan")
-
     profile = individual_profile(summary)
 
     assert profile.loc[0, "mean_dt_ms"] == pytest.approx(900.0)
@@ -108,8 +101,8 @@ def test_urgency_and_criterion_slopes_are_joined_under_distinct_names():
     )
 
 
-def test_only_the_pooled_condition_row_is_joined():
-    urgency = pd.concat(
+def test_a_joined_measure_is_selected_by_condition_and_by_scale_not_by_position():
+    both_conditions = pd.concat(
         [
             _condition_table(
                 "slope", [-0.05, -0.04, -0.03, -0.01],
@@ -123,26 +116,20 @@ def test_only_the_pooled_condition_row_is_joined():
         ignore_index=True,
     )
 
-    profile = individual_profile(_subject_summary(), urgency=urgency)
-
+    # Only the pooled condition row is joined.
+    profile = individual_profile(_subject_summary(), urgency=both_conditions)
     assert profile["urgency_slope_per_second"].tolist() == pytest.approx(
         [-0.05, -0.04, -0.03, -0.01]
     )
 
-
-def test_an_unknown_evidence_scale_yields_no_values_rather_than_a_substitute():
-    """The measure is defined on ``logged_spd``; a fit on another scale is not
-    quietly promoted into its place."""
-    urgency = _condition_table(
+    # The measure is defined on ``logged_spd``; a fit on another scale is not
+    # quietly promoted into its place.
+    other_scale = _condition_table(
         "slope", [-0.05, -0.04, -0.03, -0.01], response="some_other_scale"
     )
-
-    profile = individual_profile(_subject_summary(), urgency=urgency)
-
+    profile = individual_profile(_subject_summary(), urgency=other_scale)
     assert profile["urgency_slope_per_second"].isna().all()
 
-
-def test_the_evidence_predictor_is_selected_by_name_not_by_position():
     evidence = pd.concat(
         [
             _condition_table(
@@ -169,15 +156,13 @@ def test_the_evidence_predictor_is_selected_by_name_not_by_position():
     assert profile["accuracy_log_odds_per_unit"].tolist() == pytest.approx([1.0] * 4)
 
 
-def test_neural_metrics_are_joined_unchanged_for_later_analysis():
+def test_an_optional_input_joins_without_adding_or_removing_a_subject():
     neural = pd.DataFrame({"subject": SUBJECTS, "alpha_power": [1.0, 2.0, 3.0, 4.0]})
 
+    # Neural metrics are joined unchanged for later analysis.
     profile = individual_profile(_subject_summary(), neural_metrics=neural)
-
     assert profile["alpha_power"].tolist() == [1.0, 2.0, 3.0, 4.0]
 
-
-def test_an_optional_input_missing_a_subject_never_removes_them():
     lapses = pd.DataFrame({
         "subject": SUBJECTS[:2],
         "condition": ["all"] * 2,
@@ -190,24 +175,20 @@ def test_an_optional_input_missing_a_subject_never_removes_them():
     assert profile["lapse_rate"].isna().tolist() == [False, False, True, True]
 
 
-def test_a_duplicated_subject_is_refused_rather_than_aggregated():
-    summary = pd.concat([_subject_summary()] * 2, ignore_index=True)
+def test_a_profile_the_inputs_cannot_support_is_refused():
+    duplicated = pd.concat([_subject_summary()] * 2, ignore_index=True)
 
     with pytest.raises(ValueError, match="one row per subject"):
-        individual_profile(summary)
+        individual_profile(duplicated)
 
-
-def test_a_measure_with_several_pooled_rows_per_subject_is_refused():
-    urgency = pd.concat(
+    repeated_measure = pd.concat(
         [_condition_table("slope", [-0.05] * 4, response="logged_spd")] * 2,
         ignore_index=True,
     )
 
     with pytest.raises(ValueError, match="multiple 'all' rows per subject"):
-        individual_profile(_subject_summary(), urgency=urgency)
+        individual_profile(_subject_summary(), urgency=repeated_measure)
 
-
-def test_a_summary_without_the_condition_means_is_refused():
     with pytest.raises(ValueError, match="mean_slow_dt_ms"):
         individual_profile(_subject_summary().drop(columns=["mean_slow_dt_ms"]))
 
@@ -225,7 +206,8 @@ def _profile():
 
 
 def test_correlations_are_reported_for_every_estimable_measure_pair():
-    correlations = individual_correlations(_profile())
+    profile = _profile()
+    correlations = individual_correlations(profile)
 
     pairs = set(zip(correlations["measure_a"], correlations["measure_b"]))
     assert ("mean_dt_ms", "urgency_slope_per_second") in pairs
@@ -234,13 +216,10 @@ def test_correlations_are_reported_for_every_estimable_measure_pair():
     assert all(a != b for a, b in pairs)
     assert len(pairs) == len(correlations)
 
-
-def test_both_correlation_coefficients_are_reported_with_their_sample_size():
-    profile = _profile()
-    correlations = individual_correlations(profile).set_index(
-        ["measure_a", "measure_b"]
-    )
-    row = correlations.loc[("mean_dt_ms", "urgency_slope_per_second")]
+    # Both coefficients are reported with their sample size.
+    row = correlations.set_index(["measure_a", "measure_b"]).loc[
+        ("mean_dt_ms", "urgency_slope_per_second")
+    ]
 
     assert row["n_subjects"] == 4
     assert row["df"] == 2.0
@@ -260,7 +239,7 @@ def test_both_correlation_coefficients_are_reported_with_their_sample_size():
     )
 
 
-def test_a_subject_missing_one_member_is_excluded_from_that_pair_only():
+def test_a_pair_is_reported_only_where_it_is_estimable():
     profile = _profile()
     profile.loc[0, "urgency_slope_per_second"] = float("nan")
 
@@ -268,31 +247,25 @@ def test_a_subject_missing_one_member_is_excluded_from_that_pair_only():
         ["measure_a", "measure_b"]
     )
 
+    # A subject missing one member is excluded from that pair only.
     assert correlations.loc[("mean_dt_ms", "urgency_slope_per_second"), "n_subjects"] == 3
     assert correlations.loc[("mean_dt_ms", "percent_correct"), "n_subjects"] == 4
 
+    # Too few subjects, and nothing is reported at all.
+    assert individual_correlations(_profile().iloc[:2]).empty
 
-def test_a_pair_without_enough_subjects_is_omitted():
-    profile = _profile().iloc[:2]
-
-    assert individual_correlations(profile).empty
-
-
-def test_a_pair_without_variance_is_omitted_rather_than_reported_as_zero():
-    profile = _profile()
-    profile["urgency_slope_per_second"] = 1.0
-
-    correlations = individual_correlations(profile)
-    pairs = set(zip(correlations["measure_a"], correlations["measure_b"]))
-
+    # A pair without variance is omitted rather than reported as zero.
+    invariant = _profile()
+    invariant["urgency_slope_per_second"] = 1.0
+    pairs = set(
+        zip(*individual_correlations(invariant)[["measure_a", "measure_b"]].values.T)
+    )
     assert ("mean_dt_ms", "urgency_slope_per_second") not in pairs
 
-
-def test_measures_absent_from_the_profile_are_skipped():
+    # Measures absent from the profile are skipped: no urgency, criterion,
+    # evidence or lapse inputs were supplied here.
     correlations = individual_correlations(individual_profile(_subject_summary()))
     measures = set(correlations["measure_a"]) | set(correlations["measure_b"])
-
-    # No urgency, criterion, evidence or lapse inputs were supplied.
     assert "urgency_slope_per_second" not in measures
     assert "mean_dt_ms" in measures
 
@@ -300,8 +273,9 @@ def test_measures_absent_from_the_profile_are_skipped():
 # --- cross-species comparison -------------------------------------------------
 
 
-def test_every_class_measure_is_summarized():
-    statistics = comparison_statistics(_subject_summary())
+def test_every_class_measure_is_summarized_with_its_own_one_sample_test():
+    summary = _subject_summary()
+    statistics = comparison_statistics(summary)
 
     assert set(statistics["measure"]) == {
         "decision_time_easy_ms",
@@ -313,12 +287,7 @@ def test_every_class_measure_is_summarized():
     }
     assert (statistics["analysis"] == "cross_species_comparison").all()
 
-
-def test_each_measure_carries_its_own_one_sample_summary():
-    summary = _subject_summary()
-    statistics = comparison_statistics(summary).set_index("measure")
-    row = statistics.loc["decision_time_easy_ms"]
-
+    row = statistics.set_index("measure").loc["decision_time_easy_ms"]
     assert row["n_subjects"] == 4
     assert row["mean"] == pytest.approx(summary["mean_easy_dt_ms"].mean())
 
@@ -347,14 +316,6 @@ def test_the_criterion_slope_uses_first_order_sum_log_lr():
 
     assert row["n_subjects"] == 4
     assert row["mean"] == pytest.approx(np.mean([-0.5, -0.4, -0.3, -0.1]))
-
-
-def test_the_criterion_row_is_absent_when_no_fit_is_supplied():
-    statistics = comparison_statistics(_subject_summary())
-
-    assert "criterion_slope_sum_log_lr_per_second" not in set(
-        statistics["measure"]
-    )
 
 
 def _sequential_sampling_fits() -> pd.DataFrame:
@@ -398,10 +359,12 @@ def test_the_urgency_gating_rows_are_computed_from_the_fits():
     ] == pytest.approx(0.4)
 
 
-def test_the_urgency_gating_rows_are_absent_when_no_fit_is_supplied():
+def test_a_row_is_absent_when_the_fit_behind_it_was_not_supplied():
     statistics = comparison_statistics(_subject_summary())
+    measures = set(statistics["measure"])
 
-    assert "urgency_minus_integrator_bic" not in set(statistics["measure"])
+    assert "criterion_slope_sum_log_lr_per_second" not in measures
+    assert "urgency_minus_integrator_bic" not in measures
 
 
 def test_a_summary_without_a_class_measure_is_refused():

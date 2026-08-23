@@ -59,20 +59,21 @@ UNMATCHED = "111122221111111"
 # --- one trial's recorded label -----------------------------------------------
 
 
-@pytest.mark.parametrize(("label", "trial_class"), [("e", 1), ("a", 2), ("m", 3)])
-@pytest.mark.parametrize("infer_random_classes", [True, False])
-def test_a_recorded_label_is_taken_at_face_value(
-    label, trial_class, infer_random_classes
-):
+def test_a_recorded_label_is_taken_at_face_value():
     """A class the acquisition software asserted is read straight off the
     label. Inference is a policy for trials logged ``'x'`` only, so switching
     it off must not touch a trial that was never in question."""
-    assert classify_trial(
-        label, _profile(UNMATCHED, target=1), infer_random_classes=infer_random_classes
-    ) == (trial_class, "design", "recorded_label")
+    assert RECORDED_CLASSES == {"e": 1, "a": 2, "m": 3}
 
+    for label, trial_class in (("e", 1), ("a", 2), ("m", 3)):
+        for infer_random_classes in (True, False):
+            assert classify_trial(
+                label,
+                _profile(UNMATCHED, target=1),
+                infer_random_classes=infer_random_classes,
+            ) == (trial_class, "design", "recorded_label")
 
-def test_a_recorded_label_is_read_case_insensitively():
+    # The label is read case-insensitively.
     assert classify_trial("E", None, infer_random_classes=True) == (
         1,
         "design",
@@ -80,59 +81,44 @@ def test_a_recorded_label_is_read_case_insensitively():
     )
 
 
-def test_the_recorded_class_map_is_the_three_designed_classes():
-    assert RECORDED_CLASSES == {"e": 1, "a": 2, "m": 3}
-
-
 # --- trials logged 'x': the inference decision --------------------------------
 
 
-@pytest.mark.parametrize(
-    ("directions", "trial_class", "rule"),
-    [
+def test_a_random_trial_takes_its_class_from_the_designed_profile():
+    for directions, trial_class, rule in (
         (EASY, 1, "easy_sp2_sp5_sp8"),
         (AMBIGUOUS, 2, "ambiguous_sp2_sp3_sp5"),
         (MISLEADING, 3, "misleading_sp3"),
-    ],
-)
-def test_a_random_trial_takes_its_class_from_the_designed_profile(
-    directions, trial_class, rule
-):
-    assert classify_trial(
-        "x", _profile(directions, target=1), infer_random_classes=True
-    ) == (trial_class, "inferred", rule)
+    ):
+        assert classify_trial(
+            "x", _profile(directions, target=1), infer_random_classes=True
+        ) == (trial_class, "inferred", rule)
 
 
-def test_a_random_trial_matching_no_rule_stays_unclassified():
-    """An inferred class is only as good as the rule that produced it, so a
-    profile no rule matches yields no class rather than a nearest guess."""
+def test_an_unclassified_random_trial_records_why_it_has_no_class():
+    # An inferred class is only as good as the rule that produced it, so a
+    # profile no rule matches yields no class rather than a nearest guess.
     assert classify_trial(
         "x", _profile(UNMATCHED, target=1), infer_random_classes=True
     ) == (0, "unclassified", "unclassified")
 
-
-def test_inference_disabled_declines_even_a_profile_that_would_classify():
-    """The rule that would have matched is recorded nowhere: with inference
-    off the trial is unclassified because the project declined, and the rule
-    says so."""
+    # The rule that would have matched is recorded nowhere: with inference off
+    # the trial is unclassified because the project declined, and the rule
+    # says so.
     assert classify_trial(
         "x", _profile(EASY, target=1), infer_random_classes=False
     ) == (0, "unclassified", "inference_disabled")
 
-
-def test_a_random_trial_without_a_correct_target_is_unclassifiable():
-    """No correct target means no designed profile to read a class out of --
-    a different fact from having declined to look, and recorded as such."""
+    # No correct target means no designed profile to read a class out of -- a
+    # different fact from having declined to look, and recorded as such.
     assert classify_trial("x", None, infer_random_classes=True) == (
         0,
         "unclassified",
         "no_correct_target",
     )
 
-
-def test_declining_outranks_having_nothing_to_infer_from():
-    """Both produce class 0; the rule distinguishes them, and the disabled
-    switch is checked first because it applies whatever the profile holds."""
+    # Both produce class 0; the rule distinguishes them, and the disabled
+    # switch is checked first because it applies whatever the profile holds.
     assert (
         classify_trial("x", None, infer_random_classes=False)[2]
         == "inference_disabled"
@@ -142,31 +128,28 @@ def test_declining_outranks_having_nothing_to_infer_from():
 # --- other labels -------------------------------------------------------------
 
 
-@pytest.mark.parametrize("infer_random_classes", [True, False])
-def test_a_repeat_trial_is_not_applicable_rather_than_unclassified(
-    infer_random_classes,
-):
-    assert classify_trial(
-        "r", _profile(EASY, target=1), infer_random_classes=infer_random_classes
-    ) == (0, "not_applicable", "not_applicable")
+def test_a_repeat_trial_is_not_applicable_rather_than_unclassified():
+    for infer_random_classes in (True, False):
+        assert classify_trial(
+            "r", _profile(EASY, target=1), infer_random_classes=infer_random_classes
+        ) == (0, "not_applicable", "not_applicable")
 
 
-@pytest.mark.parametrize("label", [1, 2, 3, "2"])
-def test_a_numeric_label_is_the_class_it_names(label):
-    trial_class, source, rule = classify_trial(
-        label, None, infer_random_classes=True
-    )
+def test_a_numeric_label_is_the_class_it_names():
+    for label in (1, 2, 3, "2"):
+        assert classify_trial(label, None, infer_random_classes=True) == (
+            int(label),
+            "design",
+            "recorded_numeric_label",
+        )
 
-    assert (trial_class, source, rule) == (int(label), "design", "recorded_numeric_label")
-
-
-@pytest.mark.parametrize("label", [0, 7])
-def test_a_numeric_label_outside_the_three_classes_carries_no_design(label):
-    assert classify_trial(label, None, infer_random_classes=True) == (
-        label,
-        "unclassified",
-        "recorded_numeric_label",
-    )
+    # One outside the three classes carries no design.
+    for label in (0, 7):
+        assert classify_trial(label, None, infer_random_classes=True) == (
+            label,
+            "unclassified",
+            "recorded_numeric_label",
+        )
 
 
 # --- applying it to a table ---------------------------------------------------
@@ -190,6 +173,7 @@ def _raw_table() -> pd.DataFrame:
 
 def test_classify_trials_appends_exactly_the_classification_columns():
     table = _raw_table()
+    before = table.copy(deep=True)
 
     classified = classify_trials(table)
 
@@ -208,26 +192,17 @@ def test_classify_trials_appends_exactly_the_classification_columns():
         "not_applicable",
     ]
 
-
-def test_classify_trials_carries_the_input_rows_through_unchanged():
-    table = _raw_table()
-
-    classified = classify_trials(table)
-
+    # The input rows are carried through unchanged, and the table it read is
+    # the staged file's content: a derivative that edited it in place would
+    # leave the caller holding a table that is neither raw nor derivative.
     assert_frame_equal(classified[table.columns.tolist()], table)
-
-
-def test_classify_trials_does_not_mutate_its_input():
-    """The raw table it reads is the staged file's content; a derivative that
-    edited it in place would leave the caller holding a table that is neither
-    raw nor derivative."""
-    table = _raw_table()
-    before = table.copy(deep=True)
-
-    classify_trials(table)
-
     assert list(table.columns) == list(before.columns)
     assert_frame_equal(table, before)
+
+    # A non-default index survives.
+    indexed = classify_trials(_raw_table().set_index("nTrialIndex"))
+    assert indexed.index.tolist() == [1, 2, 3, 4]
+    assert indexed["sTrialClass"].tolist() == [1, 3, 0, 0]
 
 
 def test_the_inference_switch_reaches_every_row():
@@ -239,21 +214,10 @@ def test_the_inference_switch_reaches_every_row():
     assert classified.loc[2, "trial_class_rule"] == "inference_disabled"
 
 
-@pytest.mark.parametrize("column", ["sTrialClassRaw", "sp_design_correct"])
-def test_classify_trials_names_the_input_column_it_cannot_find(column):
-    table = _raw_table().drop(columns=[column])
-
-    with pytest.raises(ValueError, match=column):
-        classify_trials(table)
-
-
-def test_classify_trials_preserves_a_non_default_index():
-    table = _raw_table().set_index("nTrialIndex")
-
-    classified = classify_trials(table)
-
-    assert classified.index.tolist() == [1, 2, 3, 4]
-    assert classified["sTrialClass"].tolist() == [1, 3, 0, 0]
+def test_classify_trials_names_the_input_column_it_cannot_find():
+    for column in ("sTrialClassRaw", "sp_design_correct"):
+        with pytest.raises(ValueError, match=column):
+            classify_trials(_raw_table().drop(columns=[column]))
 
 
 # --- reproducibility from the raw layer, on a real run ------------------------
@@ -293,7 +257,7 @@ def _expected_classification(label: object, profile: object) -> tuple:
     )
 
 
-def test_a_real_run_classifies_exactly_as_the_parser_used_to():
+def test_a_real_run_classifies_exactly_as_the_parser_used_to(tmp_path):
     table = parse_tdms_file(_real_run_path())
     assert list(table.columns) == RAW_TRIAL_COLUMNS  # nothing pre-assigned
 
@@ -311,35 +275,23 @@ def test_a_real_run_classifies_exactly_as_the_parser_used_to():
     assert (classified["trial_class_source"] == "design").any()
     assert (classified["trial_class_source"] == "inferred").any()
 
-
-def test_a_real_run_classifies_from_the_two_raw_columns_alone():
-    """Classification is a function of ``(sTrialClassRaw, sp_design_correct)``
-    and nothing else, which is what lets a derivative be regenerated from the
-    staged raw table with the ``.tdms`` container out of reach."""
-    table = parse_tdms_file(_real_run_path())
-
-    full = classify_trials(table)
+    # Classification is a function of ``(sTrialClassRaw, sp_design_correct)``
+    # and nothing else, which is what lets a derivative be regenerated from the
+    # staged raw table with the ``.tdms`` container out of reach.
     projected = classify_trials(table[["sTrialClassRaw", "sp_design_correct"]])
-
     assert_frame_equal(
-        full[list(CLASSIFICATION_COLUMNS)], projected[list(CLASSIFICATION_COLUMNS)]
+        classified[list(CLASSIFICATION_COLUMNS)], projected[list(CLASSIFICATION_COLUMNS)]
     )
 
-
-def test_a_real_run_classifies_the_same_after_a_round_trip_through_disk(tmp_path):
-    """The staged raw table, read back with the project loader, classifies to
-    the same columns as the freshly parsed one -- serialization of the design
-    profile included."""
-    table = parse_tdms_file(_real_run_path())
+    # The staged raw table, read back with the project loader, classifies to
+    # the same columns as the freshly parsed one -- serialization of the design
+    # profile included.
     staged = tmp_path / "sub-H02_task-tokens_acq-slow_run-1_beh.tsv"
     save_table(staged, table, metadata={"stage": "raw_bids"})
-
     reloaded = classify_trials(read_raw_behavior_table(staged))
-    direct = classify_trials(table)
-
     assert_frame_equal(
         reloaded[list(CLASSIFICATION_COLUMNS)],
-        direct[list(CLASSIFICATION_COLUMNS)],
+        classified[list(CLASSIFICATION_COLUMNS)],
     )
 
 

@@ -318,8 +318,14 @@ def test_choicehistory_effects(design_tables):
 # --- individual.py (F18) ----------------------------------------------------
 
 
-def test_individualcorrelations_structure(design_tables):
+def test_the_structure_figure_draws_the_matrix_and_every_scatter(design_tables):
+    """The matrix and the scatters are one argument: at n = 32 an r can be
+    outlier-driven and the matrix cannot show that, so a merged figure missing
+    either half is back to the problem the merge was for."""
     figure, metadata = individual.build_individualcorrelations_structure(design_tables)
+    correlations = design_tables.analysis("individualcorrelations")
+    pairs = individual._scatter_pairs(correlations)
+
     # No `require_stat_text`: the fixture's four synthetic subjects reach
     # significance on nothing, so there is no marker to find -- correctly, and
     # the figure note below carries the conventions either way.
@@ -331,15 +337,6 @@ def test_individualcorrelations_structure(design_tables):
     assert metadata["multiplicity_correction"] == "none"
     assert "uncorrected" in metadata["caption_required"]
     assert "blank cell is tested and not significant" in metadata["caption_required"]
-
-
-def test_the_structure_figure_draws_the_matrix_and_every_scatter(design_tables):
-    """The matrix and the scatters are one argument: at n = 32 an r can be
-    outlier-driven and the matrix cannot show that, so a merged figure missing
-    either half is back to the problem the merge was for."""
-    figure, metadata = individual.build_individualcorrelations_structure(design_tables)
-    correlations = design_tables.analysis("individualcorrelations")
-    pairs = individual._scatter_pairs(correlations)
 
     # One labelled scatter per selected pair, plus the matrix, which labels
     # neither axis. Counting raw axes would also count the colorbar, whose
@@ -360,10 +357,16 @@ def test_the_structure_figure_draws_the_matrix_and_every_scatter(design_tables):
     # derivative and neither may invent a pair the other does not hold.
     for measure_a, measure_b in pairs:
         assert individual._correlation_row(correlations, measure_a, measure_b) is not None
-    assert metadata["multiplicity_correction"] == "none"
+
+    # An empty framed axes reads as a panel whose data failed to draw, and the
+    # fixture's four synthetic subjects reach significance on nothing -- which
+    # is the case the real cohort will hit under any stricter selection. The
+    # spare cells are hidden, not left as empty frames.
+    hidden = [ax for ax in figure.axes if not ax.get_visible()]
+    assert len(hidden) == individual.SCATTER_PANEL_COUNT - len(pairs)
 
 
-def test_the_scatters_are_the_strongest_significant_pairs_in_order():
+def test_the_scatters_are_the_strongest_significant_pairs_in_order(design_tables):
     """Which cells deserve magnifying is a property of the data, so the panels
     are a rule read off the derivative rather than a list that silently keeps
     drawing yesterday's answer."""
@@ -391,6 +394,13 @@ def test_the_scatters_are_the_strongest_significant_pairs_in_order():
         ("mean_dt_ms", "percent_correct"),
     ]
 
+    # "None of them reached the bar" is a result, and panel A is the one that
+    # can say it: the matrix is still drawn with no scatter beside it.
+    none_significant = design_tables.analysis("individualcorrelations").copy()
+    none_significant["pearson_p"] = 0.9
+
+    assert individual._scatter_pairs(none_significant) == []
+
 
 def test_a_pair_with_mean_dt_always_puts_it_on_x():
     """So every panel holding it reads as another view of the same speed
@@ -404,31 +414,9 @@ def test_a_pair_with_mean_dt_always_puts_it_on_x():
     assert len(individual._axis_label(x)) > len(individual._axis_label(y))
 
 
-def test_fewer_significant_pairs_than_cells_hides_the_spare_axes(design_tables):
-    """An empty framed axes reads as a panel whose data failed to draw, and the
-    fixture's four synthetic subjects reach significance on nothing -- which is
-    the case the real cohort will hit under any stricter selection."""
-    figure, _ = individual.build_individualcorrelations_structure(design_tables)
-    correlations = design_tables.analysis("individualcorrelations")
-    pairs = individual._scatter_pairs(correlations)
-
-    drawn = [ax for ax in figure.axes if ax.get_visible() and ax.get_xlabel()]
-    assert len(drawn) == len(pairs)
-    # The spare cells are hidden, not left as empty frames.
-    hidden = [ax for ax in figure.axes if not ax.get_visible()]
-    assert len(hidden) == individual.SCATTER_PANEL_COUNT - len(pairs)
-
-
-def test_a_table_with_no_significant_pair_still_draws_the_matrix(design_tables):
-    """"None of them reached the bar" is a result, and A is the panel that can
-    say it."""
-    correlations = design_tables.analysis("individualcorrelations").copy()
-    correlations["pearson_p"] = 0.9
-
-    assert individual._scatter_pairs(correlations) == []
-
-
-def test_the_correlation_matrix_is_symmetric_whichever_way_a_pair_was_stored():
+def test_the_correlation_matrix_is_symmetric_whichever_way_a_pair_was_stored(
+    design_tables,
+):
     """The derivative stores each pair once, in whichever order the analysis
     emitted. The heatmap draws one triangle, so a pair stored the other way
     round used to land in the masked half and disappear -- as a blank cell
@@ -455,10 +443,8 @@ def test_the_correlation_matrix_is_symmetric_whichever_way_a_pair_was_stored():
     assert r_matrix.loc["lapse_rate", "mean_dt_ms"] == pytest.approx(0.08)
     assert r_matrix.loc["mean_dt_ms", "lapse_rate"] == pytest.approx(0.08)
 
-
-def test_every_stored_pair_reaches_the_drawn_triangle(design_tables):
-    """Whatever triangle the heatmap draws, no pair the derivative holds may
-    be missing from it."""
+    # Whatever triangle the heatmap draws, no pair the derivative holds may be
+    # missing from it.
     correlations = design_tables.analysis("individualcorrelations")
     r_matrix, _ = individual._correlation_matrices(correlations)
     measures = list(r_matrix.columns)

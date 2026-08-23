@@ -37,16 +37,7 @@ def test_the_robust_measure_straddles_the_error_within_the_session():
     assert overall["mean_post_error_dt_ms"] == pytest.approx(1300.0)
     assert overall["robust_pes_ms"] == pytest.approx(300.0)
 
-
-def test_the_classical_contrast_is_reported_beside_the_robust_one():
-    features = trial_features(
-        run_trial_index=[1, 2, 3, 4, 5],
-        dt_ms=[900.0, 1000.0, 950.0, 1300.0, 1000.0],
-        isCorrect=[True, True, False, True, True],
-    )
-
-    overall = _pooled(robust_post_error_slowing(features))
-
+    # The classical contrast is reported beside the robust one.
     assert overall["n_post_error_trials"] == 1
     assert overall["n_post_correct_trials"] == 3
     # Mean post-error DT minus mean post-correct DT over the same trials.
@@ -72,22 +63,20 @@ def test_the_error_trials_own_decision_time_is_not_part_of_the_pair():
     )
 
 
-def test_a_pair_does_not_span_a_gap_in_the_run():
-    features = trial_features(
+def test_a_pair_needs_both_neighbours_of_the_error_in_the_same_run():
+    gapped = trial_features(
         run_trial_index=[1, 2, 5, 6],
         dt_ms=[900.0, 1000.0, 950.0, 1300.0],
         isCorrect=[True, False, False, True],
     )
 
-    overall = _pooled(robust_post_error_slowing(features))
+    overall = _pooled(robust_post_error_slowing(gapped))
 
     # Trial 2 is an error, but trial 5 is not its neighbour.
     assert overall["n_error_pairs"] == 0
     assert np.isnan(overall["robust_pes_ms"])
 
-
-def test_a_never_started_trial_breaks_the_chain_rather_than_being_skipped():
-    features = trial_features(
+    never_started = trial_features(
         run_trial_index=[1, 2, 3],
         dt_ms=[900.0, float("nan"), 1300.0],
         isCorrect=pd.array([False, None, True], dtype="boolean"),
@@ -96,22 +85,19 @@ def test_a_never_started_trial_breaks_the_chain_rather_than_being_skipped():
         primary_analysis_eligible=[True, False, True],
     )
 
-    overall = _pooled(robust_post_error_slowing(features))
+    overall = _pooled(robust_post_error_slowing(never_started))
 
+    # A never-started trial breaks the chain rather than being skipped.
     assert overall["n_error_pairs"] == 0
     assert overall["n_post_error_trials"] == 0
 
-
-def test_an_error_at_a_run_boundary_has_no_pair():
-    features = trial_features(
+    at_boundary = trial_features(
         run_trial_index=[1, 2, 3],
         dt_ms=[900.0, 1000.0, 1300.0],
         isCorrect=[False, True, False],
     )
 
-    overall = _pooled(robust_post_error_slowing(features))
-
-    assert overall["n_error_pairs"] == 0
+    assert _pooled(robust_post_error_slowing(at_boundary))["n_error_pairs"] == 0
 
 
 def test_post_error_slowing_is_reported_pooled_and_per_condition():
@@ -177,6 +163,10 @@ def test_post_error_statistics_test_both_definitions_and_contrast_conditions():
     assert robust["mean"] > 0
     assert robust["ci95_low"] < robust["mean"] < robust["ci95_high"]
 
+    # They require the subject table they document.
+    with pytest.raises(ValueError, match="classical_pes_ms"):
+        post_error_statistics(_post_error_table().drop(columns=["classical_pes_ms"]))
+
 
 def test_the_two_post_error_measures_carry_a_registered_agreement_row():
     """The write-up argues from the correlation and the sign counts, so they
@@ -201,11 +191,23 @@ def test_the_two_post_error_measures_carry_a_registered_agreement_row():
     assert pd.isna(row.get("p", float("nan")))
 
 
-def test_post_error_statistics_require_the_subject_table_they_document():
-    incomplete = _post_error_table().drop(columns=["classical_pes_ms"])
+def test_local_pair_slowing_decomposes_into_its_two_baseline_effects():
+    """`robust_pes_ms` is a composite, and the components must reconstruct it.
 
-    with pytest.raises(ValueError, match="classical_pes_ms"):
-        post_error_statistics(incomplete)
+    DT(error+1) - DT(error-1) is post-error slowing only when pre-error trials
+    are typical. Against the real cohort they are not: pre-error trials run
+    fast, so a quarter of the composite is pre-error speeding. The two
+    baseline-relative columns exist so the figure can state that split instead
+    of attributing all of it to slowing.
+    """
+    table = _post_error_table()
+    pooled = table.loc[table["condition"] == "all"]
+
+    reconstructed = (
+        pooled["post_error_minus_baseline_ms"] - pooled["pre_error_minus_baseline_ms"]
+    )
+    assert np.allclose(reconstructed, pooled["robust_pes_ms"], equal_nan=True)
+    assert pooled["mean_baseline_dt_ms"].notna().all()
 
 
 # --- choice history -----------------------------------------------------------
@@ -228,6 +230,18 @@ def test_win_stay_and_lose_shift_are_measured_against_the_previous_outcome():
     assert overall["lose_stay"] == pytest.approx(0.0)
     assert overall["lose_shift"] == pytest.approx(1.0)
 
+    across_runs = trial_features(
+        condition=["Fast"] * 2 + ["Slow"] * 2,
+        run=[1, 1, 2, 2],
+        run_trial_index=[1, 2, 1, 2],
+        choice_side=[1, 1, 2, 2],
+        dt_ms=[900.0, 1000.0, 1300.0, 1400.0],
+    )
+
+    # History never carries across a run or condition boundary: only the second
+    # trial of each run is linked to a predecessor.
+    assert _pooled(choice_history(across_runs))["n_linked_trials"] == 2
+
 
 def test_the_side_autocorrelation_detects_alternation_and_repetition():
     alternating = trial_features(
@@ -246,55 +260,35 @@ def test_the_side_autocorrelation_detects_alternation_and_repetition():
     )
     assert _pooled(choice_history(repeating))["side_autocorrelation_lag1"] > 0
 
-
-def test_the_autocorrelation_is_withheld_when_a_side_never_varies():
-    features = trial_features(
+    invariant = trial_features(
         run_trial_index=[1, 2, 3, 4],
         choice_side=[1, 1, 1, 1],
         dt_ms=[900.0] * 4,
     )
 
-    assert np.isnan(_pooled(choice_history(features))["side_autocorrelation_lag1"])
+    # It is withheld rather than reported when a side never varies.
+    assert np.isnan(_pooled(choice_history(invariant))["side_autocorrelation_lag1"])
 
 
-def test_history_never_carries_across_a_run_or_condition_boundary():
-    features = trial_features(
-        condition=["Fast"] * 2 + ["Slow"] * 2,
-        run=[1, 1, 2, 2],
-        run_trial_index=[1, 2, 1, 2],
-        choice_side=[1, 1, 2, 2],
-        dt_ms=[900.0, 1000.0, 1300.0, 1400.0],
-    )
-
-    overall = _pooled(choice_history(features))
-
-    # Only the second trial of each run is linked to a predecessor.
-    assert overall["n_linked_trials"] == 2
-
-
-def test_choice_history_rejects_a_noncanonical_correctness_value():
-    features = trial_features(
+def test_choice_history_rejects_a_table_it_cannot_read_as_a_sequence():
+    noncanonical_correctness = trial_features(
         run_trial_index=[1, 2],
         isCorrect=["true", "false"],
     )
 
     with pytest.raises(ValueError, match="isCorrect must be boolean"):
-        choice_history(features)
+        choice_history(noncanonical_correctness)
 
-
-def test_choice_history_rejects_an_impossible_choice_side():
-    features = trial_features(
+    impossible_side = trial_features(
         run_trial_index=[1, 2, 3],
         choice_side=[1, 3, 2],
         dt_ms=[900.0, 1000.0, 1100.0],
     )
 
     with pytest.raises(ValueError, match="choice_side must contain only 1, 2"):
-        choice_history(features)
+        choice_history(impossible_side)
 
-
-def test_choice_history_rejects_a_duplicated_position_in_a_run():
-    features = trial_features(
+    duplicated_position = trial_features(
         run_trial_index=[1, 1],
         subject=["H01", "H01"],
         condition=["Fast", "Fast"],
@@ -302,7 +296,7 @@ def test_choice_history_rejects_a_duplicated_position_in_a_run():
     )
 
     with pytest.raises(ValueError, match="unique within each task run"):
-        choice_history(features)
+        choice_history(duplicated_position)
 
 
 def test_choice_history_statistics_run_the_fixed_group_contrasts():
@@ -339,28 +333,6 @@ def test_choice_history_statistics_run_the_fixed_group_contrasts():
     assert set(statistics["condition"]) == {"all", "fast"}
     assert (statistics["n_subjects"] <= 4).all()
 
-
-def test_choice_history_statistics_require_the_subject_table_they_document():
-    history = pd.DataFrame({"condition": ["all"], "win_stay": [1.0]})
-
+    # They require the subject table they document.
     with pytest.raises(ValueError, match="lose_stay"):
-        choice_history_statistics(history)
-
-
-def test_local_pair_slowing_decomposes_into_its_two_baseline_effects():
-    """`robust_pes_ms` is a composite, and the components must reconstruct it.
-
-    DT(error+1) - DT(error-1) is post-error slowing only when pre-error trials
-    are typical. Against the real cohort they are not: pre-error trials run
-    fast, so a quarter of the composite is pre-error speeding. The two
-    baseline-relative columns exist so the figure can state that split instead
-    of attributing all of it to slowing.
-    """
-    table = _post_error_table()
-    pooled = table.loc[table["condition"] == "all"]
-
-    reconstructed = (
-        pooled["post_error_minus_baseline_ms"] - pooled["pre_error_minus_baseline_ms"]
-    )
-    assert np.allclose(reconstructed, pooled["robust_pes_ms"], equal_nan=True)
-    assert pooled["mean_baseline_dt_ms"].notna().all()
+        choice_history_statistics(pd.DataFrame({"condition": ["all"], "win_stay": [1.0]}))

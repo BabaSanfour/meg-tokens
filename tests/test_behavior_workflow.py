@@ -164,14 +164,6 @@ def test_analyze_behavior_excludes_never_started_trials_but_preserves_input(tmp_
     assert preserved["nOutcome"].tolist() == [OUTCOME_NEVER_STARTED, 0]
 
 
-def test_analyze_behavior_applies_configured_subject_exclusions(tmp_path):
-    project = ProjectConfig(data_root=tmp_path, subject_exclusions=("H01",))
-    _write_behavior_inputs(project.bids_root)
-
-    with pytest.raises(ValueError, match="do not contain any trials"):
-        analyze_behavior(project)
-
-
 def test_ingest_behavior_dry_run_declares_outputs(tmp_path):
     project = ProjectConfig(data_root=tmp_path)
     stage_raw_behavior(project.bids_root, subject="H01", condition="Slow", run="1")
@@ -185,14 +177,23 @@ def test_ingest_behavior_dry_run_declares_outputs(tmp_path):
     assert not result.outputs[0].exists()
 
 
-def test_ingest_behavior_requires_stage0_to_have_run(tmp_path):
-    """Stage 1 reads the raw BIDS layer, so an unstaged dataset is a missing
-    prerequisite rather than a dataset with no behavior."""
+def test_a_stage_without_its_prerequisite_names_what_is_missing(tmp_path):
     project = ProjectConfig(data_root=tmp_path)
     project.bids_root.mkdir(parents=True)
 
+    # Stage 1 reads the raw BIDS layer, so an unstaged dataset is a missing
+    # prerequisite rather than a dataset with no behavior.
     with pytest.raises(FileNotFoundError, match="No staged subject behavior"):
         ingest_behavior(project, dry_run=True)
+
+    with pytest.raises(FileNotFoundError, match="behavior analyze"):
+        analyze_behavior_characterization(project)
+
+    excluded = ProjectConfig(data_root=tmp_path, subject_exclusions=("H01",))
+    _write_behavior_inputs(excluded.bids_root)
+
+    with pytest.raises(ValueError, match="do not contain any trials"):
+        analyze_behavior(excluded)
 
 
 def _write_tokens_toml(tmp_path, data_root):
@@ -201,25 +202,18 @@ def _write_tokens_toml(tmp_path, data_root):
     return config_path
 
 
-def test_unified_cli_runs_behavior_analysis(tmp_path, capsys):
+def test_the_unified_cli_runs_the_behavior_stages(tmp_path, monkeypatch, capsys):
     project = ProjectConfig(data_root=tmp_path)
     _write_behavior_inputs(project.bids_root)
     config_path = _write_tokens_toml(tmp_path, tmp_path)
 
-    exit_code = main(
-        [
-            "--config",
-            str(config_path),
-            "behavior",
-            "analyze",
-        ]
-    )
+    exit_code = main(["--config", str(config_path), "behavior", "analyze"])
 
     assert exit_code == 0
-    assert str(DerivativeLayout(project.bids_root).behavior_summary()) in capsys.readouterr().out
+    assert str(DerivativeLayout(project.bids_root).behavior_summary()) in (
+        capsys.readouterr().out
+    )
 
-
-def test_unified_cli_runs_behavior_qc(tmp_path, monkeypatch, capsys):
     summary = pd.DataFrame({"log_rows": [14, 15], "n_trials": [2, 3]})
     details = pd.DataFrame({"subject": ["H01", "H01", "H02"]})
     monkeypatch.setattr(
@@ -227,15 +221,7 @@ def test_unified_cli_runs_behavior_qc(tmp_path, monkeypatch, capsys):
         lambda *args, **kwargs: (summary, details),
     )
 
-    config_path = _write_tokens_toml(tmp_path, tmp_path)
-    exit_code = main(
-        [
-            "--config",
-            str(config_path),
-            "behavior",
-            "qc",
-        ]
-    )
+    exit_code = main(["--config", str(config_path), "behavior", "qc"])
 
     assert exit_code == 0
     output = capsys.readouterr().out
@@ -317,7 +303,8 @@ def test_sequential_sampling_fits_are_written_one_table_per_subject(tmp_path):
 
 
 def test_a_subject_can_be_fitted_on_its_own(tmp_path):
-    """One array-job task writes its own subject's table and nothing else."""
+    """One array-job task writes its own subject's table and nothing else, and
+    characterization then pools only the subjects already fitted."""
     project = ProjectConfig(data_root=tmp_path)
     stage_behavior(project.bids_root)
     analyze_behavior(project)
@@ -330,33 +317,12 @@ def test_a_subject_can_be_fitted_on_its_own(tmp_path):
     )
     assert not layout.behavior_subject_analysis("H01", "ssmcomparison").is_file()
 
-
-def test_characterization_pools_the_per_subject_fits(tmp_path):
-    project = ProjectConfig(data_root=tmp_path)
-    stage_behavior(project.bids_root)
-    analyze_behavior(project)
-    fit_subject_sequential_sampling(project)
-
-    result = analyze_behavior_characterization(project)
-
-    assert result.settings["sequential_sampling_subjects_missing"] == []
-    # The fits are consumed, not republished: they reach `speciescomparison`,
-    # which is written, while no `ssm*` group table is.
-    assert "speciescomparison" in result.settings["analyses"]
+    assert analyze_behavior_characterization(project).settings[
+        "sequential_sampling_subjects_missing"
+    ] == ["H01", "H03"]
 
 
-def test_characterization_pools_only_the_subjects_already_fitted(tmp_path):
-    project = ProjectConfig(data_root=tmp_path)
-    stage_behavior(project.bids_root)
-    analyze_behavior(project)
-    fit_subject_sequential_sampling(project, subjects=["H01"])
-
-    result = analyze_behavior_characterization(project)
-
-    assert result.settings["sequential_sampling_subjects_missing"] == ["H02", "H03"]
-
-
-def test_characterization_writes_no_ssm_group_table(tmp_path):
+def test_characterization_pools_the_fits_without_republishing_them(tmp_path):
     """`ssm-aggregate` is the sole writer of every `ssm*` group derivative.
 
     Both pipelines once wrote six of these filenames, so whichever ran last
@@ -373,6 +339,10 @@ def test_characterization_writes_no_ssm_group_table(tmp_path):
 
     result = analyze_behavior_characterization(project)
 
+    assert result.settings["sequential_sampling_subjects_missing"] == []
+    # The fits are consumed, not republished: they reach `speciescomparison`,
+    # which is written, while no `ssm*` group table is.
+    assert "speciescomparison" in result.settings["analyses"]
     written = {path.name for path in result.outputs}
     assert not [name for name in written if "desc-ssm" in name], written
     assert not [name for name in result.settings["analyses"] if name.startswith("ssm")]
@@ -386,12 +356,6 @@ def test_characterization_writes_no_ssm_group_table(tmp_path):
         "ssmtrialpredictions",
     ):
         assert not layout.behavior_analysis(name).is_file(), name
-
-
-def test_analyze_behavior_characterization_requires_staged_trial_features(tmp_path):
-    project = ProjectConfig(data_root=tmp_path)
-    with pytest.raises(FileNotFoundError, match="behavior analyze"):
-        analyze_behavior_characterization(project)
 
 
 def test_behavior_analysis_paths_are_named_from_the_analysis(tmp_path):
