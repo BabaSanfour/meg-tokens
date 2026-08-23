@@ -8,7 +8,7 @@ session, and the lapses and extreme decision times that a mean hides.
 
 from __future__ import annotations
 
-from typing import Final
+from typing import Callable, Final
 
 import numpy as np
 import pandas as pd
@@ -439,6 +439,52 @@ def time_on_task_statistics(subject_fits: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def _contrast_row(
+    values: pd.Series,
+    *,
+    term: str,
+    measure: str,
+    trial_class_name: str,
+    test: str,
+    coverage: float = 0.95,
+    report: Callable[[float], float] = float,
+) -> dict:
+    """One planned contrast: its test, its interval, and the labels naming it.
+
+    ``values`` are already on the scale the test runs on; ``report`` maps that
+    scale onto the reported one.
+
+    Notes
+    -----
+    ``report`` is applied to the estimate and to both interval bounds
+    together, which is what keeps an interval interpretable after a non-linear
+    scale change: a mean log ratio and its bounds exponentiate into a factor
+    and that factor's interval, and an accuracy tested against chance shifts
+    back onto the accuracy scale with its interval intact. Transforming the
+    estimate alone would leave the two describing different quantities.
+    """
+    statistics = one_sample_statistics(values)
+    low, high = confidence_interval(
+        statistics["mean"], statistics["sem"], statistics["df"], coverage=coverage
+    )
+    return {
+        "analysis": "condition_class_contrasts",
+        "term": term,
+        "measure": measure,
+        "trial_class_name": trial_class_name,
+        "test": test,
+        "n_subjects": statistics["n_subjects"],
+        "estimate": report(statistics["mean"]),
+        "ci_low": report(low),
+        "ci_high": report(high),
+        "coverage": coverage,
+        "t": statistics["t"],
+        "p": statistics["p"],
+        "df": statistics["df"],
+        "cohens_dz": statistics["cohens_dz"],
+    }
+
+
 def condition_class_contrasts(cells: pd.DataFrame) -> pd.DataFrame:
     """Planned contrasts behind the condition-by-class figure.
 
@@ -496,51 +542,27 @@ def condition_class_contrasts(cells: pd.DataFrame) -> pd.DataFrame:
 
         ratio = (slow / fast).replace([np.inf, -np.inf], np.nan)
         log_ratio = np.log(ratio.loc[ratio > 0].dropna())
-        statistics = one_sample_statistics(log_ratio)
-        low, high = confidence_interval(
-            statistics["mean"], statistics["sem"], statistics["df"], coverage=0.95
-        )
         rows.append(
-            {
-                "analysis": "condition_class_contrasts",
-                "term": "stretch_factor",
-                "measure": "mean_dt_ms",
-                "trial_class_name": class_name,
-                "test": "one_sample_log_ratio",
-                "n_subjects": statistics["n_subjects"],
-                "estimate": float(np.exp(statistics["mean"])),
-                "ci_low": float(np.exp(low)),
-                "ci_high": float(np.exp(high)),
-                "coverage": 0.95,
-                "t": statistics["t"],
-                "p": statistics["p"],
-                "df": statistics["df"],
-                "cohens_dz": statistics["cohens_dz"],
-            }
+            _contrast_row(
+                log_ratio,
+                term="stretch_factor",
+                measure="mean_dt_ms",
+                trial_class_name=class_name,
+                test="one_sample_log_ratio",
+                report=lambda value: float(np.exp(value)),
+            )
         )
 
         difference = (slow - fast).dropna()
         additive[class_name] = difference
-        statistics = one_sample_statistics(difference)
-        low, high = confidence_interval(
-            statistics["mean"], statistics["sem"], statistics["df"], coverage=0.95
-        )
         rows.append(
-            {
-                "analysis": "condition_class_contrasts",
-                "term": "additive_difference_ms",
-                "measure": "mean_dt_ms",
-                "trial_class_name": class_name,
-                "test": "one_sample_vs_zero",
-                "estimate": statistics["mean"],
-                "ci_low": low,
-                "ci_high": high,
-                "coverage": 0.95,
-                **{
-                    key: statistics[key]
-                    for key in ("n_subjects", "t", "p", "df", "cohens_dz")
-                },
-            }
+            _contrast_row(
+                difference,
+                term="additive_difference_ms",
+                measure="mean_dt_ms",
+                trial_class_name=class_name,
+                test="one_sample_vs_zero",
+            )
         )
 
     if "easy" in additive and "misleading" in additive:
@@ -548,27 +570,15 @@ def condition_class_contrasts(cells: pd.DataFrame) -> pd.DataFrame:
         # to the single contrast that carries it: the two classes furthest
         # apart in accuracy. Bounding this is the positive form of the claim
         # that condition scales rather than shifts.
-        contrast = (additive["easy"] - additive["misleading"]).dropna()
-        statistics = one_sample_statistics(contrast)
-        low, high = confidence_interval(
-            statistics["mean"], statistics["sem"], statistics["df"], coverage=0.90
-        )
         rows.append(
-            {
-                "analysis": "condition_class_contrasts",
-                "term": "additive_interaction_ms",
-                "measure": "mean_dt_ms",
-                "trial_class_name": "easy_vs_misleading",
-                "test": "one_sample_vs_zero",
-                "estimate": statistics["mean"],
-                "ci_low": low,
-                "ci_high": high,
-                "coverage": 0.90,
-                **{
-                    key: statistics[key]
-                    for key in ("n_subjects", "t", "p", "df", "cohens_dz")
-                },
-            }
+            _contrast_row(
+                (additive["easy"] - additive["misleading"]).dropna(),
+                term="additive_interaction_ms",
+                measure="mean_dt_ms",
+                trial_class_name="easy_vs_misleading",
+                test="one_sample_vs_zero",
+                coverage=0.90,
+            )
         )
 
     accuracy_wide = cells.pivot_table(
@@ -578,26 +588,15 @@ def condition_class_contrasts(cells: pd.DataFrame) -> pd.DataFrame:
         if class_name not in accuracy_wide:
             continue
         values = accuracy_wide[class_name].dropna()
-        statistics = one_sample_statistics(values - CHANCE_ACCURACY)
-        low, high = confidence_interval(
-            statistics["mean"], statistics["sem"], statistics["df"], coverage=0.95
-        )
         rows.append(
-            {
-                "analysis": "condition_class_contrasts",
-                "term": "accuracy_vs_chance",
-                "measure": "accuracy",
-                "trial_class_name": class_name,
-                "test": "one_sample_vs_chance",
-                "estimate": float(values.mean()),
-                "ci_low": low + CHANCE_ACCURACY,
-                "ci_high": high + CHANCE_ACCURACY,
-                "coverage": 0.95,
-                **{
-                    key: statistics[key]
-                    for key in ("n_subjects", "t", "p", "df", "cohens_dz")
-                },
-            }
+            _contrast_row(
+                values - CHANCE_ACCURACY,
+                term="accuracy_vs_chance",
+                measure="accuracy",
+                trial_class_name=class_name,
+                test="one_sample_vs_chance",
+                report=lambda value: value + CHANCE_ACCURACY,
+            )
         )
     return pd.DataFrame(rows)
 

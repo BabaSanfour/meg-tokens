@@ -134,6 +134,31 @@ def _one_sample_summary(values, *, null: float = 0.0, coverage: float = 0.95) ->
     }
 
 
+def _decision_columns(trials: pd.DataFrame, **extra) -> pd.DataFrame:
+    """Attach the analysis-private ``_dt``, ``_correct`` and ``_class`` columns.
+
+    ``**extra`` adds the columns one analysis needs beyond those three, in the
+    same ``assign`` call, so an analysis reads its own additions rather than
+    restating the shared three.
+
+    Notes
+    -----
+    ``_correct`` goes through nullable ``boolean`` before ``float`` on purpose.
+    Casting ``isCorrect`` straight to float turns a trial with no defined
+    outcome into 0.0 -- an error -- rather than NaN, which would move every
+    accuracy this module reports. Every caller then drops the NaNs explicitly,
+    so the two steps stay separable: this one says what a value *is*, the
+    caller says which rows it will use.
+    """
+    validate_boolean_values(trials["isCorrect"], field="isCorrect", optional=True)
+    return trials.assign(
+        _dt=pd.to_numeric(trials["dt_ms"], errors="coerce"),
+        _correct=trials["isCorrect"].astype("boolean").astype(float),
+        _class=trials["trial_class_name"].astype(str),
+        **extra,
+    )
+
+
 def criterion_decline(
     features: pd.DataFrame,
     *,
@@ -619,12 +644,7 @@ def conditional_accuracy_functions(
     require_columns(
         trials, ["dt_ms", "isCorrect", "subject", "condition", "trial_class_name"]
     )
-    validate_boolean_values(trials["isCorrect"], field="isCorrect", optional=True)
-    trials = trials.assign(
-        _dt=pd.to_numeric(trials["dt_ms"], errors="coerce"),
-        _correct=trials["isCorrect"].astype("boolean").astype(float),
-        _class=trials["trial_class_name"].astype(str),
-    )
+    trials = _decision_columns(trials)
     trials = trials.loc[trials["_dt"].notna() & trials["_correct"].notna()].copy()
     # Per subject, over every one of their trials -- see the class-adjustment
     # note above for why this is not recomputed inside each condition subset.
@@ -1352,7 +1372,6 @@ def early_evidence_order_profile(features: pd.DataFrame) -> pd.DataFrame:
         ["dt_ms", "isCorrect", "trial_class_name", "token_directions",
          "correct_side", EARLY_EVIDENCE_PREDICTOR],
     )
-    validate_boolean_values(trials["isCorrect"], field="isCorrect", optional=True)
     orders = []
     # `astype(str)` because a direction string is all digits and survives a
     # TSV round trip as an integer; the parser then validates it as usual.
@@ -1361,10 +1380,8 @@ def early_evidence_order_profile(features: pd.DataFrame) -> pd.DataFrame:
     ):
         jumps = parse_token_directions(directions)[:EARLY_EVIDENCE_TOKENS]
         orders.append("".join("C" if jump == int(correct) else "W" for jump in jumps))
-    trials = trials.assign(
-        _dt=pd.to_numeric(trials["dt_ms"], errors="coerce"),
-        _correct=trials["isCorrect"].astype("boolean").astype(float),
-        _class=trials["trial_class_name"].astype(str),
+    trials = _decision_columns(
+        trials,
         _level=pd.to_numeric(trials[EARLY_EVIDENCE_PREDICTOR], errors="coerce"),
         _order=orders,
     )
@@ -1517,11 +1534,8 @@ def early_evidence_profile(features: pd.DataFrame) -> pd.DataFrame:
         ["dt_ms", "isCorrect", "trial_class_name", EARLY_EVIDENCE_PREDICTOR,
          "sum_log_lr_design_early"],
     )
-    validate_boolean_values(trials["isCorrect"], field="isCorrect", optional=True)
-    trials = trials.assign(
-        _dt=pd.to_numeric(trials["dt_ms"], errors="coerce"),
-        _correct=trials["isCorrect"].astype("boolean").astype(float),
-        _class=trials["trial_class_name"].astype(str),
+    trials = _decision_columns(
+        trials,
         _level=pd.to_numeric(trials[EARLY_EVIDENCE_PREDICTOR], errors="coerce"),
         _log_odds=pd.to_numeric(trials["sum_log_lr_design_early"], errors="coerce"),
     )

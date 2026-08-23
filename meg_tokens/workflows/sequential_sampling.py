@@ -5,6 +5,7 @@ evaluation, recovery, and robustness/exclusion sensitivity stages.
 
 from __future__ import annotations
 
+from functools import partial
 from pathlib import Path
 import hashlib
 import json
@@ -818,32 +819,20 @@ def aggregate_mechanistic_fits(project: ProjectConfig) -> WorkflowResult:
         "accepted_subject_git_commit": accepted_commit,
         "primary_fit_required_n_starts": 3,
     }
-    outputs = []
-    for name, table in tables.items():
-        outputs.append(
-            _write(
-                layout,
-                name,
-                table,
-                inputs=inputs,
-                subjects=subjects,
-                excluded=excluded,
-                provenance=accepted_provenance,
-            )
-        )
+    write = partial(
+        _write, layout, inputs=inputs, subjects=subjects, excluded=excluded
+    )
+    outputs = [
+        write(name, table, provenance=accepted_provenance)
+        for name, table in tables.items()
+    ]
     stats_table = pd.concat(
         [mechanistic_model_statistics(fits), model_comparison_statistics(fits), urgency_condition_contrast(fits)],
         ignore_index=True,
     )
     outputs.append(
-        _write(
-            layout,
-            "ssmcomparisonstats",
-            stats_table,
-            inputs=inputs,
-            subjects=subjects,
-            excluded=excluded,
-            provenance=accepted_provenance,
+        write(
+            "ssmcomparisonstats", stats_table, provenance=accepted_provenance
         )
     )
     return WorkflowResult(
@@ -951,25 +940,14 @@ def run_recovery_stage(
     parameter_stats_name = "ssmparameterrecoverystats" + suffix
     model_name = "ssmmodelrecovery" + suffix
     model_stats_name = "ssmmodelrecoverystats" + suffix
+    write = partial(
+        _write, layout, inputs=inputs, subjects=subjects, excluded=excluded
+    )
     outputs = [
-        _write(layout, parameter_name, parameter, inputs=inputs, subjects=subjects, excluded=excluded),
-        _write(
-            layout,
-            parameter_stats_name,
-            parameter_recovery_statistics(parameter),
-            inputs=inputs,
-            subjects=subjects,
-            excluded=excluded,
-        ),
-        _write(layout, model_name, model, inputs=inputs, subjects=subjects, excluded=excluded),
-        _write(
-            layout,
-            model_stats_name,
-            model_recovery_confusion(model),
-            inputs=inputs,
-            subjects=subjects,
-            excluded=excluded,
-        ),
+        write(parameter_name, parameter),
+        write(parameter_stats_name, parameter_recovery_statistics(parameter)),
+        write(model_name, model),
+        write(model_stats_name, model_recovery_confusion(model)),
     ]
     return WorkflowResult(
         stage="thura2012_recovery",
@@ -1060,11 +1038,14 @@ def aggregate_recovery_stage(
     model = pd.concat(model_tables, ignore_index=True)
     if len(parameter) != repetitions * expected_parameter_rows or len(model) != repetitions * expected_model_rows:
         raise ValueError("pooled recovery row-count validation failed")
+    write = partial(
+        _write, layout, inputs=inputs, subjects=subjects, excluded=excluded
+    )
     outputs = [
-        _write(layout, "ssmparameterrecovery", parameter, inputs=inputs, subjects=subjects, excluded=excluded),
-        _write(layout, "ssmparameterrecoverystats", parameter_recovery_statistics(parameter), inputs=inputs, subjects=subjects, excluded=excluded),
-        _write(layout, "ssmmodelrecovery", model, inputs=inputs, subjects=subjects, excluded=excluded),
-        _write(layout, "ssmmodelrecoverystats", model_recovery_confusion(model), inputs=inputs, subjects=subjects, excluded=excluded),
+        write("ssmparameterrecovery", parameter),
+        write("ssmparameterrecoverystats", parameter_recovery_statistics(parameter)),
+        write("ssmmodelrecovery", model),
+        write("ssmmodelrecoverystats", model_recovery_confusion(model)),
     ]
     return WorkflowResult(
         stage="thura2012_recovery_aggregation",
@@ -1223,25 +1204,17 @@ def aggregate_exclusion_robustness_stage(project: ProjectConfig) -> WorkflowResu
     primary = load_table(require_file(primary_path, purpose="primary mechanistic fits"))
     inputs.append(primary_path)
     audit = exclusion_robustness_audit(features)
-    output = _write(
-        layout, "ssmexclusionrefit", merged, inputs=inputs,
-        subjects=subjects, excluded=excluded,
+    write = partial(
+        _write, layout, inputs=inputs, subjects=subjects, excluded=excluded
     )
-    stats_output = _write(
-        layout,
+    output = write("ssmexclusionrefit", merged)
+    stats_output = write(
         "ssmexclusionrobustnessstats",
         exclusion_robustness_statistics(merged, primary, audit=audit),
-        inputs=inputs,
-        subjects=subjects,
-        excluded=excluded,
     )
-    decomposition_output = _write(
-        layout,
+    decomposition_output = write(
         "ssmexclusiondecomposition",
         exclusion_evidence_decomposition(merged, primary),
-        inputs=inputs,
-        subjects=subjects,
-        excluded=excluded,
     )
     return WorkflowResult(
         stage="thura2012_exclusion_robustness_aggregation",
@@ -1280,22 +1253,11 @@ def aggregate_robustness_stage(project: ProjectConfig) -> WorkflowResult:
         raise ValueError("robustness model coverage is incomplete")
     if set(merged["condition"]) != {"all", "fast", "slow"}:
         raise ValueError("robustness condition coverage is incomplete")
-    output = _write(
-        layout,
-        "ssmrobustness",
-        merged,
-        inputs=inputs,
-        subjects=subjects,
-        excluded=excluded,
+    write = partial(
+        _write, layout, inputs=inputs, subjects=subjects, excluded=excluded
     )
-    stats_output = _write(
-        layout,
-        "ssmrobustnessstats",
-        robustness_statistics(merged),
-        inputs=inputs,
-        subjects=subjects,
-        excluded=excluded,
-    )
+    output = write("ssmrobustness", merged)
+    stats_output = write("ssmrobustnessstats", robustness_statistics(merged))
     return WorkflowResult(
         stage="thura2012_robustness_aggregation",
         inputs=tuple(inputs),
