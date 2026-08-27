@@ -29,10 +29,73 @@ from typing import Optional
 import mne
 from mne_bids import BIDSPath, write_raw_bids
 
-from meg_tokens.core import normalize_subject_id
+from meg_tokens.core import RunSpec, normalize_subject_id
 from meg_tokens.meg.epoching import DEFAULT_EVENT_IDS, get_event_id
 
 mne.set_log_level("ERROR")
+
+
+#: Every recording the Tokens protocol acquires per subject, in protocol order.
+RAW_MEG_RUNS = (
+    ("Fast", 1), ("Fast", 2), ("Fast", 3), ("Fast", 4),
+    ("RT", 1), ("RT", 2),
+    ("Slow", 1), ("Slow", 2), ("Slow", 3), ("Slow", 4),
+)
+
+
+def raw_meg_path(
+    bids_root: str | Path,
+    subject: str,
+    condition: str,
+    run: int | str,
+    *,
+    task: str = "tokens",
+) -> Path:
+    """Where Stage 0 stages one recording. ``subject`` must be canonical."""
+    return (
+        Path(bids_root)
+        / f"sub-{subject}"
+        / "meg"
+        / f"sub-{subject}_task-{task}_acq-{condition.lower()}_run-{run}_meg.ds"
+    )
+
+
+def raw_meg_sessions(
+    bids_root: str | Path,
+    subject: str,
+    *,
+    task: str = "tokens",
+) -> list[tuple[RunSpec, Path]]:
+    """Every staged recording for one subject, with its identity.
+
+    Walks :data:`RAW_MEG_RUNS` rather than globbing, so a subject short of a
+    session is short of a *named* one -- H05 has no RT run 1. An empty list
+    means Stage 0 has not staged this subject at all.
+    """
+    return [
+        (RunSpec(subject=subject, run=str(run), condition=condition), path)
+        for condition, run in RAW_MEG_RUNS
+        if (path := raw_meg_path(bids_root, subject, condition, run, task=task)).is_dir()
+    ]
+
+
+def headshape_path(bids_root: str | Path, subject: str) -> Path:
+    """Where Stage 0 stages a subject's head shape. ``subject`` must be canonical."""
+    return Path(bids_root) / f"sub-{subject}" / "meg" / f"sub-{subject}_headshape.eeg"
+
+
+def staged_subjects(bids_root: str | Path) -> list[str]:
+    """Every subject with a staged MEG tree, in order.
+
+    ``sub-emptyroom`` is session-nested (``sub-emptyroom/ses-<date>/meg``), so
+    requiring a subject-level ``meg/`` already excludes it.
+    """
+    root = Path(bids_root)
+    return sorted(
+        path.name.removeprefix("sub-")
+        for path in root.glob("sub-*")
+        if path.is_dir() and (path / "meg").is_dir()
+    )
 
 
 def _combined_event_id(subject: str) -> dict:

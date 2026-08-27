@@ -9,6 +9,7 @@ materializes the BIDS raw layers -- see
 from __future__ import annotations
 
 import math
+import shutil
 from dataclasses import asdict, fields
 from pathlib import Path
 from typing import Optional, Sequence
@@ -18,10 +19,9 @@ import pandas as pd
 from meg_tokens.behavior.tdms import FILENAME_RE, parse_tdms_filename
 from meg_tokens.behavior.tdms_bids import write_beh_bids
 from meg_tokens.core import ProjectConfig, RawStagingConfig, WorkflowResult, normalize_subject_id
-from meg_tokens.io import DerivativeLayout, save_table
+from meg_tokens.io import DerivativeLayout, ensure_dir, save_table
 from meg_tokens.meg.anat_bids import write_anat_bids
 from meg_tokens.meg.meg_bids import write_emptyroom_bids, write_meg_bids
-from meg_tokens.meg.preprocessing import convert_ctf_headshape_to_pos
 from meg_tokens.meg.raw_staging import MatchResult, match_raw_to_behavior
 
 # The manifest's columns are MatchResult's fields, in its field order --
@@ -205,18 +205,19 @@ def _matching_tdms_files(project: ProjectConfig, subject: str) -> list[Path]:
 
 
 def _write_headshape(project: ProjectConfig, subject: str, eeg_path: Path) -> Path:
-    """Convert one subject's digitized headshape to BIDS/sub-*/meg/*_headshape.pos.
+    """Copy one subject's digitized headshape to BIDS/sub-*/meg/*_headshape.eeg.
 
-    A real format conversion, not a raw copy -- BIDS has no standard slot
-    for a bare digitization file outside a raw recording's own metadata,
-    so it's kept named/located predictably next to that subject's MEG data
-    for the coregistration step to find later.
+    A verbatim copy, deliberately. BIDS names this slot
+    ``sub-<label>_headshape.<ext>`` and leaves the extension to the
+    digitizer's own format, so the native CTF Polhemus export *is* the
+    standard-compliant thing to stage -- and re-deriving it can only lose.
     """
-    pos_path = (
-        Path(project.bids_root) / f"sub-{subject}" / "meg" / f"sub-{subject}_headshape.pos"
+    destination = (
+        Path(project.bids_root) / f"sub-{subject}" / "meg" / f"sub-{subject}_headshape.eeg"
     )
-    convert_ctf_headshape_to_pos(str(eeg_path), str(pos_path))
-    return pos_path
+    ensure_dir(destination.parent)
+    shutil.copyfile(eeg_path, destination)
+    return destination
 
 
 def apply_raw_staging(

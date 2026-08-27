@@ -9,6 +9,7 @@ from .settings import (
     DecodingConfig,
     DecompositionConfig,
     ERPConfig,
+    CoregistrationConfig,
     EpochingConfig,
     HilbertConfig,
     LateralizedStatisticsConfig,
@@ -24,6 +25,7 @@ from .settings import (
 
 __all__ = [
     "ProjectConfig",
+    "CoregistrationConfig",
     "EpochingConfig",
     "ERPConfig",
     "ConnectivityConfig",

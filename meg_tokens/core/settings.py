@@ -113,6 +113,37 @@ class SourceConfig:
 
 
 @dataclass(frozen=True)
+class CoregistrationConfig:
+    """How the MEG-MRI fit is run, and what a subject must reach to pass QC.
+
+    ``template_subject`` is the anatomy borrowed by subjects with no FreeSurfer
+    reconstruction of their own. ``scale_template`` fits that template to the
+    subject's head shape instead of using it at its own size, which matters:
+    unscaled, those subjects keep barely half their digitized points within
+    reach of the scalp.
+    """
+
+    coarse_iterations: int = 6
+    fine_iterations: int = 20
+    omit_distance: float = 0.005
+    template_subject: str = "fsaverage"
+    scale_template: bool = True
+    # Flagged, never dropped: a subject past either bound is reported for
+    # inspection, because a bad coregistration is a thing to look at, not a
+    # thing to silently exclude.
+    max_median_distance_mm: float = 4.0
+    max_landmark_residual_mm: float = 8.0
+
+    def __post_init__(self) -> None:
+        if self.omit_distance <= 0:
+            raise ValueError("omit_distance must be positive")
+        if self.coarse_iterations < 0 or self.fine_iterations < 0:
+            raise ValueError("ICP iteration counts must not be negative")
+        if not self.template_subject.strip():
+            raise ValueError("template_subject must not be empty")
+
+
+@dataclass(frozen=True)
 class ERPConfig:
     run: str
     condition: Optional[str] = None

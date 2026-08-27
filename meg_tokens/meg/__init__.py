@@ -8,7 +8,8 @@ from importlib import import_module
 _EXPORTS = {
     "load_and_filter_raw": ("meg_tokens.meg.preprocessing", "load_and_filter_raw"),
     "run_ica_rejection": ("meg_tokens.meg.preprocessing", "run_ica_rejection"),
-    "convert_ctf_headshape_to_pos": ("meg_tokens.meg.preprocessing", "convert_ctf_headshape_to_pos"),
+    "read_ctf_headshape": ("meg_tokens.meg.coregistration", "read_ctf_headshape"),
+    "coregister": ("meg_tokens.meg.coregistration", "coregister"),
     "realign_epochs": ("meg_tokens.meg.preprocessing", "realign_epochs"),
     "build_epochs_with_metadata": ("meg_tokens.meg.epoching", "build_epochs_with_metadata"),
     "get_event_id": ("meg_tokens.meg.epoching", "get_event_id"),

@@ -377,16 +377,32 @@ class DerivativeLayout:
             )
         return existing[0]
 
-    def find_trans(self, *, subject: str, run: Optional[str] = None) -> Path:
-        """Find one MEG-MRI transform for a subject and optional run."""
+    def find_trans(
+        self,
+        *,
+        subject: str,
+        run: Optional[str] = None,
+        condition: Optional[str] = None,
+    ) -> Path:
+        """Find one MEG-MRI transform for a subject and optional run.
+
+        Run number alone does not identify a recording here -- every subject has
+        an ``acq-fast`` run 1 *and* an ``acq-slow`` run 1, and the two sit in
+        different head frames. The condition is taken from a labelled ``run``
+        such as ``"Fast1"`` when it carries one, and can be passed explicitly
+        otherwise; without it an ambiguous match still raises rather than
+        picking.
+        """
         subject = normalize_subject_id(subject)
         if run is not None:
-            run_number, _ = parse_run_label(run)
+            run_number, inferred = parse_run_label(run)
+            condition = _condition(condition or inferred)
+            scope = f"*desc-{condition}" if condition else ""
             run_matches = sorted(
                 {
                     path
                     for path in self.root.glob(
-                        f"**/sub-{subject}*run-{run_number}*trans.fif"
+                        f"**/sub-{subject}*run-{run_number}{scope}*trans.fif"
                     )
                     if path.is_file()
                 }

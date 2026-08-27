@@ -39,8 +39,14 @@ subjects:
 runs:
   Fast:
     - Fast1
+    - Fast2
+    - Fast3
+    - Fast4
   Slow:
     - Slow1
+    - Slow2
+    - Slow3
+    - Slow4
 
 alignment: go
 source_method: dSPM

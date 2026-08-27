@@ -138,48 +138,6 @@ def run_ica_rejection(
     
     return ica
 
-def convert_ctf_headshape_to_pos(eeg_path: str, pos_path: str):
-    """
-    Converts a raw CTF Polhemus head shape file (.eeg) into the standard MNE-Python 
-    headshape points format (.pos) used for MRI/MEG coregistration.
-    
-    This function excludes standard fiducials (NZ, OG, OD) from the dense 
-    headshape points, formats each coordinate line, and adds the total point count 
-    header required by .pos files.
-    
-    Args:
-        eeg_path: Path to the raw CTF headshape .eeg file.
-        pos_path: Path to the target output .pos file.
-    """
-    if not os.path.exists(eeg_path):
-        raise FileNotFoundError(f"Source headshape file does not exist: {eeg_path}")
-        
-    with open(eeg_path, 'r') as f:
-        lines = f.readlines()
-        
-    formatted_points = []
-    for index, line in enumerate(lines):
-        clean_line = line.strip()
-        if not clean_line:
-            continue
-        if clean_line.startswith('OD') or clean_line.startswith('OG') or clean_line.startswith('NZ'):
-            continue
-        else:
-            # Format: {index}\t{coordinate_line}
-            # Keep original newline since it's already in the raw line
-            formatted_points.append(f"{index - 5}\t{line}")
-            
-    # Calculate head points count header
-    total_lines = len(lines)
-    header_count = total_lines - 11  # Replicating legacy alignment math
-    
-    if os.path.dirname(pos_path):
-        os.makedirs(os.path.dirname(pos_path), exist_ok=True)
-    with open(pos_path, 'w') as f:
-        f.write(f"{header_count}\n")
-        for point in formatted_points:
-            f.write(point)
-
 def realign_epochs(
     epochs: mne.Epochs,
     align_to: str = 'go',

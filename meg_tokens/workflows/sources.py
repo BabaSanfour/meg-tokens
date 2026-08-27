@@ -137,8 +137,6 @@ def reconstruct_sources(
             fwd = None
             inverse = None
             if "fwd" in settings.stages:
-                if project.trans_dir is None:
-                    raise ValueError("Project configuration requires trans_dir for the fwd stage")
                 if src is None:
                     src = mne.read_source_spaces(
                         str(require_file(models["src"], purpose=f"{subject} source space"))
@@ -147,9 +145,10 @@ def reconstruct_sources(
                     bem = mne.read_bem_solution(
                         str(require_file(models["bem"], purpose=f"{subject} BEM"))
                     )
-                trans_path = DerivativeLayout(project.trans_dir).find_trans(
+                trans_path = DerivativeLayout(project.trans_dir or destination).find_trans(
                     subject=subject,
                     run=run,
+                    condition=condition,
                 )
                 fwd = compute_forward_solution(epochs.info, str(trans_path), src, bem)
                 outputs.append(

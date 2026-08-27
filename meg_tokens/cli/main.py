@@ -12,6 +12,7 @@ from meg_tokens.core import (
     ConnectivityConfig,
     DecodingConfig,
     DecompositionConfig,
+    CoregistrationConfig,
     ERPConfig,
     EpochingConfig,
     HilbertConfig,
@@ -225,6 +226,22 @@ def build_parser() -> argparse.ArgumentParser:
     epoch.add_argument("--tmax", type=float, default=2.0)
     epoch.add_argument("--raw-root")
     epoch.add_argument("--behavior-root")
+
+    coreg = meg_commands.add_parser(
+        "coreg",
+        help="Fit MEG-MRI transforms for staged subjects, with QC.",
+    )
+    coreg.add_argument("--subjects", nargs="+")
+    coreg.add_argument("--subjects-dir")
+    coreg.add_argument("--output-root")
+    coreg.add_argument("--template-subject", dest="template_subject", default="fsaverage")
+    coreg.add_argument(
+        "--no-scale-template",
+        dest="scale_template",
+        action="store_false",
+        help="Use the template anatomy at its own size instead of fitting it.",
+    )
+    coreg.add_argument("--omit-distance", dest="omit_distance", type=float, default=0.005)
 
     source = meg_commands.add_parser(
         "source",
@@ -457,6 +474,13 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Skip figures whose source derivative is absent instead of raising.",
     )
+
+    coreg_report = report_commands.add_parser(
+        "coreg", help="Rebuild MEG-MRI coregistration QC figures."
+    )
+    coreg_report.add_argument("--subjects", nargs="+")
+    coreg_report.add_argument("--output-root")
+    coreg_report.add_argument("--subjects-dir")
 
     statistics_report = report_commands.add_parser("statistics", help="Plot group statistics.")
     statistics_report.add_argument("--conditions", nargs=2, default=["Fast", "Slow"])
@@ -788,6 +812,21 @@ def _meg_epoch(project: ProjectConfig, args: argparse.Namespace) -> object:
     )
 
 
+def _meg_coreg(project: ProjectConfig, args: argparse.Namespace) -> object:
+    from meg_tokens.workflows.coregistration import coregister_subjects
+
+    return coregister_subjects(
+        project,
+        subjects=args.subjects,
+        settings=CoregistrationConfig(
+            omit_distance=args.omit_distance,
+            template_subject=args.template_subject,
+            scale_template=args.scale_template,
+        ),
+        output_root=args.output_root,
+    )
+
+
 def _meg_source(project: ProjectConfig, args: argparse.Namespace) -> object:
     from meg_tokens.workflows.sources import reconstruct_sources
 
@@ -1096,6 +1135,14 @@ def _report_behavior(project: ProjectConfig, args: argparse.Namespace) -> object
     return result
 
 
+def _report_coreg(project: ProjectConfig, args: argparse.Namespace) -> object:
+    from meg_tokens.reports.coregistration import render_coregistration_qc
+
+    return render_coregistration_qc(
+        project, subjects=args.subjects, output_root=args.output_root
+    )
+
+
 def _report_statistics(project: ProjectConfig, args: argparse.Namespace) -> object:
     from meg_tokens.reports.statistics import run_group_statistics_plotting
 
@@ -1275,6 +1322,7 @@ _HANDLERS: dict[tuple[str, str], Handler] = {
     ("meg", "stage-raw"): _meg_stage_raw,
     ("meg", "apply-raw-staging"): _meg_apply_raw_staging,
     ("meg", "preprocess"): _meg_preprocess,
+    ("meg", "coreg"): _meg_coreg,
     ("meg", "epoch"): _meg_epoch,
     ("meg", "source"): _meg_source,
     ("features", "erp"): _features_erp,
@@ -1289,6 +1337,7 @@ _HANDLERS: dict[tuple[str, str], Handler] = {
     ("analyze", "decomposition"): _analyze_decomposition,
     ("analyze", "spatial-decoding"): _analyze_spatial_decoding,
     ("report", "behavior"): _report_behavior,
+    ("report", "coreg"): _report_coreg,
     ("report", "statistics"): _report_statistics,
     ("report", "connectivity"): _report_connectivity,
     ("report", "seed-connectivity"): _report_seed_connectivity,

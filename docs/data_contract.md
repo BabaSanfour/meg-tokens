@@ -113,7 +113,6 @@ overrides now serve only as a cross-check and a fallback.
 
 | Subject | Kind | Gap |
 | :--- | :--- | :--- |
-| H01 | headshape | not found |
 | H05 | run RT1 | no raw MEG counterpart |
 | H05 | noise | not found, any date |
 | H07, H10 | anat | no FreeSurfer reconstruction |
@@ -121,6 +120,8 @@ overrides now serve only as a cross-check and a fallback.
 
 `KNOWN_NOISE_OVERRIDES` (`meg_tokens/meg/raw_staging.py`) redirects
 H26/H27's noise date to `_02.ds`, same pattern as `KNOWN_SESSION_OVERRIDES`.
+
+**Head shapes** are staged as verbatim copies of the native CTF Polhemus export, `BIDS/sub-*/meg/sub-*_headshape.eeg`. BIDS names this slot `sub-<label>_headshape.<ext>` and leaves the extension to the digitizer's own format, so the native file is the standard-compliant thing to stage.
 
 Because `desc` is derivatives-only in real BIDS, condition uses `acq`
 instead (`Slow2` -> `acq-slow_run-2`); `task` stays singular (`tokens`); no

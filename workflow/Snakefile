@@ -28,8 +28,8 @@ POWER_METHOD = config.get("power_method", "hilbert")
 POWER_BANDS = config.get("power_bands", ["theta", "alpha", "beta"])
 PREPROCESSING = config.get("preprocessing", {})
 LAYOUT = DerivativeLayout(BIDS_ROOT)
-STATE = Path(BIDS_ROOT) / "derivatives" / "meg-tokens" / ".workflow"
-DERIVATIVES = Path(BIDS_ROOT) / "derivatives" / "meg-tokens"
+DERIVATIVES = Path(BIDS_ROOT) / "derivatives"
+STATE = DERIVATIVES / ".workflow"
 RUN_BY_ENTITY = {
     (condition.lower(), parse_run_label(run)[0]): run
     for condition, run in RUN_CELLS
@@ -85,6 +85,24 @@ POWER_PATTERN = str(
         + POWER_METHOD
         + "-{band}_power.npy"
     )
+)
+NOISE_COV_PATTERN = str(
+    DERIVATIVES
+    / "sub-{subject}"
+    / "meg"
+    / "sub-{subject}_task-tokens_desc-noise_cov.fif"
+)
+BEM_PATTERN = str(
+    DERIVATIVES
+    / "sub-{subject}"
+    / "meg"
+    / "sub-{subject}_task-tokens_desc-singlelayer_bem.fif"
+)
+SRC_PATTERN = str(
+    DERIVATIVES
+    / "sub-{subject}"
+    / "meg"
+    / ("sub-{subject}_task-tokens_space-subject_desc-" + SPACING + "_src.fif")
 )
 
 
@@ -250,6 +268,8 @@ rule preprocess:
     input:
         raw=lambda wildcards: config["raw_path_template"].format(
             subject=wildcards.subject,
+            condition=wildcards.condition,
+            run_number=wildcards.run_number,
             run=run_for_entities(wildcards.condition, wildcards.run_number),
         )
     output:
@@ -297,28 +317,9 @@ rule source_models:
     input:
         str(STATE / "epochs" / ("sub-{subject}_desc-" + ALIGNMENT + ".done"))
     output:
-        cov=str(
-            DERIVATIVES
-            / "sub-{subject}"
-            / "meg"
-            / "sub-{subject}_task-tokens_desc-noise_cov.fif"
-        ),
-        bem=str(
-            DERIVATIVES
-            / "sub-{subject}"
-            / "meg"
-            / "sub-{subject}_task-tokens_desc-singlelayer_bem.fif"
-        ),
-        src=str(
-            DERIVATIVES
-            / "sub-{subject}"
-            / "meg"
-            / (
-                "sub-{subject}_task-tokens_space-subject_desc-"
-                + SPACING
-                + "_src.fif"
-            )
-        ),
+        cov=NOISE_COV_PATTERN,
+        bem=BEM_PATTERN,
+        src=SRC_PATTERN,
     shell:
         """
         meg-tokens --config {PROJECT_CONFIG:q} meg source \

@@ -109,7 +109,7 @@ def _patch_writers(monkeypatch):
 
     def fake_write_headshape(project, subject, eeg_path):
         written["headshape"].append(subject)
-        return Path(f"{subject}_headshape.pos")
+        return Path(f"{subject}_headshape.eeg")
 
     def fake_write_anat_bids(subject, t1_path, *, bids_root, overwrite):
         written["anat"].append((subject, str(t1_path)))
