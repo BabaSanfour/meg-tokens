@@ -10,12 +10,13 @@ from mne.minimum_norm import read_inverse_operator
 
 from meg_tokens.core import (
     ProjectConfig,
+    RunSpec,
     SourceConfig,
     WorkflowResult,
     normalize_subject_id,
-    parse_run_label,
 )
 from meg_tokens.io import DerivativeLayout, require_file
+from meg_tokens.meg.meg_bids import associated_emptyroom, epoched_meg_runs
 from meg_tokens.meg.sources import (
     apply_inverse_operator,
     build_inverse_operator,
@@ -33,6 +34,41 @@ from meg_tokens.meg.sources import (
 )
 
 
+def _source_runs(
+    epoch_layout: DerivativeLayout,
+    subject: str,
+    settings: SourceConfig,
+) -> list[tuple[RunSpec, Path]]:
+    """The runs the per-run stages operate on, discovered or narrowed to one.
+
+    ``settings.run`` narrows to a single recording the way ``meg preprocess
+    --run`` does; without it every epoched run of the subject is reconstructed.
+    """
+    if settings.run is None:
+        runs = epoched_meg_runs(epoch_layout, subject, alignment=settings.alignment)
+        if not runs:
+            raise FileNotFoundError(
+                f"No {settings.alignment}-locked epochs for {subject} under "
+                f"{epoch_layout.root}. Run `meg-tokens meg epoch` first."
+            )
+        return runs
+
+    run_spec = RunSpec(
+        subject=subject, run=str(settings.run), condition=settings.condition
+    )
+    return [
+        (
+            run_spec,
+            epoch_layout.find_epochs(
+                subject=subject,
+                run=str(settings.run),
+                condition=settings.condition,
+                alignment=settings.alignment,
+            ),
+        )
+    ]
+
+
 def reconstruct_sources(
     project: ProjectConfig,
     *,
@@ -41,7 +77,12 @@ def reconstruct_sources(
     epochs_root: Optional[str | Path] = None,
     output_root: Optional[str | Path] = None,
 ) -> WorkflowResult:
-    """Run selected source stages for each subject and one declared run."""
+    """Run selected source stages for each subject, over every epoched run.
+
+    ``cov``, ``bem`` and ``src`` are per subject and run once; ``fwd``, ``inv``
+    and ``apply`` are per run and loop over what the subject actually has, so
+    one BEM and one source space serve all ten recordings.
+    """
     destination = Path(output_root or project.bids_root)
     output_layout = DerivativeLayout(
         destination,
@@ -66,9 +107,12 @@ def reconstruct_sources(
         src = None
 
         if "cov" in settings.stages:
-            if project.noise_dir is None:
-                raise ValueError("Project configuration requires noise_dir for the cov stage")
-            noise_path = DerivativeLayout(project.noise_dir).find_noise(subject=subject)
+            # The association is BIDS-native: Stage 0 recorded it in every run's
+            # sidecar, so the staged sub-emptyroom tree is read rather than a
+            # separate noise root the project has to be told about.
+            noise_path = associated_emptyroom(
+                project.bids_root, subject, task=project.task
+            )
             cov = compute_noise_covariance(str(noise_path))
             outputs.append(Path(save_noise_covariance(cov, str(destination), subject)))
             inputs.append(noise_path)
@@ -123,114 +167,110 @@ def reconstruct_sources(
             inputs.append(models["src"])
 
         if any(stage in settings.stages for stage in ("fwd", "inv", "apply")):
-            epoch_path = epoch_layout.find_epochs(
-                subject=subject,
-                run=str(settings.run),
-                condition=settings.condition,
-                alignment=settings.alignment,
-            )
-            epochs = mne.read_epochs(str(epoch_path), preload=True)
-            run, inferred_condition = parse_run_label(str(settings.run))
-            condition = settings.condition or inferred_condition
-            inputs.append(epoch_path)
+            # cov/bem/src above are per subject and already built; only these
+            # three stages are per run, so one anatomy serves every run.
+            for run_spec, epoch_path in _source_runs(epoch_layout, subject, settings):
+                run, condition = run_spec.run, run_spec.condition
+                epochs = mne.read_epochs(str(epoch_path), preload=True)
+                inputs.append(epoch_path)
 
-            fwd = None
-            inverse = None
-            if "fwd" in settings.stages:
-                if src is None:
-                    src = mne.read_source_spaces(
-                        str(require_file(models["src"], purpose=f"{subject} source space"))
+                fwd = None
+                inverse = None
+                if "fwd" in settings.stages:
+                    if src is None:
+                        src = mne.read_source_spaces(
+                            str(require_file(models["src"], purpose=f"{subject} source space"))
+                        )
+                    if bem is None:
+                        bem = mne.read_bem_solution(
+                            str(require_file(models["bem"], purpose=f"{subject} BEM"))
+                        )
+                    trans_path = DerivativeLayout(project.trans_dir or destination).find_trans(
+                        subject=subject,
+                        run=run,
+                        condition=condition,
                     )
-                if bem is None:
-                    bem = mne.read_bem_solution(
-                        str(require_file(models["bem"], purpose=f"{subject} BEM"))
-                    )
-                trans_path = DerivativeLayout(project.trans_dir or destination).find_trans(
-                    subject=subject,
-                    run=run,
-                    condition=condition,
-                )
-                fwd = compute_forward_solution(epochs.info, str(trans_path), src, bem)
-                outputs.append(
-                    Path(
-                        save_forward_solution(
-                            fwd,
-                            str(destination),
-                            subject,
-                            run,
-                            condition,
-                            settings.alignment,
+                    fwd = compute_forward_solution(epochs.info, str(trans_path), src, bem)
+                    outputs.append(
+                        Path(
+                            save_forward_solution(
+                                fwd,
+                                str(destination),
+                                subject,
+                                run,
+                                condition,
+                                settings.alignment,
+                            )
                         )
                     )
-                )
-                inputs.append(trans_path)
-            elif "inv" in settings.stages:
-                fwd_path = output_layout.source(
-                    subject=subject,
-                    run=run,
-                    condition=condition,
-                    description=settings.alignment,
-                    suffix="fwd",
-                    extension=".fif",
-                )
-                fwd = mne.read_forward_solution(
-                    str(require_file(fwd_path, purpose=f"{subject} forward solution"))
-                )
-                inputs.append(fwd_path)
-
-            if "inv" in settings.stages:
-                if cov is None:
-                    cov = mne.read_cov(
-                        str(require_file(models["cov"], purpose=f"{subject} noise covariance"))
+                    inputs.append(trans_path)
+                elif "inv" in settings.stages:
+                    fwd_path = output_layout.source(
+                        subject=subject,
+                        run=run,
+                        condition=condition,
+                        description=settings.alignment,
+                        suffix="fwd",
+                        extension=".fif",
                     )
-                inverse = build_inverse_operator(epochs.info, fwd, cov)
-                outputs.append(
-                    Path(
-                        save_inverse_operator(
-                            inverse,
-                            str(destination),
-                            subject,
-                            run,
-                            condition,
-                            settings.alignment,
-                            settings.method,
+                    fwd = mne.read_forward_solution(
+                        str(require_file(fwd_path, purpose=f"{subject} forward solution"))
+                    )
+                    inputs.append(fwd_path)
+
+                if "inv" in settings.stages:
+                    if cov is None:
+                        cov = mne.read_cov(
+                            str(require_file(models["cov"], purpose=f"{subject} noise covariance"))
+                        )
+                    inverse = build_inverse_operator(epochs.info, fwd, cov)
+                    outputs.append(
+                        Path(
+                            save_inverse_operator(
+                                inverse,
+                                str(destination),
+                                subject,
+                                run,
+                                condition,
+                                settings.alignment,
+                                settings.method,
+                            )
                         )
                     )
-                )
-            elif "apply" in settings.stages:
-                inverse_path = output_layout.source(
-                    subject=subject,
-                    run=run,
-                    condition=condition,
-                    description=f"{settings.alignment}-{settings.method}",
-                    suffix="inv",
-                    extension=".fif",
-                )
-                inverse = read_inverse_operator(
-                    str(require_file(inverse_path, purpose=f"{subject} inverse operator"))
-                )
-                inputs.append(inverse_path)
+                elif "apply" in settings.stages:
+                    inverse_path = output_layout.source(
+                        subject=subject,
+                        run=run,
+                        condition=condition,
+                        description=f"{settings.alignment}-{settings.method}",
+                        suffix="inv",
+                        extension=".fif",
+                    )
+                    inverse = read_inverse_operator(
+                        str(require_file(inverse_path, purpose=f"{subject} inverse operator"))
+                    )
+                    inputs.append(inverse_path)
 
-            if "apply" in settings.stages:
-                estimates = apply_inverse_operator(
-                    epochs,
-                    inverse,
-                    method=settings.method,
-                    snr=settings.snr,
-                )
-                outputs.append(
-                    Path(
-                        save_source_estimates(
-                            estimates,
-                            str(destination),
-                            subject,
-                            run,
-                            condition,
-                            settings.alignment,
-                            settings.method,
+                if "apply" in settings.stages:
+                    estimates = apply_inverse_operator(
+                        epochs,
+                        inverse,
+                        method=settings.method,
+                        snr=settings.snr,
+                    )
+                    outputs.append(
+                        Path(
+                            save_source_estimates(
+                                estimates,
+                                str(destination),
+                                subject,
+                                run,
+                                condition,
+                                settings.alignment,
+                                settings.method,
+                            )
                         )
                     )
-                )
 
     return WorkflowResult(
         stage="source_reconstruction",

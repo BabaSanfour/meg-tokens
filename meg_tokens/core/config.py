@@ -28,7 +28,6 @@ class ProjectConfig:
     data_root: Path
     subjects_dir: Optional[Path] = None
     trans_dir: Optional[Path] = None
-    noise_dir: Optional[Path] = None
     task: str = "tokens"
     behavior_ignore_files: tuple[str, ...] = ()
     subject_exclusions: tuple[str, ...] = ()
@@ -49,7 +48,7 @@ class ProjectConfig:
         )
         if self.subjects_dir is None:
             object.__setattr__(self, "subjects_dir", self.data_root / "IRM")
-        for field_name in ("subjects_dir", "trans_dir", "noise_dir"):
+        for field_name in ("subjects_dir", "trans_dir"):
             value = getattr(self, field_name)
             if value is not None:
                 object.__setattr__(self, field_name, Path(value).expanduser())
@@ -89,7 +88,7 @@ class ProjectConfig:
 
         root = Path(base_dir).expanduser()
         kwargs = dict(section)
-        for name in ("data_root", "subjects_dir", "trans_dir", "noise_dir"):
+        for name in ("data_root", "subjects_dir", "trans_dir"):
             if name in kwargs:
                 kwargs[name] = _optional_path(kwargs[name], base_dir=root)
         return cls(**kwargs)

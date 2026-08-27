@@ -1,4 +1,5 @@
 from meg_tokens.io import DerivativeLayout
+from meg_tokens.meg.meg_bids import preprocessed_meg_runs
 from meg_tokens.workflows.decoding import decoding_derivative_path
 from meg_tokens.workflows.decomposition import pca_derivative_path
 from meg_tokens.workflows.erp import erp_derivative_path
@@ -50,8 +51,8 @@ def test_layout_discovers_raw_identity_without_losing_condition(tmp_path):
     raw_path.parent.mkdir(parents=True)
     raw_path.write_text("", encoding="utf-8")
 
-    assert layout.raw_files(subject="H1") == [raw_path]
-    run = layout.raw_run(raw_path)
+    (run, found), = preprocessed_meg_runs(layout, "H1")
+    assert found == raw_path
     assert run.subject == "H01"
     assert run.run == "1"
     assert run.condition == "Slow"

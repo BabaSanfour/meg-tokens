@@ -100,8 +100,10 @@ class SourceConfig:
             raise ValueError(f"Unknown source stages: {invalid}")
         if not self.stages:
             raise ValueError("At least one source stage is required")
-        if any(stage in self.stages for stage in ("fwd", "inv", "apply")) and self.run is None:
-            raise ValueError("run is required for fwd, inv, and apply source stages")
+        # ``run`` is optional: the per-run stages discover every epoched run of
+        # a subject, and setting it narrows them to one.
+        if self.run is None and self.condition is not None:
+            raise ValueError("condition narrows a declared run, so it needs one")
         alignment = self.alignment.lower()
         if alignment not in {"go", "enter", "feedback"}:
             raise ValueError(f"Unknown alignment event: {self.alignment}")

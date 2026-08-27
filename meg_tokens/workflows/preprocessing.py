@@ -27,6 +27,12 @@ from meg_tokens.meg.epoching import (
     reconstruct_missing_go_events,
     save_epochs_and_events,
 )
+from meg_tokens.meg.meg_bids import (
+    preprocessed_meg_runs,
+    raw_meg_path,
+    raw_meg_sessions,
+    staged_subjects,
+)
 from meg_tokens.meg.preprocessing import (
     load_and_filter_raw,
     run_ica_rejection,
@@ -38,13 +44,31 @@ def preprocess_run(
     project: ProjectConfig,
     run: RunSpec,
     *,
-    raw_path: str | Path,
     settings: PreprocessingConfig = PreprocessingConfig(),
 ) -> WorkflowResult:
-    """Filter one CTF run, optionally apply ICA, and persist the raw derivative."""
-    input_path = Path(raw_path)
-    if not input_path.exists():
-        raise FileNotFoundError(f"Raw dataset path does not exist: {input_path}")
+    """Filter one staged CTF recording, optionally apply ICA, and persist it.
+
+    The single-run primitive Snakemake parallelizes over. It resolves its own
+    input from the run's identity rather than being handed a path, so exactly
+    one place knows where Stage 0 puts a recording.
+    """
+    if not run.condition:
+        raise ValueError(
+            f"{run.subject} run {run.run} needs a condition: every subject has an "
+            "acq-fast run 1 and an acq-slow run 1, so a run number alone names two "
+            "different recordings. Pass a labelled run such as 'Fast1', or the "
+            "condition explicitly."
+        )
+    input_path = raw_meg_path(
+        project.bids_root, run.subject, run.condition, run.run, task=project.task
+    )
+    # A CTF session is a directory, so the file-shaped existence helpers reject
+    # it out of hand.
+    if not input_path.is_dir():
+        raise FileNotFoundError(
+            f"No staged raw MEG for {run.subject} {run.condition} run {run.run} at "
+            f"{input_path}. Run `meg-tokens meg apply-raw-staging` first."
+        )
     notch_freqs = (
         np.asarray(settings.notch_freqs, dtype=float)
         if settings.notch_freqs is not None
@@ -90,6 +114,59 @@ def preprocess_run(
     )
 
 
+def preprocess_subjects(
+    project: ProjectConfig,
+    *,
+    subjects: Optional[Sequence[str]] = None,
+    settings: PreprocessingConfig = PreprocessingConfig(),
+) -> WorkflowResult:
+    """Preprocess every staged run of selected subjects, defaulting to all.
+
+    Raises ``FileNotFoundError`` when a requested subject has no staged MEG:
+    that is a missing prerequisite, not an empty result, and quietly producing
+    nothing would look identical to success.
+    """
+    bids_root = project.bids_root
+    if not bids_root.is_dir():
+        raise FileNotFoundError(
+            f"BIDS root does not exist: {bids_root}. Run `meg-tokens meg stage-raw` "
+            "and `meg-tokens meg apply-raw-staging` before preprocessing."
+        )
+
+    selected = [normalize_subject_id(s) for s in (subjects or staged_subjects(bids_root))]
+    if not selected:
+        raise FileNotFoundError(f"No staged subject MEG was found under {bids_root}")
+
+    inputs: list[Path] = []
+    outputs: list[Path] = []
+    for subject in selected:
+        sessions = raw_meg_sessions(bids_root, subject, task=project.task)
+        if not sessions:
+            raise FileNotFoundError(
+                f"No staged raw MEG for {subject} under {bids_root}. "
+                "Run `meg-tokens meg apply-raw-staging` first."
+            )
+        for run, _ in sessions:
+            result = preprocess_run(project, run, settings=settings)
+            inputs.extend(result.inputs)
+            outputs.extend(result.outputs)
+
+    return WorkflowResult(
+        stage="meg_preprocessing",
+        inputs=tuple(inputs),
+        outputs=tuple(outputs),
+        settings={
+            "subjects": selected,
+            "n_runs": len(outputs),
+            "high_pass": settings.high_pass,
+            "low_pass": settings.low_pass,
+            "notch_freqs": settings.notch_freqs,
+            "run_ica": settings.run_ica,
+            "ica_exclude": settings.ica_exclude,
+        },
+    )
+
+
 def epoch_subjects(
     project: ProjectConfig,
     *,
@@ -114,13 +191,13 @@ def epoch_subjects(
 
     for subject_value in subjects:
         subject = normalize_subject_id(subject_value)
-        raw_paths = raw_layout.raw_files(subject=subject)
-        if not raw_paths:
+        runs = preprocessed_meg_runs(raw_layout, subject)
+        if not runs:
             raise FileNotFoundError(
-                f"No cleaned or filtered raw FIF files found for {subject} under {raw_layout.root}"
+                f"No preprocessed raw FIF files found for {subject} under "
+                f"{raw_layout.root}. Run `meg-tokens meg preprocess` first."
             )
-        for raw_path in raw_paths:
-            run = raw_layout.raw_run(raw_path, subject=subject)
+        for run, raw_path in runs:
             behavior_path = behavior_layout.find_behavior(
                 subject=run.subject,
                 run=run.run,

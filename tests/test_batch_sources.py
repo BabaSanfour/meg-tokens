@@ -6,20 +6,6 @@ from meg_tokens.io import DerivativeLayout
 from meg_tokens.meg.sources import source_space_description
 
 
-def test_find_noise_file_requires_single_match(tmp_path):
-    subject_dir = tmp_path / "H01"
-    os.makedirs(subject_dir)
-    noise_file = subject_dir / "empty_noise.fif"
-    noise_file.write_text("")
-
-    assert DerivativeLayout(tmp_path).find_noise(subject="H1") == noise_file
-
-
-def test_find_noise_file_rejects_missing(tmp_path):
-    with pytest.raises(FileNotFoundError, match="No empty-room noise file"):
-        DerivativeLayout(tmp_path).find_noise(subject="H01")
-
-
 def test_find_epoch_file_matches_stage2_contract(tmp_path):
     epoch_dir = tmp_path / "derivatives" / "sub-H01" / "meg"
     os.makedirs(epoch_dir)

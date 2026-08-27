@@ -236,68 +236,6 @@ class DerivativeLayout:
             extension=".fif",
         )
 
-    def raw_files(self, *, subject: str) -> list[Path]:
-        """Find cleaned or filtered raw derivatives for one subject."""
-        subject = normalize_subject_id(subject)
-        patterns = [
-            (
-                self.root
-                / "derivatives"
-                / f"sub-{subject}"
-                / "meg"
-                / "*_raw.fif"
-            ),
-            self.root / f"sub-{subject}" / "meg" / "*_raw.fif",
-            self.root / subject / "*_filt_raw.fif",
-            self.root / subject / "*_clean_raw.fif",
-        ]
-        files = []
-        for pattern in patterns:
-            files.extend(pattern.parent.glob(pattern.name))
-        return sorted({path for path in files if path.is_file()})
-
-    @staticmethod
-    def raw_run(path: str | Path, *, subject: Optional[str] = None) -> RunSpec:
-        """Parse subject, run, and condition from a raw derivative filename."""
-        import re
-
-        name = Path(path).name
-        bids = re.search(
-            r"sub-(?P<subject>H[0-9]+)_.*_run-(?P<run>[A-Za-z0-9]+)"
-            r"(?:_proc-[^_]+)?(?:_desc-(?P<description>[^_]+))?_raw\.fif$",
-            name,
-            re.IGNORECASE,
-        )
-        if bids:
-            description = bids.group("description")
-            condition = None
-            if description:
-                first = description.split("-", 1)[0]
-                if first.lower() in {"fast", "slow", "rt"}:
-                    condition = first
-            return RunSpec(
-                subject=bids.group("subject"),
-                run=bids.group("run"),
-                condition=condition,
-            )
-
-        legacy = re.search(
-            r"(?P<subject>H[0-9]+)?_?(?P<condition>Slow|Fast|RT)?"
-            r"(?P<run>[0-9]+)_?(?:filt|clean)?_?raw\.fif$",
-            name,
-            re.IGNORECASE,
-        )
-        if legacy:
-            resolved_subject = legacy.group("subject") or subject
-            if resolved_subject is None:
-                raise ValueError(f"Could not infer subject from raw filename: {path}")
-            return RunSpec(
-                subject=resolved_subject,
-                run=legacy.group("run"),
-                condition=legacy.group("condition"),
-            )
-        raise ValueError(f"Could not infer run from raw filename: {path}")
-
     def epochs(
         self,
         *,
@@ -352,28 +290,6 @@ class DerivativeLayout:
         if len(existing) > 1:
             raise ValueError(
                 f"Multiple epoch files matched subject={subject}, run={run_number}: {existing}"
-            )
-        return existing[0]
-
-    def find_noise(self, *, subject: str) -> Path:
-        """Find one empty-room recording for a subject."""
-        subject = normalize_subject_id(subject)
-        patterns = [
-            self.root / subject / "*noise*.ds",
-            self.root / subject / "*noise*.fif",
-            self.root / f"sub-{subject}" / "meg" / "*noise*.fif",
-        ]
-        matches = []
-        for pattern in patterns:
-            matches.extend(path for path in pattern.parent.glob(pattern.name) if path.exists())
-        existing = sorted(set(matches))
-        if not existing:
-            raise FileNotFoundError(
-                f"No empty-room noise file found for {subject} under {self.root}"
-            )
-        if len(existing) > 1:
-            raise ValueError(
-                f"Multiple empty-room noise files found for {subject}: {existing}"
             )
         return existing[0]
 

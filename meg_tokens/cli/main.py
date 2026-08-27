@@ -204,11 +204,21 @@ def build_parser() -> argparse.ArgumentParser:
 
     preprocess = meg_commands.add_parser(
         "preprocess",
-        help="Filter one CTF recording and optionally apply ICA.",
+        help="Filter staged CTF recordings and optionally apply ICA.",
     )
-    preprocess.add_argument("--raw-path", dest="raw_path", required=True)
-    preprocess.add_argument("--subject", required=True)
-    preprocess.add_argument("--run", required=True)
+    preprocess.add_argument(
+        "--subjects",
+        nargs="+",
+        help="Subjects to preprocess. Defaults to every staged subject.",
+    )
+    preprocess.add_argument(
+        "--run",
+        help=(
+            "Narrow to one recording. Requires exactly one subject, and a "
+            "condition -- either labelled into the run ('Fast1') or via "
+            "--condition."
+        ),
+    )
     preprocess.add_argument("--condition")
     preprocess.add_argument("--high-pass", dest="high_pass", type=float, default=0.5)
     preprocess.add_argument("--low-pass", dest="low_pass", type=float, default=150.0)
@@ -581,7 +591,6 @@ def _project_from_args(args: argparse.Namespace) -> ProjectConfig:
     for argument, field_name in (
         ("subjects_dir", "subjects_dir"),
         ("trans_dir", "trans_dir"),
-        ("noise_dir", "noise_dir"),
     ):
         value = getattr(args, argument, None)
         if value:
@@ -776,23 +785,25 @@ def _meg_apply_raw_staging(project: ProjectConfig, args: argparse.Namespace) -> 
 
 
 def _meg_preprocess(project: ProjectConfig, args: argparse.Namespace) -> object:
-    from meg_tokens.workflows.preprocessing import preprocess_run
+    from meg_tokens.workflows.preprocessing import preprocess_run, preprocess_subjects
 
+    settings = PreprocessingConfig(
+        high_pass=args.high_pass,
+        low_pass=args.low_pass,
+        notch_freqs=tuple(args.notch_freqs) if args.notch_freqs else None,
+        run_ica=args.run_ica,
+        ica_exclude=tuple(args.ica_exclude) if args.ica_exclude is not None else None,
+    )
+    if args.run is None:
+        return preprocess_subjects(project, subjects=args.subjects, settings=settings)
+    if not args.subjects or len(args.subjects) != 1:
+        raise SystemExit(
+            "--run narrows to a single recording, so it needs exactly one --subjects."
+        )
     return preprocess_run(
         project,
-        RunSpec(
-            subject=args.subject,
-            run=args.run,
-            condition=args.condition,
-        ),
-        raw_path=args.raw_path,
-        settings=PreprocessingConfig(
-            high_pass=args.high_pass,
-            low_pass=args.low_pass,
-            notch_freqs=tuple(args.notch_freqs) if args.notch_freqs else None,
-            run_ica=args.run_ica,
-            ica_exclude=tuple(args.ica_exclude) if args.ica_exclude is not None else None,
-        ),
+        RunSpec(subject=args.subjects[0], run=args.run, condition=args.condition),
+        settings=settings,
     )
 
 

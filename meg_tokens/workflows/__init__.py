@@ -27,6 +27,7 @@ _EXPORTS = {
     "apply_raw_staging": ("meg_tokens.workflows.raw_staging", "apply_raw_staging"),
     "extract_erp_features": ("meg_tokens.workflows.erp", "extract_erp_features"),
     "preprocess_run": ("meg_tokens.workflows.preprocessing", "preprocess_run"),
+    "preprocess_subjects": ("meg_tokens.workflows.preprocessing", "preprocess_subjects"),
     "extract_power_features": ("meg_tokens.workflows.power", "extract_power_features"),
     "reconstruct_sources": ("meg_tokens.workflows.sources", "reconstruct_sources"),
     "extract_spectral_features": ("meg_tokens.workflows.spectral", "extract_spectral_features"),

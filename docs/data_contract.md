@@ -162,8 +162,10 @@ copied under `sub-emptyroom/ses-<date>/meg/` and cross-referenced via
 modified. Re-copying always passes `overwrite=True` (real per-run
 digitization varies by sub-mm noise; harmless since coregistration uses a
 separately-managed `-trans.fif`, never `coordsystem.json`).
-`meg_tokens/workflows/sources.py`'s empty-room lookup (`project.noise_dir`)
-is unchanged by Stage 0 -- the `sub-emptyroom` tree doesn't feed it yet.
+`meg_tokens/workflows/sources.py`'s empty-room lookup reads this tree,
+resolving each subject's noise through the `AssociatedEmptyRoom` its own run
+sidecars carry (`associated_emptyroom`), so the association Stage 0 recorded is
+the one the covariance uses.
 
 **Behavior raw layer:** `BIDS/sub-<ID>/beh/*_beh.tsv` is a minimally-parsed
 TDMS export (`parse_tdms_file(path)`, which never infers trial classes --

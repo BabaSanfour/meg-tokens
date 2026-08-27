@@ -4,6 +4,7 @@ from pathlib import Path
 
 from meg_tokens.core import parse_run_label
 from meg_tokens.io import DerivativeLayout
+from meg_tokens.meg.meg_bids import raw_meg_path
 from meg_tokens.workflows.decomposition import pca_derivative_path
 
 
@@ -266,11 +267,15 @@ rule behavior:
 
 rule preprocess:
     input:
-        raw=lambda wildcards: config["raw_path_template"].format(
-            subject=wildcards.subject,
-            condition=wildcards.condition,
-            run_number=wildcards.run_number,
-            run=run_for_entities(wildcards.condition, wildcards.run_number),
+        # The same discovery the stage itself uses, so the DAG edge and the
+        # stage can never disagree about where Stage 0 put a recording.
+        raw=lambda wildcards: str(
+            raw_meg_path(
+                BIDS_ROOT,
+                wildcards.subject,
+                wildcards.condition,
+                wildcards.run_number,
+            )
         )
     output:
         CLEAN_PATTERN
@@ -284,8 +289,7 @@ rule preprocess:
     shell:
         """
         meg-tokens --config {PROJECT_CONFIG:q} meg preprocess \
-          --raw-path {input.raw:q} \
-          --subject {wildcards.subject:q} \
+          --subjects {wildcards.subject:q} \
           --run {params.run:q} \
           --condition {wildcards.condition:q} \
           --high-pass {params.high_pass} \

@@ -114,9 +114,12 @@ def test_preprocessing_and_epoching_settings_validate_ranges():
         EpochingConfig(tmin=1.0, tmax=0.0)
 
 
-def test_source_settings_require_explicit_run_for_run_level_stages():
-    assert SourceConfig(stages=("cov",)).run is None
-    with pytest.raises(ValueError, match="run is required"):
-        SourceConfig(stages=("fwd",))
+def test_source_settings_leave_the_run_optional_so_the_stage_can_discover():
+    # No run means every epoched run of the subject; a run narrows to one.
+    assert SourceConfig(stages=("fwd",)).run is None
+    assert SourceConfig(stages=("fwd",), run="Fast1").run == "Fast1"
+    # A condition without a run narrows nothing, so it is a mistake, not a default.
+    with pytest.raises(ValueError, match="condition narrows a declared run"):
+        SourceConfig(stages=("fwd",), condition="Fast")
     with pytest.raises(ValueError, match="Unknown source stages"):
         SourceConfig(stages=("unknown",))

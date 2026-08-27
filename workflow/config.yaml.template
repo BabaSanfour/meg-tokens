@@ -1,6 +1,8 @@
-project_config: config/tokens.toml
+# Copy to workflow/config.yaml and point the roots at this machine. The copy is
+# untracked: the desktop and the cluster hold the same dataset at different
+# paths, so a committed root would be wrong on one of them.
+project_config: tokens.toml
 bids_root: /path/to/tokens-bids
-raw_path_template: /path/to/raw-meg/{subject}/{run}.ds
 
 subjects:
   - H01

@@ -23,11 +23,15 @@ and the empty-room link.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 import mne
 from mne_bids import BIDSPath, write_raw_bids
+
+if TYPE_CHECKING:
+    from meg_tokens.io import DerivativeLayout
 
 from meg_tokens.core import RunSpec, normalize_subject_id
 from meg_tokens.meg.epoching import DEFAULT_EVENT_IDS, get_event_id
@@ -96,6 +100,131 @@ def staged_subjects(bids_root: str | Path) -> list[str]:
         for path in root.glob("sub-*")
         if path.is_dir() and (path / "meg").is_dir()
     )
+
+
+def preprocessed_meg_runs(
+    layout: "DerivativeLayout",
+    subject: str,
+    *,
+    processing: Optional[str] = None,
+) -> list[tuple[RunSpec, Path]]:
+    """Every preprocessed run of one subject, with its identity, in protocol order.
+
+    The derivative-side counterpart to :func:`raw_meg_sessions`, and it walks
+    the same :data:`RAW_MEG_RUNS` grid for the same reason: a run that failed
+    to preprocess is then a *named* absence rather than a shorter list nobody
+    notices. Globbing the derivative directory cannot tell those apart.
+
+    ``processing`` defaults to preferring ``clean`` over ``filt``, matching
+    what ``preprocess_run`` writes with and without ICA, so epoching consumes
+    the more processed derivative when both exist.
+    """
+    subject = normalize_subject_id(subject)
+    candidates = (processing,) if processing else ("clean", "filt")
+    runs = []
+    for condition, run in RAW_MEG_RUNS:
+        for candidate in candidates:
+            path = layout.preprocessed_raw(
+                subject=subject,
+                run=str(run),
+                condition=condition,
+                processing=candidate,
+            )
+            if path.is_file():
+                runs.append(
+                    (RunSpec(subject=subject, run=str(run), condition=condition), path)
+                )
+                break
+    return runs
+
+
+def epoched_meg_runs(
+    layout: "DerivativeLayout",
+    subject: str,
+    *,
+    alignment: str,
+) -> list[tuple[RunSpec, Path]]:
+    """Every epoched run of one subject for one alignment, in protocol order.
+
+    The third counterpart to :func:`raw_meg_sessions`, walking the same
+    :data:`RAW_MEG_RUNS` grid, so the property holds all the way down the
+    chain: a run absent from the source stage is a named run that failed to
+    epoch, not an entry the discovery quietly never produced.
+    """
+    subject = normalize_subject_id(subject)
+    runs = []
+    for condition, run in RAW_MEG_RUNS:
+        path = layout.epochs(
+            subject=subject,
+            run=str(run),
+            condition=condition,
+            alignment=alignment,
+        )
+        if path.is_file():
+            runs.append(
+                (RunSpec(subject=subject, run=str(run), condition=condition), path)
+            )
+    return runs
+
+
+def associated_emptyroom(
+    bids_root: str | Path,
+    subject: str,
+    *,
+    task: str = "tokens",
+) -> Path:
+    """The empty-room recording this subject's runs were staged against.
+
+    ``write_meg_bids`` already recorded the association, as the root-relative
+    ``AssociatedEmptyRoom`` in each run's ``*_meg.json``, so this reads what
+    Stage 0 decided rather than re-deriving it from acquisition dates.
+
+    Noise was acquired once per recording day and every run of a subject
+    resolves to the same session, but that is a property of the data rather
+    than a guarantee of the format: a subject whose runs disagree is refused
+    instead of being given whichever one sorted first.
+    """
+    subject = normalize_subject_id(subject)
+    root = Path(bids_root)
+    sessions = raw_meg_sessions(root, subject, task=task)
+    if not sessions:
+        raise FileNotFoundError(
+            f"No staged raw MEG for {subject} under {root}. "
+            "Run `meg-tokens meg apply-raw-staging` first."
+        )
+
+    recorded = set()
+    for _, path in sessions:
+        sidecar = path.with_suffix(".json")
+        if not sidecar.is_file():
+            continue
+        associated = json.loads(sidecar.read_text(encoding="utf-8")).get(
+            "AssociatedEmptyRoom"
+        )
+        if associated:
+            recorded.add(str(associated))
+
+    if not recorded:
+        raise FileNotFoundError(
+            f"{subject} has no AssociatedEmptyRoom in any run sidecar: no "
+            "empty-room session was acquired on its recording day. Empty-room "
+            "noise covariance is not available for this subject."
+        )
+    if len(recorded) > 1:
+        raise ValueError(
+            f"{subject}'s runs name {len(recorded)} different empty-room "
+            f"sessions ({sorted(recorded)}); a per-subject noise covariance "
+            "cannot stand for all of them."
+        )
+
+    # BIDS stores it root-relative with a leading separator.
+    noise_path = root / str(recorded.pop()).lstrip("/")
+    if not noise_path.is_dir():
+        raise FileNotFoundError(
+            f"{subject}'s associated empty room {noise_path} is not staged. "
+            "Run `meg-tokens meg apply-raw-staging` to materialize it."
+        )
+    return noise_path
 
 
 def _combined_event_id(subject: str) -> dict:
@@ -224,8 +353,8 @@ def write_emptyroom_bids(
     ``meas_date``, so a mislabeled manifest row fails loudly instead of
     associating the wrong day's noise.
 
-    This tree does not feed ``meg_tokens.workflows.sources``' noise-covariance
-    lookup, which still reads ``ProjectConfig.noise_dir`` directly.
+    This tree is what ``meg_tokens.workflows.sources``' noise covariance reads,
+    reached through :func:`associated_emptyroom`.
     """
     bids_path = BIDSPath(
         subject="emptyroom",

@@ -11,7 +11,6 @@ data_root = "/path/to/meg-tokens"
 # Defaults to data_root/IRM; set only to override.
 # subjects_dir = "/path/to/meg-tokens/IRM"
 trans_dir = "/path/to/trans-files"
-noise_dir = "/path/to/noise-recordings"
 task = "tokens"
 
 # Subjects excluded from group analyses (MEG/data-quality review).

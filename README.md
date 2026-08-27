@@ -221,12 +221,15 @@ meg-tokens --config tokens.toml behavior qc
 
 
 ### Stage 3: MEG Preprocessing & Filtering
-Loads raw CTF MEG, applies filters, and optionally runs ICA:
+Finds the staged CTF recordings, applies filters, and optionally runs ICA.
+Defaults to every staged subject:
 ```bash
-meg-tokens --config tokens.toml meg preprocess \
-  --raw-path /path/to/H01Slow1.ds \
-  --subject H01 \
-  --run Slow1
+meg-tokens --config tokens.toml meg preprocess
+meg-tokens --config tokens.toml meg preprocess --subjects H01 H02
+```
+`--run` narrows to a single recording, for one subject:
+```bash
+meg-tokens --config tokens.toml meg preprocess --subjects H01 --run Slow1
 ```
 
 ### Stage 4: Epoch Extraction & Event Alignment

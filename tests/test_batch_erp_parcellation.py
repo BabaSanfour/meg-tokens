@@ -88,7 +88,7 @@ def _write_stage_inputs(root, n_trials=2):
         "tExitCenter": [2500.0, 1500.0][:n_trials],
         "tEnterTarget": [2500.0, 1500.0][:n_trials],
         "tTrialEnd": [3000.0] * n_trials,
-        "sTokenDirs": ["0"] * n_trials,
+        "sTokenDirs": ["121"] * n_trials,
         "nTokenNum": ["[]"] * n_trials,
         "nTokenDir": ["[]"] * n_trials,
         "tTime": ["[]"] * n_trials,
