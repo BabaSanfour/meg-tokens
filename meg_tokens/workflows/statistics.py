@@ -19,7 +19,6 @@ from meg_tokens.core import (
     ProjectConfig,
     StatisticsConfig,
     WorkflowResult,
-    normalize_subject_id,
 )
 from meg_tokens.analysis.statistics import compute_permutation_t_test, get_significance_windows
 from meg_tokens.features.dataset import lateralize_labels
@@ -168,7 +167,7 @@ def _load_condition_matrix(
                 if key in coords and not _coords_close(value, coords[key]):
                     raise ValueError(f"ERP coordinate '{key}' changed across subjects")
         subject_means.append(subject_mean)
-        inputs[normalize_subject_id(subject)] = source_paths
+        inputs[subject] = source_paths
 
     if reference_dims is None or reference_coords is None:
         raise ValueError(f"No ERP data loaded for condition {condition}")
@@ -286,7 +285,7 @@ def run_group_statistics_contrast(
             parc=parc,
         )
     else:
-        subjects = [normalize_subject_id(subject) for subject in subjects_list]
+        subjects = [subject for subject in subjects_list]
 
     if len(subjects) < 2:
         raise ValueError(f"At least two subjects are required for group statistics, got {len(subjects)}")
@@ -445,7 +444,7 @@ def run_lateralized_statistics_test(
             parc=parc,
         )
         if subjects_list is None
-        else [normalize_subject_id(subject) for subject in subjects_list]
+        else [subject for subject in subjects_list]
     )
     if len(subjects) < 2:
         raise ValueError(
@@ -582,7 +581,7 @@ def run_lateralized_statistics(
         n_jobs=settings.n_jobs,
     )
     selected_subjects = (
-        [normalize_subject_id(subject) for subject in subjects]
+        [subject for subject in subjects]
         if subjects
         else discover_subjects(
             str(feature_root),
@@ -647,7 +646,7 @@ def run_group_statistics(
         n_jobs=settings.n_jobs,
     )
     selected_subjects = (
-        [normalize_subject_id(subject) for subject in subjects]
+        [subject for subject in subjects]
         if subjects
         else discover_subjects(
             str(feature_root),

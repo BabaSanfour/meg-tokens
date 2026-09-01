@@ -22,7 +22,6 @@ from meg_tokens.core import (
     DecodingConfig,
     ProjectConfig,
     WorkflowResult,
-    normalize_subject_id,
 )
 from meg_tokens.features.dataset import (
     find_feature_arrays as _find_feature_arrays,
@@ -284,7 +283,7 @@ def build_decoding_dataset(
             power_method=power_method,
         )
     else:
-        subjects = [normalize_subject_id(subject) for subject in subjects]
+        subjects = [subject for subject in subjects]
 
     X_parts = []
     y_parts = []
@@ -639,7 +638,7 @@ def run_decoding(
         n_jobs=settings.n_jobs,
     )
     selected_subjects = (
-        [normalize_subject_id(subject) for subject in subjects]
+        [subject for subject in subjects]
         if subjects
         else discover_subjects(
             str(feature_root),

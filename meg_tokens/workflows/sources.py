@@ -13,7 +13,6 @@ from meg_tokens.core import (
     RunSpec,
     SourceConfig,
     WorkflowResult,
-    normalize_subject_id,
 )
 from meg_tokens.io import DerivativeLayout, require_file
 from meg_tokens.meg.meg_bids import associated_emptyroom, epoched_meg_runs
@@ -96,7 +95,7 @@ def reconstruct_sources(
     outputs = []
 
     for subject_value in subjects:
-        subject = normalize_subject_id(subject_value)
+        subject = subject_value
         models = output_layout.source_models(
             subject=subject,
             spacing=settings.spacing,
@@ -277,7 +276,7 @@ def reconstruct_sources(
         inputs=tuple(inputs),
         outputs=tuple(outputs),
         settings={
-            "subjects": [normalize_subject_id(subject) for subject in subjects],
+            "subjects": [subject for subject in subjects],
             "stages": settings.stages,
             "spacing": settings.spacing,
             "volume_labels": settings.volume_labels,

@@ -7,7 +7,6 @@ from typing import Mapping, Optional, Sequence
 
 import numpy as np
 
-from meg_tokens.core import normalize_subject_id
 from meg_tokens.io import DerivativeLayout, load_array, require_file
 
 
@@ -25,7 +24,6 @@ def find_feature_arrays(
     runs: Optional[Sequence[str]] = None,
 ) -> list[Path]:
     """Find ERP or source-power arrays for one subject-condition cell."""
-    subject = normalize_subject_id(subject)
     layout = DerivativeLayout(feature_root)
     if feature_source == "erp":
         if parc is None:

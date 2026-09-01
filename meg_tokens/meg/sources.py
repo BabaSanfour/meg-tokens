@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import List, Optional
 from mne.minimum_norm import make_inverse_operator, apply_inverse_epochs, write_inverse_operator
 
-from meg_tokens.core import normalize_subject_id, parse_run_label
+from meg_tokens.core import parse_run_label
 from meg_tokens.io import DerivativeLayout, ensure_dir, save_sidecar, save_table
 
 
@@ -55,7 +55,7 @@ def save_noise_covariance(cov: mne.Covariance, output_root: str, subject_id: str
     path = source_derivative_path(output_root, subject_id, suffix="cov", extension=".fif", description="noise")
     ensure_dir(path.parent)
     mne.write_cov(str(path), cov, overwrite=True)
-    save_sidecar(path, {"schema_version": 1, "format": "mne-covariance-fif", "stage": "source_reconstruction", "kind": "noise_covariance", "subject": normalize_subject_id(subject_id)})
+    save_sidecar(path, {"schema_version": 1, "format": "mne-covariance-fif", "stage": "source_reconstruction", "kind": "noise_covariance", "subject": subject_id})
     return str(path)
 
 
@@ -63,7 +63,7 @@ def save_bem_solution(bem: mne.bem.ConductorModel, output_root: str, subject_id:
     path = source_derivative_path(output_root, subject_id, suffix="bem", extension=".fif", description="singlelayer")
     ensure_dir(path.parent)
     mne.write_bem_solution(str(path), bem, overwrite=True)
-    save_sidecar(path, {"schema_version": 1, "format": "mne-bem-fif", "stage": "source_reconstruction", "kind": "bem_solution", "subject": normalize_subject_id(subject_id)})
+    save_sidecar(path, {"schema_version": 1, "format": "mne-bem-fif", "stage": "source_reconstruction", "kind": "bem_solution", "subject": subject_id})
     return str(path)
 
 
@@ -84,7 +84,7 @@ def save_source_space(
         "format": "mne-source-space-fif",
         "stage": "source_reconstruction",
         "kind": "source_space",
-        "subject": normalize_subject_id(subject_id),
+        "subject": subject_id,
         "spacing": spacing,
         "volume_labels": volume_labels or [],
         "volume_pos_mm": volume_pos,
@@ -96,7 +96,7 @@ def save_forward_solution(fwd: mne.Forward, output_root: str, subject_id: str, r
     path = source_derivative_path(output_root, subject_id, suffix="fwd", extension=".fif", run_id=run_id, condition=condition, description=alignment)
     ensure_dir(path.parent)
     mne.write_forward_solution(str(path), fwd, overwrite=True)
-    save_sidecar(path, {"schema_version": 1, "format": "mne-forward-fif", "stage": "source_reconstruction", "kind": "forward_solution", "subject": normalize_subject_id(subject_id), "run": parse_run_label(run_id)[0], "condition": condition, "alignment": alignment})
+    save_sidecar(path, {"schema_version": 1, "format": "mne-forward-fif", "stage": "source_reconstruction", "kind": "forward_solution", "subject": subject_id, "run": parse_run_label(run_id)[0], "condition": condition, "alignment": alignment})
     return str(path)
 
 
@@ -104,7 +104,7 @@ def save_inverse_operator(inverse_operator, output_root: str, subject_id: str, r
     path = source_derivative_path(output_root, subject_id, suffix="inv", extension=".fif", run_id=run_id, condition=condition, description=f"{alignment}-{method}")
     ensure_dir(path.parent)
     write_inverse_operator(str(path), inverse_operator, overwrite=True)
-    save_sidecar(path, {"schema_version": 1, "format": "mne-inverse-operator-fif", "stage": "source_reconstruction", "kind": "inverse_operator", "subject": normalize_subject_id(subject_id), "run": parse_run_label(run_id)[0], "condition": condition, "alignment": alignment, "method": method})
+    save_sidecar(path, {"schema_version": 1, "format": "mne-inverse-operator-fif", "stage": "source_reconstruction", "kind": "inverse_operator", "subject": subject_id, "run": parse_run_label(run_id)[0], "condition": condition, "alignment": alignment, "method": method})
     return str(path)
 
 
@@ -118,7 +118,7 @@ def save_source_estimates(
     method: str,
 ) -> str:
     """Save trial source estimates and a manifest consumed by later stages."""
-    subject = normalize_subject_id(subject_id)
+    subject = subject_id
     run, inferred_condition = parse_run_label(run_id)
     condition = condition or inferred_condition
     manifest_path = source_derivative_path(

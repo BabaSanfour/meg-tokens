@@ -22,7 +22,6 @@ from meg_tokens.core import (
     DecompositionConfig,
     ProjectConfig,
     WorkflowResult,
-    normalize_subject_id,
 )
 from meg_tokens.io import DerivativeLayout, save_array, save_table
 from meg_tokens.features.dataset import (
@@ -697,7 +696,7 @@ def run_decomposition(
         )
 
     selected_subjects = (
-        [normalize_subject_id(subject) for subject in subjects]
+        [subject for subject in subjects]
         if subjects
         else discover_subjects(
             str(feature_root),

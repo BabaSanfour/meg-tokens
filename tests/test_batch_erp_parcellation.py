@@ -17,7 +17,7 @@ from meg_tokens.workflows.erp import extract_erp_features
 def _write_stage_inputs(root, n_trials=2):
     manifest_path = source_derivative_path(
         root,
-        "H1",
+        "H01",
         suffix="stcmanifest",
         extension=".tsv",
         run_id="Slow1",
@@ -35,7 +35,7 @@ def _write_stage_inputs(root, n_trials=2):
         stc = mne.SourceEstimate(data, vertices=vertices, tmin=-1.0, tstep=1.0 / sfreq)
         base = source_derivative_path(
             root,
-            "H1",
+            "H01",
             suffix=f"trial{trial:04d}stc",
             extension="",
             run_id="Slow1",
@@ -110,7 +110,7 @@ def _write_stage_inputs(root, n_trials=2):
 def test_erp_derivative_path_uses_bids_contract(tmp_path):
     path = erp_derivative_path(
         tmp_path,
-        subject="H1",
+        subject="H01",
         run="Slow1",
         condition=None,
         align_to="go",
@@ -229,7 +229,7 @@ def test_run_erp_parcellation_pipeline_finds_stage_inputs(tmp_path, monkeypatch)
     )
 
     outputs = run_erp_parcellation_pipeline(
-        ["H1"],
+        ["H01"],
         source_dir=str(tmp_path),
         behavior_dir=str(tmp_path),
         subjects_dir=str(tmp_path / "subjects"),
@@ -250,7 +250,7 @@ def test_erp_workflow_declares_inputs_and_outputs(tmp_path):
 
     result = extract_erp_features(
         project,
-        subjects=["H1"],
+        subjects=["H01"],
         settings=ERPConfig(
             run="Slow1",
             feature_space="all_source",

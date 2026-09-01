@@ -22,7 +22,7 @@ import matplotlib.pyplot as plt
 import mne
 import numpy as np
 
-from meg_tokens.core import ProjectConfig, normalize_subject_id
+from meg_tokens.core import ProjectConfig
 from meg_tokens.io import DerivativeLayout, ensure_dir, sidecar_path
 from meg_tokens.meg.coregistration import (
     head_to_mri,
@@ -101,7 +101,6 @@ def render_subject_coregistration(
     output_root: Optional[str | Path] = None,
 ) -> Path:
     """Rebuild one subject's coregistration QC figure from its saved transform."""
-    subject = normalize_subject_id(subject)
     layout = DerivativeLayout(output_root or project.bids_root, task=project.task)
 
     probe = layout.path(subject=subject, suffix="trans", extension=".fif")

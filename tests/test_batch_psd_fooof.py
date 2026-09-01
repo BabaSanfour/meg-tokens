@@ -58,7 +58,7 @@ def _write_epochs(root):
 def test_find_epoch_derivatives_filters_by_metadata(tmp_path):
     path = _write_epochs(tmp_path)
 
-    found = find_epoch_derivatives(tmp_path, "H1", condition="Fast", align_to="go")
+    found = find_epoch_derivatives(tmp_path, "H01", condition="Fast", align_to="go")
 
     assert found == [path]
 

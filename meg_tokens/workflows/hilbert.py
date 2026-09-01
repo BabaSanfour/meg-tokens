@@ -9,7 +9,6 @@ from meg_tokens.core import (
     HilbertConfig,
     ProjectConfig,
     WorkflowResult,
-    normalize_subject_id,
     parse_run_label,
 )
 from meg_tokens.features.connectivity import infer_sfreq_from_times
@@ -104,7 +103,6 @@ def run_batch_hilbert_features(
     outputs: dict[str, list[Path]] = {}
 
     for subject in subjects:
-        subject = normalize_subject_id(subject)
         outputs[subject] = []
         for condition in conditions:
             paths = find_feature_arrays(
@@ -228,7 +226,7 @@ def extract_hilbert_features(
         inputs=inputs,
         outputs=output_paths,
         settings={
-            "subjects": [normalize_subject_id(subject) for subject in subjects],
+            "subjects": [subject for subject in subjects],
             **settings.__dict__,
         },
     )

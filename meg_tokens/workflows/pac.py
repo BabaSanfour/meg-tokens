@@ -11,7 +11,6 @@ from meg_tokens.core import (
     PACConfig,
     ProjectConfig,
     WorkflowResult,
-    normalize_subject_id,
     parse_run_label,
 )
 from meg_tokens.features.pac import modulation_index, select_time_window
@@ -59,7 +58,6 @@ def find_hilbert_feature_arrays(
     runs: Optional[Sequence[str]] = None,
 ) -> list[Path]:
     """Find Stage 11 Hilbert feature derivatives for one band/feature."""
-    subject = normalize_subject_id(subject)
     if runs:
         candidates = [
             hilbert_feature_derivative_path(
@@ -166,7 +164,6 @@ def run_batch_pac_cfc(
     outputs: dict[str, list[Path]] = {}
 
     for subject in subjects:
-        subject = normalize_subject_id(subject)
         outputs[subject] = []
         for condition in conditions:
             reference_paths = find_hilbert_feature_arrays(
@@ -332,7 +329,7 @@ def extract_pac_features(
         inputs=tuple(sorted(inputs)),
         outputs=tuple(path for paths in outputs.values() for path in paths),
         settings={
-            "subjects": [normalize_subject_id(subject) for subject in subjects],
+            "subjects": [subject for subject in subjects],
             **settings.__dict__,
         },
     )

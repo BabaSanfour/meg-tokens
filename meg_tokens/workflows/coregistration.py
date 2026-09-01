@@ -31,7 +31,6 @@ from meg_tokens.core import (
     CoregistrationConfig,
     ProjectConfig,
     WorkflowResult,
-    normalize_subject_id,
 )
 from meg_tokens.io import (
     DerivativeLayout,
@@ -150,7 +149,7 @@ def coregister_subjects(
     destination = Path(output_root or bids_root)
     layout = DerivativeLayout(destination, task=project.task)
 
-    selected = [normalize_subject_id(s) for s in (subjects or staged_subjects(bids_root))]
+    selected = [s for s in (subjects or staged_subjects(bids_root))]
     if not selected:
         raise FileNotFoundError(f"No staged subject MEG was found under {bids_root}")
 

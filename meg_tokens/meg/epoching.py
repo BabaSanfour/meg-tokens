@@ -244,7 +244,7 @@ def get_event_id(align_to: str, subject_id: Optional[str] = None) -> dict:
     if key not in DEFAULT_EVENT_IDS:
         raise ValueError(f"Unknown alignment event: {align_to}")
     if subject_id is not None:
-        subject = normalize_subject_id(subject_id)
+        subject = subject_id
         override = SUBJECT_EVENT_OVERRIDES.get(subject, {}).get(key)
         if override is not None:
             return override.copy()
@@ -381,7 +381,7 @@ def save_epochs_and_events(
         Dict containing saved file paths.
     """
     if bids_format:
-        subject = normalize_subject_id(subject_id)
+        subject = subject_id
         run, inferred_condition = parse_run_label(run_id)
         condition = condition or inferred_condition
         layout = DerivativeLayout(output_dir)

@@ -63,7 +63,7 @@ from meg_tokens.behavior.analyses.sequential_sampling import (
     urgency_condition_contrast,
 )
 from meg_tokens.behavior.tables import read_trial_features
-from meg_tokens.core import ProjectConfig, WorkflowResult, normalize_subject_id
+from meg_tokens.core import ProjectConfig, WorkflowResult
 from meg_tokens.io import (
     DerivativeLayout,
     load_table,
@@ -184,7 +184,7 @@ def _selected_features(
     if excluded:
         features = features.loc[~features["subject"].isin(excluded)]
     if subjects:
-        wanted = {normalize_subject_id(subject) for subject in subjects}
+        wanted = {subject for subject in subjects}
         features = features.loc[features["subject"].isin(wanted)]
     if features.empty:
         raise ValueError(

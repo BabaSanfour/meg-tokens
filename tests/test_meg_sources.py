@@ -214,7 +214,7 @@ def test_save_source_estimates_writes_manifest(tmp_path):
     stc1 = StcStub(np.zeros((4, 10)))
     stc2 = StcStub(np.ones((4, 10)))
 
-    manifest = save_source_estimates([stc1, stc2], tmp_path, "H1", "Slow1", None, "go", "dSPM")
+    manifest = save_source_estimates([stc1, stc2], tmp_path, "H01", "Slow1", None, "go", "dSPM")
 
     assert len(stc1.save_calls) == 1
     assert len(stc2.save_calls) == 1

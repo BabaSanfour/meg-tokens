@@ -81,7 +81,7 @@ def test_find_feature_arrays_and_build_dataset_selects_labels(tmp_path):
 
     paths = find_feature_arrays(
         tmp_path,
-        "H1",
+        "H01",
         "Fast",
         feature_source="erp",
         align_to="go",

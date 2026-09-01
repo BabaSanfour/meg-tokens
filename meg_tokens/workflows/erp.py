@@ -19,7 +19,6 @@ from meg_tokens.core import (
     ERPConfig,
     ProjectConfig,
     WorkflowResult,
-    normalize_subject_id,
     parse_run_label,
 )
 from meg_tokens.features.erp import align_and_pad_epochs, parcellate_source_estimates, select_source_feature_data
@@ -68,7 +67,6 @@ def find_source_space_file(source_dir: str, subject: str, spacing: str) -> Optio
     )
     if expected.is_file():
         return expected
-    subject = normalize_subject_id(subject)
     matches = sorted(Path(source_dir).glob(f"**/sub-{subject}_task-tokens_space-subject_desc-{spacing}_src.fif"))
     existing = [path for path in matches if path.is_file()]
     if not existing:
@@ -268,7 +266,7 @@ def extract_parcellated_erp_from_manifest(
         source_space = mne.read_source_spaces(str(require_file(source_space_path, purpose="Stage 3 source space")))
 
     if feature_space == "parcellated":
-        label_subject = label_subject or reference.subject or normalize_subject_id(subject)
+        label_subject = label_subject or reference.subject or subject
     else:
         label_subject = None
 
@@ -350,7 +348,7 @@ def extract_parcellated_erp_from_manifest(
         metadata={
             "stage": "erp_parcellation",
             "kind": "included_trial_metadata",
-            "subject": normalize_subject_id(subject),
+            "subject": subject,
             "run": parse_run_label(run)[0],
             "condition": condition_for_path,
             "alignment": align_to,
@@ -372,7 +370,7 @@ def extract_parcellated_erp_from_manifest(
         metadata={
             "stage": "erp_parcellation",
             "kind": f"{feature_space}_source_timeseries",
-            "subject": normalize_subject_id(subject),
+            "subject": subject,
             "run": parse_run_label(run)[0],
             "condition": condition_for_path,
             "alignment": align_to,
@@ -426,7 +424,6 @@ def run_erp_parcellation_pipeline(
 ) -> dict[str, dict[str, Path]]:
     outputs = {}
     for subject in subjects_list:
-        subject = normalize_subject_id(subject)
         manifest = DerivativeLayout(source_dir).find_source_manifest(
             subject=subject,
             run=run,
@@ -492,7 +489,6 @@ def extract_erp_features(
     )
     input_paths = []
     for subject in subjects:
-        subject = normalize_subject_id(subject)
         input_paths.append(
             DerivativeLayout(source_root or project.bids_root).find_source_manifest(
                 subject=subject,
@@ -514,7 +510,7 @@ def extract_erp_features(
         inputs=tuple(input_paths),
         outputs=output_paths,
         settings={
-            "subjects": [normalize_subject_id(subject) for subject in subjects],
+            "subjects": [subject for subject in subjects],
             **settings.__dict__,
         },
     )

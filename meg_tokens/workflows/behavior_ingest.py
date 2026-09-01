@@ -65,7 +65,7 @@ def ingest_subject_behavior(
     table_paths = raw_behavior_files(bids_root, subject)
     if not table_paths:
         raise FileNotFoundError(
-            f"No staged raw behavior for {normalize_subject_id(subject)} under "
+            f"No staged raw behavior for {subject} under "
             f"{Path(bids_root)}. Stage 1 reads the raw BIDS layer, so run "
             "`meg-tokens meg stage-raw` and `meg-tokens meg apply-raw-staging` first."
         )
@@ -158,7 +158,7 @@ def ingest_behavior(
         inputs=tuple(Path(record["input"]) for record in records),
         outputs=tuple(Path(record["output"]) for record in records),
         settings={
-            "subjects": [normalize_subject_id(subject) for subject in selected],
+            "subjects": [subject for subject in selected],
             "dry_run": dry_run,
             "n_runs": len(records),
             "infer_random_classes": project.infer_random_classes,

@@ -54,7 +54,7 @@ def test_run_batch_hilbert_features_writes_sidecar_backed_arrays(tmp_path):
     outputs = run_batch_hilbert_features(
         feature_dir=str(tmp_path),
         output_dir=str(tmp_path),
-        subjects=["H1"],
+        subjects=["H01"],
         conditions=["Fast"],
         align_to="go",
         source_method="dSPM",
@@ -96,7 +96,7 @@ def test_hilbert_workflow_declares_erp_and_outputs(tmp_path):
 
     result = extract_hilbert_features(
         project,
-        subjects=["H1"],
+        subjects=["H01"],
         settings=HilbertConfig(
             conditions=("Fast",),
             labels=("Alpha-lh",),

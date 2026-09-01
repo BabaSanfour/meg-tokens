@@ -68,7 +68,7 @@ from meg_tokens.behavior.analyses.sequential import (
     robust_post_error_slowing,
 )
 from meg_tokens.behavior.tables import read_trial_features
-from meg_tokens.core import ProjectConfig, WorkflowResult, normalize_subject_id
+from meg_tokens.core import ProjectConfig, WorkflowResult
 from meg_tokens.io import DerivativeLayout, load_table, require_file, save_table
 
 
@@ -166,7 +166,7 @@ def analyze_behavior_characterization(
         features = features.loc[~features["subject"].isin(excluded)]
         summary = summary.loc[~summary["subject"].isin(excluded)]
     if subjects:
-        selected = {normalize_subject_id(subject) for subject in subjects}
+        selected = {subject for subject in subjects}
         features = features.loc[features["subject"].isin(selected)]
         summary = summary.loc[summary["subject"].isin(selected)]
     if features.empty:

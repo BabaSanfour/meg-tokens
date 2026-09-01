@@ -9,7 +9,6 @@ from typing import Callable
 import pandas as pd
 
 from meg_tokens.behavior.tables import read_trial_features
-from meg_tokens.core import normalize_subject_id
 from meg_tokens.io import DerivativeLayout
 
 
@@ -29,7 +28,7 @@ class BehaviorTableSet:
     def _subject_filter(self, table: pd.DataFrame) -> pd.DataFrame:
         if self.subjects is None or "subject" not in table.columns:
             return table
-        wanted = {normalize_subject_id(subject) for subject in self.subjects}
+        wanted = {subject for subject in self.subjects}
         return table.loc[table["subject"].astype(str).isin(wanted)].reset_index(drop=True)
 
     def _filtered_tsv(self, path: Path) -> pd.DataFrame:

@@ -86,7 +86,7 @@ def test_find_and_discover_erp_arrays(tmp_path):
 
     arrays = find_erp_arrays(
         tmp_path,
-        "H1",
+        "H01",
         "Fast",
         align_to="go",
         source_method="dSPM",

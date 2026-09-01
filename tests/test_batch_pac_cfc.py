@@ -64,7 +64,7 @@ def test_find_hilbert_feature_arrays_matches_stage11_paths(tmp_path):
 
     found = find_hilbert_feature_arrays(
         tmp_path,
-        "H1",
+        "H01",
         "Fast",
         align_to="go",
         source_method="dSPM",
@@ -125,7 +125,7 @@ def test_pac_workflow_declares_hilbert_inputs_and_output(tmp_path):
 
     result = extract_pac_features(
         project,
-        subjects=["H1"],
+        subjects=["H01"],
         settings=PACConfig(
             conditions=("Fast",),
             phase_bands=("theta",),

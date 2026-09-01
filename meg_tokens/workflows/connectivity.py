@@ -11,7 +11,6 @@ from meg_tokens.core import (
     ConnectivityConfig,
     ProjectConfig,
     WorkflowResult,
-    normalize_subject_id,
     parse_run_label,
 )
 from meg_tokens.features.connectivity import compute_spectral_connectivity, infer_sfreq_from_times, select_time_window
@@ -154,7 +153,6 @@ def run_batch_connectivity(
     runs_by_condition = runs_by_condition or {}
 
     for subject in subjects:
-        subject = normalize_subject_id(subject)
         outputs[subject] = []
         for condition in conditions:
             paths = find_feature_arrays(
@@ -295,7 +293,7 @@ def extract_connectivity_features(
         inputs=inputs,
         outputs=tuple(path for paths in outputs.values() for path in paths),
         settings={
-            "subjects": [normalize_subject_id(subject) for subject in subjects],
+            "subjects": [subject for subject in subjects],
             **settings.__dict__,
         },
     )

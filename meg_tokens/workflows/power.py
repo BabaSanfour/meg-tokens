@@ -19,7 +19,6 @@ from meg_tokens.core import (
     PowerConfig,
     ProjectConfig,
     WorkflowResult,
-    normalize_subject_id,
     parse_run_label,
 )
 from meg_tokens.features.time_frequency import (
@@ -255,7 +254,7 @@ def extract_power_from_manifest(
         metadata = {
             "stage": "time_frequency_power",
             "kind": "source_band_power",
-            "subject": normalize_subject_id(subject),
+            "subject": subject,
             "run": parse_run_label(run)[0],
             "condition": None if pd.isna(condition) else str(condition),
             "alignment": align_to,
@@ -305,7 +304,6 @@ def run_time_frequency_pipeline(
     """Run Stage 4 power extraction for subjects with Stage 3 manifests."""
     outputs: dict[str, dict[str, Path]] = {}
     for subject in subjects_list:
-        subject = normalize_subject_id(subject)
         manifest = find_stc_manifest(source_dir, subject, run, condition, align_to, source_method)
         print(f"=== Extracting source power for {subject}: {manifest} ===")
         outputs[subject] = extract_power_from_manifest(
@@ -373,7 +371,7 @@ def extract_power_features(
         inputs=inputs,
         outputs=output_paths,
         settings={
-            "subjects": [normalize_subject_id(subject) for subject in subjects],
+            "subjects": [subject for subject in subjects],
             **settings.__dict__,
         },
     )

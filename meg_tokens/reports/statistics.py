@@ -20,7 +20,6 @@ import numpy as np
 import pandas as pd
 
 from meg_tokens.analysis.statistics import get_significance_windows
-from meg_tokens.core import normalize_subject_id
 from meg_tokens.io import (
     DerivativeLayout,
     derivative_path,
@@ -353,7 +352,6 @@ def save_timecourse_figure(
 
 
 def _behavior_tables_for_subject(behavior_dir: str, subject: str, conditions: Sequence[str]) -> list[Path]:
-    subject = normalize_subject_id(subject)
     beh_dir = Path(behavior_dir) / "derivatives" / f"sub-{subject}" / "beh"
     paths = []
     for condition in conditions:
@@ -365,7 +363,6 @@ def mean_raw_rt_by_subject(behavior_dir: str, subjects: Sequence[str], condition
     """Average real Stage 1 rawRT values per subject for the requested conditions."""
     values = {}
     for subject in subjects:
-        subject = normalize_subject_id(subject)
         rt_values = []
         for path in _behavior_tables_for_subject(behavior_dir, subject, conditions):
             table = started_trials(read_behavior_table(path))
@@ -393,11 +390,11 @@ def save_behavior_correlations(
 ) -> Optional[Path]:
     """Save optional brain-behavior correlation table and figures."""
     mean_rt = mean_raw_rt_by_subject(behavior_dir, subjects, conditions)
-    common_subjects = [normalize_subject_id(subject) for subject in subjects if normalize_subject_id(subject) in mean_rt]
+    common_subjects = [subject for subject in subjects if subject in mean_rt]
     if len(common_subjects) < 3:
         raise ValueError("At least three subjects with behavior tables are required for correlations")
 
-    subject_index = {normalize_subject_id(subject): idx for idx, subject in enumerate(subjects)}
+    subject_index = {subject: idx for idx, subject in enumerate(subjects)}
     times = _as_float_array(coords.get("time_sec"), contrast.shape[-1])
     rows = []
 

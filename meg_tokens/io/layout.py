@@ -52,6 +52,10 @@ class DerivativeLayout:
         space: Optional[str] = None,
         description: Optional[str] = None,
     ) -> Path:
+        # The single place a subject label is canonicalized. Labels arrive
+        # canonical -- the CLI normalizes on entry, the staged tree is
+        # canonical by construction -- so this is the funnel, not a check
+        # repeated by every caller.
         return derivative_path(
             self.root,
             subject=normalize_subject_id(subject) if subject.lower() != "group" else "group",
@@ -84,7 +88,6 @@ class DerivativeLayout:
         condition: Optional[str] = None,
     ) -> Path:
         """Find the unique behavior table for one run."""
-        subject = normalize_subject_id(subject)
         run_number, inferred = parse_run_label(run)
         condition = condition or inferred
         directory = self.root / "derivatives" / f"sub-{subject}" / "beh"
@@ -264,7 +267,6 @@ class DerivativeLayout:
         alignment: str,
     ) -> Path:
         """Find the unique epoch derivative for one run and alignment."""
-        subject = normalize_subject_id(subject)
         run_number, inferred = parse_run_label(run)
         condition = condition or inferred
         expected = self.epochs(
@@ -309,7 +311,6 @@ class DerivativeLayout:
         otherwise; without it an ambiguous match still raises rather than
         picking.
         """
-        subject = normalize_subject_id(subject)
         if run is not None:
             run_number, inferred = parse_run_label(run)
             condition = _condition(condition or inferred)
@@ -416,7 +417,6 @@ class DerivativeLayout:
         source_method: str,
     ) -> Path:
         """Find the unique source-estimate manifest for one run."""
-        subject = normalize_subject_id(subject)
         run_number, inferred = parse_run_label(run)
         condition = condition or inferred
         expected = self.source(
@@ -493,7 +493,6 @@ class DerivativeLayout:
         runs: Optional[Sequence[str]] = None,
     ) -> list[Path]:
         """Find ERP arrays for one subject and condition."""
-        subject = normalize_subject_id(subject)
         if runs:
             candidates = [
                 self.erp(

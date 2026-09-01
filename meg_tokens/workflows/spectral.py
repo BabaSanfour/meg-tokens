@@ -110,7 +110,6 @@ def find_epoch_derivatives(
     align_to: Optional[str] = None,
 ) -> list[Path]:
     """Find staged Epochs FIF derivatives for one subject."""
-    subject = normalize_subject_id(subject)
     root = Path(epochs_dir)
     pattern = f"**/sub-{subject}_task-tokens_run-*_desc-*_epo.fif"
     candidates = sorted(path for path in root.glob(pattern) if path.is_file())
@@ -373,7 +372,6 @@ def run_psd_specparam(
     """Run PSD/specparam extraction for staged Epochs derivatives."""
     outputs: dict[str, list[dict[str, Path]]] = {}
     for subject in subjects:
-        subject = normalize_subject_id(subject)
         outputs[subject] = []
         epoch_files = find_epoch_derivatives(
             epochs_dir,
@@ -447,7 +445,7 @@ def extract_spectral_features(
         inputs=inputs,
         outputs=output_paths,
         settings={
-            "subjects": [normalize_subject_id(subject) for subject in subjects],
+            "subjects": [subject for subject in subjects],
             **settings.__dict__,
         },
     )

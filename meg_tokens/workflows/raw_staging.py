@@ -18,7 +18,7 @@ import pandas as pd
 
 from meg_tokens.behavior.tdms import FILENAME_RE, parse_tdms_filename
 from meg_tokens.behavior.tdms_bids import write_beh_bids
-from meg_tokens.core import ProjectConfig, RawStagingConfig, WorkflowResult, normalize_subject_id
+from meg_tokens.core import ProjectConfig, RawStagingConfig, WorkflowResult
 from meg_tokens.io import DerivativeLayout, ensure_dir, save_table
 from meg_tokens.meg.anat_bids import write_anat_bids
 from meg_tokens.meg.meg_bids import write_emptyroom_bids, write_meg_bids
@@ -96,7 +96,7 @@ def plan_raw_staging(
     (optionally hand-edited first) to materialize the raw BIDS layers.
     """
     root = project.raw_meg_root
-    normalized_subjects = [normalize_subject_id(subject) for subject in subjects]
+    normalized_subjects = [subject for subject in subjects]
 
     rows = []
     for subject in normalized_subjects:
@@ -174,7 +174,6 @@ def _matching_tdms_files(project: ProjectConfig, subject: str) -> list[Path]:
     resolve to one BIDS path, so the second would silently overwrite the
     first and the loss would be invisible afterwards.
     """
-    subject = normalize_subject_id(subject)
     subject_dir = Path(project.behavior_root) / subject
     ignored = set(project.behavior_ignore_files)
 
@@ -245,7 +244,7 @@ def apply_raw_staging(
     table = pd.read_csv(path, sep="\t", dtype={"condition": str, "date": str})
 
     subject_filter = (
-        {normalize_subject_id(subject) for subject in subjects} if subjects else None
+        {subject for subject in subjects} if subjects else None
     )
     staged = table[table["action"] == "stage"]
     if subject_filter is not None:
