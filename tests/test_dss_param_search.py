@@ -19,7 +19,7 @@ import numpy as np
 import pytest
 
 from meg_tokens.meg import preprocessing
-from scripts.qc.dss_param_search import grid, metrics, runner, summarize
+from scripts.qc.dss_param_search import grid, metrics, runner, streams, summarize
 
 SUBJECTS = [f"H{index:02d}" for index in range(1, 33)]
 
@@ -576,3 +576,77 @@ def test_summarize_writes_a_table_and_a_summary(tmp_path):
 def test_summarize_refuses_an_empty_input_root(tmp_path):
     with pytest.raises(SystemExit, match="no sub-"):
         summarize.load(tmp_path)
+
+
+# ------------------------------------------------------------------- cleaners
+
+def test_the_narrow_windows_are_narrower_than_the_ranking_window():
+    """The reason both exist: one ranks configurations, one quotes an absolute."""
+    wide = metrics.SCORING_WINDOW
+    for key, window in metrics.NARROW_WINDOWS.items():
+        assert window[0] > wide[0] and window[1] < wide[1], key
+        assert window[1] - window[0] < (wide[1] - wide[0]) / 2, key
+
+
+def test_the_top_pattern_search_finds_a_subdominant_artifact():
+    """A combined cleaner removes cardiac and ocular at once.
+
+    Its dominant pattern tracks whichever is larger, so the other scores near
+    zero however well it was removed. `reference_correlation_top` asks the fair
+    question of both; the single-pattern form used by the per-stage grid cannot.
+    """
+    rng = np.random.default_rng(0)
+    samples = 4000
+    loud = np.sin(np.linspace(0, 200, samples))
+    quiet = np.sin(np.linspace(0, 37, samples))
+    removed = (
+        5.0 * np.outer(rng.normal(size=64), loud) + np.outer(rng.normal(size=64), quiet)
+    )
+
+    assert metrics.reference_correlation_top(removed, loud, k=1) > 0.99
+    assert metrics.reference_correlation_top(removed, quiet, k=1) < 0.2
+    assert metrics.reference_correlation_top(removed, quiet, k=3) > 0.99
+
+
+def test_score_cleaning_reports_every_artifact_on_both_windows():
+    rng = np.random.default_rng(1)
+    sfreq = 600.0
+    before = _raw(1e-12 * rng.normal(size=(8, 12000)), sfreq)
+    after = _raw(1e-12 * rng.normal(size=(8, 12000)), sfreq)
+    events = {
+        "ecg": np.arange(1200, 10800, 600),
+        "blink": np.arange(1200, 10800, 1200),
+        "saccade": np.arange(1200, 10800, 2400),
+    }
+    references = {"ecg": rng.normal(size=12000), "veog": rng.normal(size=12000)}
+
+    scores = metrics.score_cleaning(before, after, np.arange(8), events, references)
+    for key in ("ecg", "blink", "saccade"):
+        assert f"{key}_removed_wide_percent" in scores
+        assert f"{key}_removed_narrow_percent" in scores
+    assert {"reference_r_ecg", "reference_r_veog", "alpha_delta_db",
+            "muscle_reduction_db"} <= set(scores)
+
+
+def test_a_cleaner_that_raises_is_recorded_not_dropped(monkeypatch):
+    """An arm missing from the table reads as an arm that was never run."""
+    rng = np.random.default_rng(2)
+    trunk = _raw(1e-12 * rng.normal(size=(6, 6000)))
+    events = {k: np.arange(600, 5400, 600) for k in ("ecg", "blink", "saccade")}
+
+    monkeypatch.setattr(
+        streams, "reference_signals", lambda trunk: {"ecg": np.zeros(trunk.n_times)}
+    )
+    monkeypatch.setattr(
+        streams, "CLEANERS", {"boom": lambda raw, events: 1 / 0}, raising=False
+    )
+    rows = streams.compare_streams(trunk, events, np.arange(6), streams=("boom",))
+    assert len(rows) == 1
+    assert "ZeroDivisionError" in rows[0]["failed"]
+    assert rows[0]["stream"] == "boom"
+
+
+def test_the_incumbent_runs_first():
+    """A truncated task must not be one that dropped the arm it compares against."""
+    assert streams.STREAMS[0] == "ica"
+    assert set(streams.STREAMS) == {"dss", "ica", "ssp"}

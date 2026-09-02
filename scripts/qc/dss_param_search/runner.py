@@ -37,6 +37,7 @@ from meg_tokens.meg.preprocessing import (
 )
 
 from scripts.qc.dss_param_search import grid as grid_module
+from scripts.qc.dss_param_search import streams as streams_module
 from scripts.qc.dss_param_search.metrics import (
     ALPHA_BAND,
     artifact_presence,
@@ -131,8 +132,14 @@ def search_recording(
     path: Path,
     *,
     stages: tuple[str, ...] = grid_module.STAGES,
+    mode: str = "grid",
 ) -> dict:
-    """Every configuration for every requested stage, on one recording."""
+    """Every configuration for every requested stage, on one recording.
+
+    ``mode`` selects the grid, the three-cleaner comparison, or both. They
+    share the trunk, which is the expensive part, so asking for both costs one
+    trunk rather than two.
+    """
     raw, source_grade = read_staged_raw(path)
     trunk, trunk_report = build_trunk(raw, source_grade)
     del raw
@@ -143,9 +150,13 @@ def search_recording(
     presence = artifact_presence(trunk, events, picks)
     blink_cache: dict[float, np.ndarray] = {}
     rows: list[dict] = []
-    current = trunk
+    stream_rows: list[dict] = []
 
-    for stage in grid_module.STAGES:
+    if mode in ("streams", "both"):
+        stream_rows = streams_module.compare_streams(trunk, events, picks)
+
+    current = trunk
+    for stage in grid_module.STAGES if mode in ("grid", "both") else ():
         production = grid_module.production_config(stage)
         reference = _reference_signal(trunk, stage)
         scoring_events = None if stage == "muscle" else events["ecg" if stage == "qrs" else "blink"]
@@ -205,9 +216,11 @@ def search_recording(
             del current
         current = next_input
 
-    del current
+    if current is not trunk:
+        del current
     return {
         "recording": str(path),
+        "streams": stream_rows,
         "presence": presence,
         "trunk": {
             "compensation_grade_source": trunk_report.compensation_grade_source,
@@ -262,6 +275,9 @@ def build_parser() -> argparse.ArgumentParser:
                         help="only with --subject; --index carries its own")
     parser.add_argument("--stages", nargs="+", default=list(grid_module.STAGES),
                         choices=list(grid_module.STAGES))
+    parser.add_argument("--mode", default="grid", choices=("grid", "streams", "both"),
+                        help="the DSS parameter grid, the three-cleaner comparison, "
+                             "or both off one trunk")
     return parser
 
 
@@ -283,7 +299,7 @@ def main(argv: list[str] | None = None) -> int:
 
     mne.set_log_level("ERROR")
     started = time.monotonic()
-    result = search_recording(path, stages=tuple(args.stages))
+    result = search_recording(path, stages=tuple(args.stages), mode=args.mode)
     result.update({
         "subject": subject,
         "condition": condition,
@@ -296,8 +312,8 @@ def main(argv: list[str] | None = None) -> int:
     args.output_root.mkdir(parents=True, exist_ok=True)
     out = output_path(args.output_root, subject, condition, run)
     out.write_text(json.dumps(result, indent=2, sort_keys=True))
-    print(f"{subject} {condition} {run}: {len(result['rows'])} rows "
-          f"in {result['total_seconds']}s -> {out.name}")
+    print(f"{subject} {condition} {run}: {len(result['rows'])} grid rows, "
+          f"{len(result['streams'])} stream rows in {result['total_seconds']}s -> {out.name}")
     return 0
 
 
