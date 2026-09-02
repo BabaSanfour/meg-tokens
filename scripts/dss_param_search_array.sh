@@ -2,8 +2,12 @@
 # Restartable Slurm array for the DSS parameter search: one task per subject,
 # fifty configurations per task. Never run this on a login node.
 #
-#   sbatch --array=0-31%16 scripts/dss_param_search_array.sh \
+#   sbatch --array=0-318%64 scripts/dss_param_search_array.sh \
 #       <bids_root> <output_root> [python]
+#
+# One task per staged *recording* -- 319 of them, ten per subject bar H05's
+# missing RT run 1 -- not one per subject. Fast run 1 alone leaves the muscle
+# stage with sixteen recordings that carry any muscle to find.
 #
 # `python` defaults to this checkout's own `./.venv/bin/python`, matching every
 # other launcher here. Name one explicitly when running from a checkout that has

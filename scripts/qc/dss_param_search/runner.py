@@ -222,6 +222,18 @@ def search_recording(
     }
 
 
+def output_path(output_root: Path, subject: str, condition: str, run: str) -> Path:
+    """Where one recording's result goes.
+
+    Named for the recording rather than the subject. Ten runs per subject
+    writing one filename would overwrite each other and the array would report
+    319 successes for 32 files.
+    """
+    return Path(output_root) / (
+        f"sub-{subject}_task-tokens_acq-{condition.lower()}_run-{run}_dsssearch.json"
+    )
+
+
 def _commit() -> str:
     """Provenance, including for a checkout without a ``.git``."""
     recorded = os.environ.get("DSS_SEARCH_SOURCE_COMMIT")
@@ -241,10 +253,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--bids-root", required=True, type=Path)
     parser.add_argument("--output-root", required=True, type=Path)
     group = parser.add_mutually_exclusive_group(required=True)
-    group.add_argument("--index", type=int, help="array index into the staged subjects")
+    group.add_argument("--index", type=int,
+                       help="array index into every staged recording (319 of them)")
     group.add_argument("--subject")
-    parser.add_argument("--condition", default="Fast")
-    parser.add_argument("--run", default=1, type=int)
+    parser.add_argument("--condition", default="Fast",
+                        help="only with --subject; --index carries its own")
+    parser.add_argument("--run", default="1",
+                        help="only with --subject; --index carries its own")
     parser.add_argument("--stages", nargs="+", default=list(grid_module.STAGES),
                         choices=list(grid_module.STAGES))
     return parser
@@ -253,16 +268,16 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
 
-    subjects = staged_subjects(args.bids_root)
     if args.index is not None:
-        if args.index >= len(subjects):
-            print(f"array index {args.index} outside {len(subjects)} staged subjects")
+        grid = grid_module.recordings(args.bids_root)
+        if args.index >= len(grid):
+            print(f"array index {args.index} outside {len(grid)} staged recordings")
             return 0
-        subject = subjects[args.index]
+        subject, condition, run = grid[args.index]
     else:
-        subject = args.subject
+        subject, condition, run = args.subject, args.condition, str(args.run)
 
-    path = raw_meg_path(args.bids_root, subject, args.condition, args.run)
+    path = raw_meg_path(args.bids_root, subject, condition, run)
     if not path.is_dir():
         raise SystemExit(f"not staged: {path}")
 
@@ -271,17 +286,18 @@ def main(argv: list[str] | None = None) -> int:
     result = search_recording(path, stages=tuple(args.stages))
     result.update({
         "subject": subject,
-        "condition": args.condition,
-        "run": args.run,
-        "fold": grid_module.folds(subjects)[subject],
+        "condition": condition,
+        "run": run,
+        "fold": grid_module.folds(staged_subjects(args.bids_root))[subject],
         "commit": _commit(),
         "total_seconds": round(time.monotonic() - started, 1),
     })
 
     args.output_root.mkdir(parents=True, exist_ok=True)
-    out = args.output_root / f"sub-{subject}_dsssearch.json"
+    out = output_path(args.output_root, subject, condition, run)
     out.write_text(json.dumps(result, indent=2, sort_keys=True))
-    print(f"{subject}: {len(result['rows'])} rows in {result['total_seconds']}s -> {out}")
+    print(f"{subject} {condition} {run}: {len(result['rows'])} rows "
+          f"in {result['total_seconds']}s -> {out.name}")
     return 0
 
 

@@ -91,6 +91,39 @@ def test_production_row_reproduces_the_cleaner_defaults():
     assert grid.PRODUCTION["muscle"]["freq_band"] == preprocessing.MUSCLE_BAND
 
 
+def test_recordings_enumerate_every_staged_run_in_a_stable_order(tmp_path):
+    """An array index must mean the same recording on every submission.
+
+    Walked from `RAW_MEG_RUNS` inside sorted subjects rather than globbed, so a
+    requeued task redoes its own work and not a neighbour's.
+    """
+    for subject, condition, run in [
+        ("H02", "fast", 1), ("H01", "slow", 4), ("H01", "fast", 1), ("H01", "rt", 2),
+    ]:
+        path = tmp_path / f"sub-{subject}" / "meg" / (
+            f"sub-{subject}_task-tokens_acq-{condition}_run-{run}_meg.ds"
+        )
+        path.mkdir(parents=True)
+
+    found = grid.recordings(tmp_path)
+    assert found == [
+        ("H01", "Fast", "1"), ("H01", "RT", "2"), ("H01", "Slow", "4"), ("H02", "Fast", "1"),
+    ]
+    assert grid.recordings(tmp_path) == found
+
+
+def test_each_recording_gets_its_own_output_file():
+    """Ten runs per subject writing one name would report success for one."""
+    paths = {
+        runner.output_path(Path("/out"), "H01", condition, run)
+        for condition, run in [("Fast", "1"), ("Fast", "2"), ("Slow", "1"), ("RT", "2")]
+    }
+    assert len(paths) == 4
+    assert runner.output_path(Path("/out"), "H01", "Fast", "1").name == (
+        "sub-H01_task-tokens_acq-fast_run-1_dsssearch.json"
+    )
+
+
 def test_folds_split_the_cohort_deterministically_and_not_by_subject_number():
     search = {s for s, fold in grid.folds(SUBJECTS).items() if fold == "search"}
     confirm = {s for s, fold in grid.folds(SUBJECTS).items() if fold == "confirm"}
@@ -390,6 +423,69 @@ def test_a_label_absent_from_the_current_grid_still_reaches_the_table():
     assert table[0]["wins"] == 1
 
 
+def test_a_subject_with_many_runs_counts_once():
+    """Recording counts multiply the apparent evidence by ten.
+
+    `loud` is best on all ten of one subject's runs; `quiet` is best on the
+    single run of each of three other subjects. Counted by recording that is
+    10 against 3; counted by subject it is 1 against 3, which is the number of
+    independent observations there actually are.
+    """
+    production = grid.production_config("qrs").label
+    loud, quiet = "qrs|loud", "qrs|quiet"
+
+    def rows(loud_r, quiet_r):
+        return [
+            _row("qrs", production, is_production=True, reference_r=0.10),
+            _row("qrs", loud, reference_r=loud_r),
+            _row("qrs", quiet, reference_r=quiet_r),
+        ]
+
+    records = [
+        {**_record("H01", "search", rows(0.90, 0.20)), "run": str(index)}
+        for index in range(1, 11)
+    ]
+    records += [
+        _record(f"H{index:02d}", "search", rows(0.20, 0.90)) for index in (2, 3, 4)
+    ]
+
+    table = summarize.stage_table(
+        records, "qrs", fold="search",
+        alpha_slack=0.1, dimension_budget=20, muscle_floor=0.005,
+    )
+    by_label = {row["label"]: row for row in table}
+    assert by_label[loud]["wins"] == 10 and by_label[loud]["subject_wins"] == 1
+    assert by_label[quiet]["wins"] == 3 and by_label[quiet]["subject_wins"] == 3
+    assert by_label[loud]["n_recordings"] == 13
+    assert by_label[loud]["n_subjects"] == 4
+    assert table[0]["label"] == quiet
+
+
+def test_confirmation_pairs_each_subject_once_across_its_runs():
+    production = grid.production_config("qrs").label
+    candidate = "qrs|candidate"
+    records = [
+        {**_record("H02", "confirm", [
+            _row("qrs", production, is_production=True, reference_r=0.50),
+            _row("qrs", candidate, reference_r=0.50 + delta),
+        ]), "run": str(index)}
+        for index, delta in enumerate([0.10, 0.12, 0.08], start=1)
+    ]
+    records.append(_record("H03", "confirm", [
+        _row("qrs", production, is_production=True, reference_r=0.50),
+        _row("qrs", candidate, reference_r=0.40),
+    ]))
+
+    result = summarize.confirm(
+        records, "qrs", candidate,
+        alpha_slack=0.1, dimension_budget=20, muscle_floor=0.005,
+    )
+    assert result["of"] == 2, "two subjects, not four recordings"
+    assert result["beats_production_on"] == 1
+    assert result["delta_median"] == pytest.approx(0.0)
+    assert result["delta_max"] == pytest.approx(0.10), "H02's median of +0.10/+0.12/+0.08"
+
+
 def test_the_muscle_stage_ignores_recordings_that_carry_no_muscle():
     """Zero components on a clean recording is the correct answer, not a miss."""
     production = grid.production_config("muscle").label
@@ -407,7 +503,7 @@ def test_the_muscle_stage_ignores_recordings_that_carry_no_muscle():
         alpha_slack=0.1, dimension_budget=20, muscle_floor=0.005,
     )
     row = next(row for row in table if row["label"] == production)
-    assert row["n_subjects"] == 1
+    assert row["n_recordings"] == 1
     assert row["objective_median"] == pytest.approx(0.9)
 
 

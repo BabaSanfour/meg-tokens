@@ -75,6 +75,33 @@ def load(input_root: Path) -> list[dict]:
     return records
 
 
+def _admissible(
+    records: list[dict], stage: str, *, alpha_slack: float, dimension_budget: int
+) -> dict[str, list[tuple[dict, dict]]]:
+    """Per subject, its recordings for one stage as ``(rows, affordable)`` pairs."""
+    production_label = grid_module.production_config(stage).label
+    by_subject: dict[str, list[tuple[dict, dict]]] = {}
+    for record in records:
+        rows = {row["label"]: row for row in record["rows"] if row["stage"] == stage}
+        incumbent = rows.get(production_label)
+        affordable = {
+            label: feasible(row, incumbent, alpha_slack=alpha_slack,
+                            dimension_budget=dimension_budget)
+            for label, row in rows.items()
+        }
+        by_subject.setdefault(record["subject"], []).append((rows, affordable))
+    return by_subject
+
+
+def _eligible(records: list[dict], stage: str, *, fold: str, muscle_floor: float) -> list[dict]:
+    """Recordings in one fold that can speak to one stage."""
+    return [
+        record for record in records
+        if record["fold"] == fold
+        and (stage != "muscle" or record["presence"]["muscle_annotated_fraction"] >= muscle_floor)
+    ]
+
+
 def stage_table(
     records: list[dict],
     stage: str,
@@ -84,36 +111,44 @@ def stage_table(
     dimension_budget: int,
     muscle_floor: float,
 ) -> list[dict]:
-    """One row per configuration: wins, feasibility, and the objective's spread."""
+    """One row per configuration, counted at two units.
+
+    ``wins`` counts recordings and ``subject_wins`` counts subjects, and the
+    table is ranked on the second. A subject's ten runs are one subject's
+    physiology recorded ten times, not ten independent draws, so a recording
+    count multiplies the apparent evidence by ten and lets one unusual subject
+    with a full complement of runs outvote three ordinary ones. A subject is
+    awarded to whichever configuration has the best median across that
+    subject's own admissible recordings.
+    """
     objective = OBJECTIVE[stage]
     production_label = grid_module.production_config(stage).label
-    eligible = [
-        record for record in records
-        if record["fold"] == fold
-        and (stage != "muscle" or record["presence"]["muscle_annotated_fraction"] >= muscle_floor)
-    ]
+    eligible = _eligible(records, stage, fold=fold, muscle_floor=muscle_floor)
+    by_subject = _admissible(
+        eligible, stage, alpha_slack=alpha_slack, dimension_budget=dimension_budget
+    )
 
-    # Per subject: its rows for this stage, and whether each is affordable
-    # against that subject's own production cost.
-    per_subject = []
-    for record in eligible:
-        rows = {row["label"]: row for row in record["rows"] if row["stage"] == stage}
-        incumbent = rows.get(production_label)
-        per_subject.append((rows, {
-            label: feasible(row, incumbent, alpha_slack=alpha_slack,
-                            dimension_budget=dimension_budget)
-            for label, row in rows.items()
-        }))
-
-    wins: dict[str, int] = {}
-    for rows, affordable in per_subject:
-        scored = [
+    def scored(rows: dict, affordable: dict) -> list[dict]:
+        return [
             row for label, row in rows.items()
             if affordable[label] and row.get(objective) == row.get(objective)
         ]
-        if scored:
-            best = max(scored, key=lambda row: row[objective])
-            wins[best["label"]] = wins.get(best["label"], 0) + 1
+
+    wins: dict[str, int] = {}
+    subject_wins: dict[str, int] = {}
+    for recordings in by_subject.values():
+        for rows, affordable in recordings:
+            candidates = scored(rows, affordable)
+            if candidates:
+                best = max(candidates, key=lambda row: row[objective])
+                wins[best["label"]] = wins.get(best["label"], 0) + 1
+        medians = {}
+        for rows, affordable in recordings:
+            for row in scored(rows, affordable):
+                medians.setdefault(row["label"], []).append(row[objective])
+        if medians:
+            best = max(medians, key=lambda label: statistics.median(medians[label]))
+            subject_wins[best] = subject_wins.get(best, 0) + 1
 
     # Rows come from the labels the run actually produced, not from the current
     # grid. Deriving them from the grid means editing `grid.py` and then
@@ -125,38 +160,46 @@ def stage_table(
     })
     table = []
     for label in labels:
-        rows = [subject[label] for subject, _ in per_subject if label in subject]
-        scored = [row[objective] for row in rows if row.get(objective) == row.get(objective)]
-        n_feasible = sum(
-            affordable.get(label, False) for _, affordable in per_subject
-        )
+        rows, n_feasible = [], 0
+        for recordings in by_subject.values():
+            for row_map, affordable in recordings:
+                if label in row_map:
+                    rows.append(row_map[label])
+                    n_feasible += bool(affordable[label])
+        values = [row[objective] for row in rows if row.get(objective) == row.get(objective)]
         alphas = [row["alpha_delta_db"] for row in rows if "alpha_delta_db" in row]
         counts = [row["n_selected"] for row in rows if "n_selected" in row]
         table.append({
             "stage": stage,
             "label": label,
             "is_production": label == production_label,
-            "n_subjects": len(rows),
+            "n_subjects": len(by_subject),
+            "n_recordings": len(rows),
             "n_feasible": n_feasible,
             "n_failed": sum("failed" in row for row in rows),
+            "subject_wins": subject_wins.get(label, 0),
             "wins": wins.get(label, 0),
-            "objective_median": statistics.median(scored) if scored else float("nan"),
-            "objective_min": min(scored) if scored else float("nan"),
-            "objective_max": max(scored) if scored else float("nan"),
+            "objective_median": statistics.median(values) if values else float("nan"),
+            "objective_min": min(values) if values else float("nan"),
+            "objective_max": max(values) if values else float("nan"),
             "alpha_delta_median": statistics.median(alphas) if alphas else float("nan"),
             "n_selected_median": statistics.median(counts) if counts else float("nan"),
         })
-    return sorted(table, key=lambda row: (-row["wins"], -row["objective_median"]))
+    return sorted(
+        table,
+        key=lambda row: (-row["subject_wins"], -row["wins"], -row["objective_median"]),
+    )
 
 
 def confirm(
     records: list[dict], stage: str, winner: str, *,
     alpha_slack: float, dimension_budget: int, muscle_floor: float,
 ) -> dict:
-    """Head-to-head against production on the held-out fold, per subject.
+    """Head-to-head against production on the held-out fold, one point per subject.
 
-    A paired difference against production, so a winner that *is* production is
-    reported as such rather than as a zero-delta contest with itself.
+    Paired per subject on the median across that subject's runs, so a subject
+    with ten recordings does not count ten times. A winner that *is* production
+    is reported as such rather than as a zero-delta contest with itself.
     """
     objective = OBJECTIVE[stage]
     production = grid_module.production_config(stage).label
@@ -168,25 +211,29 @@ def confirm(
             "delta_median": float("nan"),
             "delta_min": float("nan"), "delta_max": float("nan"),
         }
+
+    eligible = _eligible(records, stage, fold="confirm", muscle_floor=muscle_floor)
+    by_subject = _admissible(
+        eligible, stage, alpha_slack=alpha_slack, dimension_budget=dimension_budget
+    )
     beats, total, deltas = 0, 0, []
-    for record in records:
-        if record["fold"] != "confirm":
+    for recordings in by_subject.values():
+        paired = []
+        for rows, affordable in recordings:
+            if winner not in rows or production not in rows:
+                continue
+            candidate, incumbent = rows[winner], rows[production]
+            if not affordable[winner]:
+                continue
+            if candidate.get(objective) != candidate.get(objective):
+                continue
+            if incumbent.get(objective) != incumbent.get(objective):
+                continue
+            paired.append(candidate[objective] - incumbent[objective])
+        if not paired:
             continue
-        if stage == "muscle" and record["presence"]["muscle_annotated_fraction"] < muscle_floor:
-            continue
-        rows = {row["label"]: row for row in record["rows"] if row["stage"] == stage}
-        if winner not in rows or production not in rows:
-            continue
-        candidate, incumbent = rows[winner], rows[production]
-        if not feasible(candidate, incumbent, alpha_slack=alpha_slack,
-                        dimension_budget=dimension_budget):
-            continue
-        if candidate.get(objective) != candidate.get(objective):
-            continue
-        if incumbent.get(objective) != incumbent.get(objective):
-            continue
+        delta = statistics.median(paired)
         total += 1
-        delta = candidate[objective] - incumbent[objective]
         deltas.append(delta)
         beats += delta > 0
     return {
@@ -222,9 +269,9 @@ def main(argv: list[str] | None = None) -> int:
     }
 
     folds = {record["subject"]: record["fold"] for record in records}
-    print(f"{len(records)} recordings: "
-          f"{sum(f == 'search' for f in folds.values())} search, "
-          f"{sum(f == 'confirm' for f in folds.values())} confirm")
+    print(f"{len(records)} recordings from {len(folds)} subjects: "
+          f"{sum(f == 'search' for f in folds.values())} search subjects, "
+          f"{sum(f == 'confirm' for f in folds.values())} confirm subjects")
     carry_muscle = sum(
         record["presence"]["muscle_annotated_fraction"] >= args.muscle_floor
         for record in records
@@ -242,15 +289,16 @@ def main(argv: list[str] | None = None) -> int:
                   f"{'; ' + str(len(found - expected)) + ' not in the grid' if found - expected else ''}")
         lines.extend(table)
         print(f"\n=== {stage} (objective: {OBJECTIVE[stage]}, search fold) ===")
-        print(f"{'wins':>5} {'feas':>6} {'med':>8} {'min':>8} {'max':>8} "
+        print(f"{'subj':>4} {'rec':>5} {'feasible':>10} {'med':>8} {'min':>8} {'max':>8} "
               f"{'alpha':>7} {'ncomp':>6}  config")
         for row in table:
             mark = " *production" if row["is_production"] else ""
-            print(f"{row['wins']:>5} {row['n_feasible']:>3}/{row['n_subjects']:<2} "
+            print(f"{row['subject_wins']:>4} {row['wins']:>5} "
+                  f"{row['n_feasible']:>4}/{row['n_recordings']:<5} "
                   f"{row['objective_median']:>8.3f} {row['objective_min']:>8.3f} "
                   f"{row['objective_max']:>8.3f} {row['alpha_delta_median']:>+7.2f} "
                   f"{row['n_selected_median']:>6.1f}  {row['label']}{mark}")
-        if table and table[0]["wins"]:
+        if table and table[0]["subject_wins"]:
             confirmations.append(confirm(records, stage, table[0]["label"], **budget))
 
     print("\n=== held-out confirmation ===")

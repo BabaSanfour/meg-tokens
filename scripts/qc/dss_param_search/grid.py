@@ -11,6 +11,7 @@ import random
 from dataclasses import dataclass, field
 from typing import Any
 
+from meg_tokens.meg.meg_bids import raw_meg_sessions, staged_subjects
 from meg_tokens.meg.preprocessing import (
     BLINK_WINDOW,
     DSS_KNEE_MIN_RATIO,
@@ -162,6 +163,21 @@ def production_config(stage: str) -> Config:
     return Config(stage=stage, params=dict(PRODUCTION[stage]))
 
 
+def recordings(bids_root) -> list[tuple[str, str, str]]:
+    """Every staged recording, as ``(subject, condition, run)``, in a stable order.
+
+    Walked rather than globbed, so the order is `RAW_MEG_RUNS` inside sorted
+    subjects and an array index means the same recording on every submission --
+    which is what makes a requeued task idempotent. 319 rather than 320: H05
+    has no RT run 1.
+    """
+    return [
+        (subject, spec.condition, spec.run)
+        for subject in staged_subjects(bids_root)
+        for spec, _ in raw_meg_sessions(bids_root, subject)
+    ]
+
+
 def folds(subjects: list[str], *, n_search: int = 20, seed: int = 0) -> dict[str, str]:
     """Split the cohort into a fold to choose on and a fold to confirm on.
 
@@ -170,6 +186,9 @@ def folds(subjects: list[str], *, n_search: int = 20, seed: int = 0) -> dict[str
     shuffle rather than the first N subject numbers, because subject order is
     acquisition order and correlates with everything that drifted over the
     study.
+
+    The split is by *subject*, not by recording: a subject's ten runs are not
+    ten independent draws, and putting some in each fold would leak.
     """
     ordered = sorted(subjects)
     if n_search >= len(ordered):
