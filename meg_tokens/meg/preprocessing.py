@@ -71,6 +71,27 @@ QRS_WINDOW = (-0.1, 0.2)
 BLINK_WINDOW = (-0.2, 0.5)
 MUSCLE_BAND = (110.0, 140.0)
 
+# How many dimensions a DSS stage is allowed to take out. ``n_components``
+# truncates the eigenvalue spectrum *before* selection sees it
+# (``eigenvalues_biased[:n_components]``), so it decides which components look
+# like outliers rather than only capping the count -- and it is the only one of
+# these that bounds removal at all. On H01's cardiac stage, 40 selects 10
+# components at -0.15 dB alpha and ``None`` selects 263 at -10.76 dB.
+#
+# ``DSS_MAX_PROP_REMOVE`` and ``DSS_MIN_SELECT`` do nothing here. Both are
+# applied only in ``DSS._process_segment``, which runs when ``adaptive=True``;
+# the non-adaptive path sets ``n_selected_`` straight from ``auto_select()``
+# and consults neither. Measured: a cap of 3 of 60 channels leaves 30
+# components selected. They are passed anyway because they are the library's
+# API and would take effect in adaptive mode, but nothing here is protected by
+# them, and a fix upstream would change results silently -- which is what
+# ``test_dss_selection_caps_are_inert_outside_adaptive_mode`` is for.
+DSS_N_COMPONENTS = 40
+DSS_SELECTION_THRESHOLD = 3.0
+DSS_KNEE_MIN_RATIO = 3.0
+DSS_MIN_SELECT = 0
+DSS_MAX_PROP_REMOVE = 0.3
+
 STREAMS = ("dss", "ica", "ssp")
 
 __all__ = [
@@ -83,6 +104,7 @@ __all__ = [
     "clean_ica",
     "clean_ssp",
     "finish",
+    "dss_subtract",
     "ocular_events",
     "read_staged_raw",
     "run_stream",
@@ -153,11 +175,18 @@ def read_staged_raw(path: str | Path, *, preload: bool = True) -> tuple[mne.io.B
     return raw, source_grade
 
 
-def ocular_events(raw: mne.io.BaseRaw, channel: str) -> np.ndarray:
+def ocular_events(
+    raw: mne.io.BaseRaw,
+    channel: str,
+    *,
+    scale_multiple: float = OCULAR_SCALE_MULTIPLE,
+) -> np.ndarray:
     """Blink or saccade excursions, data-relative.
 
     Thresholded on the channel's own median absolute deviation, which does not
-    move when the recording contains a few large excursions.
+    move when the recording contains a few large excursions. ``scale_multiple``
+    trades event count against purity and is the axis a parameter search moves;
+    the default is the value validated against the cohort blink rate.
     """
     band = (
         raw.copy()
@@ -171,7 +200,7 @@ def ocular_events(raw: mne.io.BaseRaw, channel: str) -> np.ndarray:
         raise ValueError(f"{channel} has no variation to threshold against")
     peaks, _ = find_peaks(
         np.abs(centred),
-        height=OCULAR_SCALE_MULTIPLE * scale,
+        height=scale_multiple * scale,
         distance=max(int(round(OCULAR_MIN_SEPARATION * raw.info["sfreq"])), 1),
     )
     return np.asarray(peaks, dtype=int)
@@ -313,17 +342,32 @@ def clean_ica(raw: mne.io.BaseRaw, events: dict[str, np.ndarray]) -> StreamResul
     )
 
 
-def _dss_subtract(raw: mne.io.BaseRaw, bias, *, max_prop_remove: float = 0.3) -> tuple[mne.io.BaseRaw, int]:
+def dss_subtract(
+    raw: mne.io.BaseRaw,
+    bias,
+    *,
+    n_components: int | None = DSS_N_COMPONENTS,
+    selection_threshold: float = DSS_SELECTION_THRESHOLD,
+    knee_min_ratio: float = DSS_KNEE_MIN_RATIO,
+    min_select: int = DSS_MIN_SELECT,
+    max_prop_remove: float = DSS_MAX_PROP_REMOVE,
+) -> tuple[mne.io.BaseRaw, int]:
     """Fit DSS on the magnetometers and subtract the selected components.
 
     ``component_action="subtract"`` is not the default -- DSS defaults to
     "extract", which returns only the artifact.
+
+    The selection parameters are arguments rather than literals so a search can
+    vary them against the production path instead of a copy of it. Their
+    defaults are the production values.
     """
     from mne_denoise.dss import DSS
 
     model = DSS(
-        bias=bias, n_components=40, n_select="auto",
-        component_action="subtract", max_prop_remove=max_prop_remove,
+        bias=bias, n_components=n_components, n_select="auto",
+        selection_threshold=selection_threshold, knee_min_ratio=knee_min_ratio,
+        min_select=min_select, component_action="subtract",
+        max_prop_remove=max_prop_remove,
     )
     cleaned = raw.copy()
     picks = mne.pick_types(cleaned.info, meg=True, ref_meg=False, eeg=False, exclude=[])
@@ -357,7 +401,7 @@ def clean_dss(raw: mne.io.BaseRaw, events: dict[str, np.ndarray]) -> StreamResul
         samples = samples[(samples + first >= 0) & (samples + last <= raw.n_times)]
         if samples.size < 10:
             raise ValueError(f"{key} has {samples.size} usable events, too few to average")
-        current, n = _dss_subtract(
+        current, n = dss_subtract(
             current,
             CycleAverageBias(
                 event_samples=samples, window=window,
@@ -368,7 +412,7 @@ def clean_dss(raw: mne.io.BaseRaw, events: dict[str, np.ndarray]) -> StreamResul
         detail[f"{label}_components"] = n
         detail[f"{label}_events"] = int(samples.size)
 
-    current, n = _dss_subtract(current, BandpassBias(freq_band=MUSCLE_BAND, sfreq=sfreq))
+    current, n = dss_subtract(current, BandpassBias(freq_band=MUSCLE_BAND, sfreq=sfreq))
     removed += n
     detail["muscle_components"] = n
 

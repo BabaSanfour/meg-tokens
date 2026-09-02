@@ -73,3 +73,5 @@ workflow/config.yaml
 logs/
 uv.lock
 *pdf
+# Pinned dependency checkouts for machines without uv (see scripts/dss_param_search_array.sh).
+.deps/
