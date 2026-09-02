@@ -10,12 +10,16 @@
 # One core, deliberately. Threading was measured twice on this workload -- BLAS
 # threads 1/2/4 gave 243/241/254 s locally, and four cores on a compute node
 # bought 1.3%, inside the run-to-run spread. It is memory-bandwidth bound.
+#
+# Resources are measured, not assumed: job 57785083 ran the full 50-configuration
+# grid on H01 from Lustre in 9:11 at a 10.58 GB peak. 16 GB and one hour are that
+# with headroom for a longer recording.
 
 #SBATCH --account=rrg-kjerbi_cpu
 #SBATCH --job-name=dss-search
 #SBATCH --cpus-per-task=1
 #SBATCH --mem=16G
-#SBATCH --time=02:00:00
+#SBATCH --time=01:00:00
 #SBATCH --output=logs/dss-search-%A_%a.out
 
 set -euo pipefail
