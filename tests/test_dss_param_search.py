@@ -650,3 +650,36 @@ def test_the_incumbent_runs_first():
     """A truncated task must not be one that dropped the arm it compares against."""
     assert streams.STREAMS[0] == "ica"
     assert set(streams.STREAMS) == {"dss", "ica", "ssp"}
+
+
+def test_the_launcher_passes_the_mode_it_was_given(tmp_path):
+    """A run that silently produced the grid instead of the comparison would
+    look exactly like a run that worked, so the mode is an argument."""
+    recorder = tmp_path / "python"
+    recorder.write_text('#!/bin/bash\nprintf "%s\\n" "$@" > "$0.argv"\n')
+    recorder.chmod(0o755)
+
+    result = subprocess.run(
+        ["bash", str(LAUNCHER), str(tmp_path / "bids"), str(tmp_path / "out"),
+         str(recorder), "streams"],
+        cwd=LAUNCHER.parents[1], capture_output=True, text=True,
+        env={**os.environ, "SLURM_ARRAY_TASK_ID": "3", "SLURM_JOB_ID": "1"},
+    )
+    assert result.returncode == 0, result.stderr
+    argv = (tmp_path / "python.argv").read_text().split("\n")[:-1]
+    assert runner.build_parser().parse_args(argv[2:]).mode == "streams"
+
+    # An unknown mode fails at submit, not 319 tasks later.
+    bad = subprocess.run(
+        ["bash", str(LAUNCHER), "/bids", "/out", str(recorder), "grd"],
+        cwd=LAUNCHER.parents[1], capture_output=True, text=True,
+        env={**os.environ, "SLURM_ARRAY_TASK_ID": "0"},
+    )
+    assert bad.returncode == 2 and "grd" in bad.stderr
+
+
+def test_the_launchers_default_mode_is_the_grid():
+    """The default must stay the grid: 319 recordings were already run with it."""
+    assert runner.build_parser().parse_args(
+        ["--bids-root", "/x", "--output-root", "/y", "--index", "0"]
+    ).mode == "grid"
