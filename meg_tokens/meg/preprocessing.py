@@ -330,7 +330,11 @@ def clean_ica(raw: mne.io.BaseRaw, events: dict[str, np.ndarray]) -> StreamResul
     for channel in (VEOG_CHANNEL, HEOG_CHANNEL):
         exclude.update(ica.find_bads_eog(raw, ch_name=channel)[0])
     exclude.update(ica.find_bads_ecg(raw, ch_name=ECG_CHANNEL)[0])
-    ica.exclude = sorted(exclude)
+    # Plain ints, not the numpy scalars `find_bads_*` returns. The sidecar is
+    # JSON and the audit record for what each stream removed; `int64` there
+    # either raises or, with a stringifying fallback, records the component
+    # indices as `["3", "7"]` and calls it done.
+    ica.exclude = sorted(int(index) for index in exclude)
 
     cleaned = ica.apply(raw.copy())
     return StreamResult(
@@ -338,7 +342,7 @@ def clean_ica(raw: mne.io.BaseRaw, events: dict[str, np.ndarray]) -> StreamResul
         cleaned=cleaned,
         artifact=_artifact_of(raw, cleaned),
         n_dimensions_removed=len(ica.exclude),
-        detail={"n_components": 20, "excluded": list(ica.exclude)},
+        detail={"n_components": 20, "excluded": [int(i) for i in ica.exclude]},
     )
 
 
@@ -549,5 +553,8 @@ def save_stream(
         **{f"detail_{key}": value for key, value in result.detail.items()},
     }
     with paths["sidecar"].open("w", encoding="utf-8") as handle:
-        json.dump(sidecar, handle, indent=1, sort_keys=True, default=str)
+        # No `default=` fallback. A value JSON cannot represent is a type that
+        # should not have reached the sidecar, and stringifying it writes a
+        # plausible wrong record instead of failing where the cause is.
+        json.dump(sidecar, handle, indent=1, sort_keys=True)
     return paths

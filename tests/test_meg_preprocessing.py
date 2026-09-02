@@ -4,6 +4,7 @@ import tempfile
 import mne
 import numpy as np
 import pandas as pd
+import pytest
 from meg_tokens.io import DerivativeLayout
 from meg_tokens.meg.epoching import realign_epochs
 from meg_tokens.meg.preprocessing import STREAMS, stream_paths
@@ -101,3 +102,29 @@ def test_dss_selection_caps_are_inert_outside_adaptive_mode():
     assert uncapped > int(n_channels * 0.05), "the fixture must exceed the cap to test it"
     assert n_selected(max_prop_remove=0.05) == uncapped
     assert n_selected(max_prop_remove=DSS_MAX_PROP_REMOVE) == uncapped
+
+
+def test_a_streams_detail_survives_json_without_a_stringifying_fallback():
+    """The sidecar is the audit record for what a stream removed.
+
+    `find_bads_eog`/`find_bads_ecg` return numpy scalars, and `save_stream`
+    used to carry a `default=str` fallback -- so an `int64` component index was
+    written as `"3"` and nothing said so. The fallback is gone, which makes a
+    stray numpy type raise here rather than corrupt a record.
+    """
+    import json
+
+    import numpy as np
+
+    from meg_tokens.meg.preprocessing import StreamResult
+
+    result = StreamResult(
+        stream="ica", cleaned=None, artifact=None, n_dimensions_removed=3,
+        detail={"n_components": 20, "excluded": [int(i) for i in np.array([3, 7, 11])]},
+    )
+    dumped = json.dumps(result.detail, sort_keys=True)
+    assert json.loads(dumped)["excluded"] == [3, 7, 11]
+    assert all(isinstance(index, int) for index in json.loads(dumped)["excluded"])
+
+    with pytest.raises(TypeError, match="not JSON serializable"):
+        json.dumps({"excluded": list(np.array([3, 7]))})
