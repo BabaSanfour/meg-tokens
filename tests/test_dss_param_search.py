@@ -281,22 +281,39 @@ def _row(stage: str, label: str, **kwargs) -> dict:
     return row
 
 
-def test_feasibility_rejects_collateral_over_budget():
-    budget = {"alpha_budget": 0.5, "dimension_budget": 20}
-    assert summarize.feasible(_row("qrs", "a"), **budget)
-    assert not summarize.feasible(_row("qrs", "a", alpha_delta_db=-0.9), **budget)
-    assert not summarize.feasible(_row("qrs", "a", n_selected=40), **budget)
-    assert not summarize.feasible({"stage": "qrs", "failed": "boom"}, **budget)
-    # The budget is a loss budget: a configuration that costs nothing passes.
-    assert summarize.feasible(_row("qrs", "a", alpha_delta_db=+0.2), **budget)
+def test_feasibility_is_measured_against_production_on_the_same_subject():
+    """An absolute alpha bar is the B5 asymmetry, and a first pass here repeated it.
+
+    0.5 dB read as a reasonable ceiling; production itself exceeds it on 15 of
+    32 subjects for the cardiac stage, so the table ranked configurations by
+    which subjects fell under a round number. The bar is production's own cost
+    on that recording.
+    """
+    budget = {"alpha_slack": 0.1, "dimension_budget": 20}
+    cheap = _row("qrs", "prod", alpha_delta_db=-0.10)
+    dear = _row("qrs", "prod", alpha_delta_db=-1.40)
+
+    # 0.30 dB is affordable beside a 1.40 dB incumbent and not beside a 0.10 one.
+    candidate = _row("qrs", "a", alpha_delta_db=-0.30)
+    assert summarize.feasible(candidate, dear, **budget)
+    assert not summarize.feasible(candidate, cheap, **budget)
+
+    # Matching production, or beating it, always passes.
+    assert summarize.feasible(_row("qrs", "a", alpha_delta_db=-0.10), cheap, **budget)
+    assert summarize.feasible(_row("qrs", "a", alpha_delta_db=+0.20), cheap, **budget)
+    # Slack is slack: a little worse is allowed, a lot is not.
+    assert summarize.feasible(_row("qrs", "a", alpha_delta_db=-0.19), cheap, **budget)
+    assert not summarize.feasible(_row("qrs", "a", alpha_delta_db=-0.21), cheap, **budget)
+
+    assert not summarize.feasible(_row("qrs", "a", n_selected=40), cheap, **budget)
+    assert not summarize.feasible({"stage": "qrs", "failed": "boom"}, cheap, **budget)
+    # With no incumbent to compare against, only the dimension ceiling applies.
+    assert summarize.feasible(_row("qrs", "a", alpha_delta_db=-9.0), None, **budget)
 
 
 def test_ranking_is_by_wins_and_a_better_score_does_not_buy_past_the_budget():
-    """The shape of the real QRS result: widening raises the score everywhere and
-    the alpha cost with it.
-
-    `aggressive` has the best objective on every subject and breaches the
-    collateral budget on six of ten, so it can only win on the four where it is
+    """`aggressive` scores best on every subject and costs 0.80 dB more alpha
+    than production on six of ten, so it can only win on the four where it is
     affordable. Ranking on the objective's median -- which is what was done by
     hand, twice -- puts it first; ranking on wins puts production first.
     """
@@ -313,7 +330,7 @@ def test_ranking_is_by_wins_and_a_better_score_does_not_buy_past_the_budget():
 
     table = summarize.stage_table(
         records, "qrs", fold="search",
-        alpha_budget=0.5, dimension_budget=20, muscle_floor=0.005,
+        alpha_slack=0.1, dimension_budget=20, muscle_floor=0.005,
     )
     by_label = {row["label"]: row for row in table}
     assert by_label[aggressive]["objective_median"] > by_label[production]["objective_median"]
@@ -336,7 +353,7 @@ def test_the_median_breaks_a_tie_in_wins():
     ]
     table = summarize.stage_table(
         records, "qrs", fold="search",
-        alpha_budget=0.5, dimension_budget=20, muscle_floor=0.005,
+        alpha_slack=0.1, dimension_budget=20, muscle_floor=0.005,
     )
     assert [row["label"] for row in table] == [production, better, worse]
 
@@ -355,7 +372,7 @@ def test_the_spread_is_reported_so_a_bimodal_configuration_is_visible():
     ]
     row = summarize.stage_table(
         records, "muscle", fold="search",
-        alpha_budget=0.5, dimension_budget=20, muscle_floor=0.005,
+        alpha_slack=0.1, dimension_budget=20, muscle_floor=0.005,
     )[0]
     assert row["objective_min"] == pytest.approx(0.00)
     assert row["objective_max"] == pytest.approx(0.94)
@@ -367,7 +384,7 @@ def test_a_label_absent_from_the_current_grid_still_reaches_the_table():
     records = [_record("H01", "search", [_row("qrs", "qrs|retired-axis=1", reference_r=0.7)])]
     table = summarize.stage_table(
         records, "qrs", fold="search",
-        alpha_budget=0.5, dimension_budget=20, muscle_floor=0.005,
+        alpha_slack=0.1, dimension_budget=20, muscle_floor=0.005,
     )
     assert [row["label"] for row in table] == ["qrs|retired-axis=1"]
     assert table[0]["wins"] == 1
@@ -387,11 +404,23 @@ def test_the_muscle_stage_ignores_recordings_that_carry_no_muscle():
 
     table = summarize.stage_table(
         records, "muscle", fold="search",
-        alpha_budget=0.5, dimension_budget=20, muscle_floor=0.005,
+        alpha_slack=0.1, dimension_budget=20, muscle_floor=0.005,
     )
     row = next(row for row in table if row["label"] == production)
     assert row["n_subjects"] == 1
     assert row["objective_median"] == pytest.approx(0.9)
+
+
+def test_a_production_winner_is_reported_as_such_not_as_a_contest_with_itself():
+    """`production beats production on 0/6` is a report, not a result."""
+    production = grid.production_config("qrs").label
+    records = [_record("H02", "confirm", [_row("qrs", production, is_production=True)])]
+    result = summarize.confirm(
+        records, "qrs", production,
+        alpha_slack=0.1, dimension_budget=20, muscle_floor=0.005,
+    )
+    assert result["winner_is_production"] is True
+    assert result["of"] == 0
 
 
 def test_the_winner_is_confirmed_only_on_the_held_out_fold():
@@ -415,8 +444,9 @@ def test_the_winner_is_confirmed_only_on_the_held_out_fold():
 
     result = summarize.confirm(
         records, "qrs", candidate,
-        alpha_budget=0.5, dimension_budget=20, muscle_floor=0.005,
+        alpha_slack=0.1, dimension_budget=20, muscle_floor=0.005,
     )
+    assert result["winner_is_production"] is False
     assert result["of"] == 2 and result["beats_production_on"] == 1
     assert result["delta_median"] == pytest.approx(0.0)
     assert (result["delta_min"], result["delta_max"]) == pytest.approx((-0.1, 0.1))
@@ -443,7 +473,7 @@ def test_summarize_writes_a_table_and_a_summary(tmp_path):
     # rows -- not per configuration the current grid defines.
     assert len(table) == 1 + len(grid.STAGES)
     summary = json.loads((out / "dss_param_search_summary.json").read_text())
-    assert summary["budget"]["alpha_budget"] == 0.5
+    assert summary["budget"]["alpha_slack"] == 0.1
     assert set(summary["folds"].values()) == {"search", "confirm"}
 
 

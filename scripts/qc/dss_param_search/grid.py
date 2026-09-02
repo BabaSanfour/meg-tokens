@@ -70,8 +70,13 @@ SELECTION_AXES: dict[str, dict[str, tuple]] = {
     "blink": {
         "n_components": (DSS_N_COMPONENTS, None),
     },
+    # Measured inert and held at one value rather than dropped, so the labels a
+    # completed run wrote still resolve. Across 32 subjects, 1.5 and 3.0
+    # selected a different number of components in 0 of 256 rows: the muscle
+    # stage's zero is the band finding nothing, not the knee gate refusing to
+    # fire, which is what this axis was added to test.
     "muscle": {
-        "knee_min_ratio": (1.5, DSS_KNEE_MIN_RATIO),
+        "knee_min_ratio": (DSS_KNEE_MIN_RATIO,),
     },
 }
 
