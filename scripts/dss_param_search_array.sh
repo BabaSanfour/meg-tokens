@@ -2,7 +2,13 @@
 # Restartable Slurm array for the DSS parameter search: one task per subject,
 # fifty configurations per task. Never run this on a login node.
 #
-#   sbatch --array=0-31%16 scripts/dss_param_search_array.sh <bids_root> <output_root>
+#   sbatch --array=0-31%16 scripts/dss_param_search_array.sh \
+#       <bids_root> <output_root> [python]
+#
+# `python` defaults to this checkout's own `./.venv/bin/python`, matching every
+# other launcher here. Name one explicitly when running from a checkout that has
+# no venv of its own -- the search is meant to be runnable from a clean tree
+# beside a working one, and borrowing an interpreter is how that is done.
 #
 # Each array index owns one subject's output file, so a failed task is requeued
 # with the same index and no task can write another subject's result.
@@ -24,14 +30,21 @@
 
 set -euo pipefail
 
-BIDS_ROOT="${1:?usage: sbatch --array=0-N scripts/dss_param_search_array.sh <bids_root> <output_root>}"
-OUTPUT_ROOT="${2:?usage: sbatch --array=0-N scripts/dss_param_search_array.sh <bids_root> <output_root>}"
+USAGE="usage: sbatch --array=0-N scripts/dss_param_search_array.sh <bids_root> <output_root> [python]"
+BIDS_ROOT="${1:?$USAGE}"
+OUTPUT_ROOT="${2:?$USAGE}"
+PYTHON="${3:-${DSS_SEARCH_PYTHON:-./.venv/bin/python}}"
+
+# Fail here, naming the interpreter, rather than thirty-two tasks into the array
+# with "./.venv/bin/python: No such file or directory" in each of their logs.
+if [ ! -x "${PYTHON}" ]; then
+    echo "no interpreter at ${PYTHON}; pass one as the third argument. ${USAGE}" >&2
+    exit 2
+fi
 
 export OMP_NUM_THREADS=1
 export MKL_NUM_THREADS=1
 export OPENBLAS_NUM_THREADS=1
-
-PYTHON="${DSS_SEARCH_PYTHON:-./.venv/bin/python}"
 
 # `uv` does not exist on the cluster and `mne-denoise` is not in the shared
 # venv, so the pinned checkout is carried beside this one rather than installed

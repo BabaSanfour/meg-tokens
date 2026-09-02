@@ -10,8 +10,8 @@ that correctly removed nothing as a stage that missed something.
 from __future__ import annotations
 
 import json
-import re
-import shlex
+import os
+import subprocess
 from pathlib import Path
 
 import mne
@@ -216,20 +216,48 @@ def test_the_bias_uses_the_candidates_event_set():
     assert many > few >= 10
 
 
-def test_the_launcher_runs_a_command_the_runner_accepts():
-    """`ssm_fit_array.sh` passed a removed flag for months; this is that test."""
-    script = Path(__file__).parents[1] / "scripts" / "dss_param_search_array.sh"
-    joined = re.sub(r"\\\n\s*", " ", script.read_text())
-    calls = [
-        line for line in joined.splitlines()
-        if "dss_param_search.runner" in line and not line.strip().startswith("echo")
-    ]
-    assert calls, "the launcher does not invoke the runner"
-    for line in calls:
-        command = re.sub(r'"?\$\{?[A-Za-z_][A-Za-z0-9_]*(:-[^}]*)?\}?"?', "3", line)
-        argv = shlex.split(command)
-        argv = argv[argv.index("--bids-root"):]
-        runner.build_parser().parse_args(argv)
+LAUNCHER = Path(__file__).parents[1] / "scripts" / "dss_param_search_array.sh"
+
+
+def test_the_launcher_runs_a_command_the_runner_accepts(tmp_path):
+    """Run the launcher rather than read it.
+
+    `ssm_fit_array.sh` passed a removed flag for months because nothing ran it.
+    Executing the launcher against a recording interpreter checks the whole
+    chain -- argument order, quoting, and the argv the runner finally sees --
+    where the previous regex over the file only checked the last of those.
+
+    It does not catch a missing interpreter: `./.venv/bin/python` resolves here
+    and did not on the cluster, which cost sixteen array tasks. That is what
+    the launcher now fails fast on, and what the next test covers.
+    """
+    recorder = tmp_path / "python"
+    recorder.write_text('#!/bin/bash\nprintf "%s\\n" "$@" > "$0.argv"\n')
+    recorder.chmod(0o755)
+
+    result = subprocess.run(
+        ["bash", str(LAUNCHER), str(tmp_path / "bids"), str(tmp_path / "out"), str(recorder)],
+        cwd=LAUNCHER.parents[1], capture_output=True, text=True,
+        env={**os.environ, "SLURM_ARRAY_TASK_ID": "7", "SLURM_JOB_ID": "1"},
+    )
+    assert result.returncode == 0, result.stderr
+
+    argv = (tmp_path / "python.argv").read_text().split("\n")[:-1]
+    assert argv[:2] == ["-m", "scripts.qc.dss_param_search.runner"]
+    parsed = runner.build_parser().parse_args(argv[2:])
+    assert parsed.index == 7
+    assert parsed.bids_root == tmp_path / "bids"
+
+
+def test_the_launcher_refuses_an_interpreter_that_is_not_there():
+    """Thirty-two tasks failing identically is a worse error message than one."""
+    result = subprocess.run(
+        ["bash", str(LAUNCHER), "/bids", "/out", "/nonexistent/python"],
+        cwd=LAUNCHER.parents[1], capture_output=True, text=True,
+        env={**os.environ, "SLURM_ARRAY_TASK_ID": "0"},
+    )
+    assert result.returncode == 2
+    assert "/nonexistent/python" in result.stderr
 
 
 # ---------------------------------------------------------------------- decision
