@@ -6,11 +6,14 @@ from importlib import import_module
 
 
 _EXPORTS = {
-    "load_and_filter_raw": ("meg_tokens.meg.preprocessing", "load_and_filter_raw"),
-    "run_ica_rejection": ("meg_tokens.meg.preprocessing", "run_ica_rejection"),
     "read_ctf_headshape": ("meg_tokens.meg.coregistration", "read_ctf_headshape"),
     "coregister": ("meg_tokens.meg.coregistration", "coregister"),
-    "realign_epochs": ("meg_tokens.meg.preprocessing", "realign_epochs"),
+    "build_trunk": ("meg_tokens.meg.preprocessing", "build_trunk"),
+    "read_staged_raw": ("meg_tokens.meg.preprocessing", "read_staged_raw"),
+    "run_stream": ("meg_tokens.meg.preprocessing", "run_stream"),
+    "save_stream": ("meg_tokens.meg.preprocessing", "save_stream"),
+    "artifact_events": ("meg_tokens.meg.preprocessing", "artifact_events"),
+    "realign_epochs": ("meg_tokens.meg.epoching", "realign_epochs"),
     "build_epochs_with_metadata": ("meg_tokens.meg.epoching", "build_epochs_with_metadata"),
     "get_event_id": ("meg_tokens.meg.epoching", "get_event_id"),
     "mismatch_policy": ("meg_tokens.meg.epoching", "mismatch_policy"),

@@ -33,8 +33,6 @@ from mne_bids import BIDSPath, write_anat
 
 from meg_tokens.core import normalize_subject_id
 
-mne.set_log_level("ERROR")
-
 # Where FreeSurfer keeps the volume this layer exports, relative to a
 # subject's reconstruction directory.
 RAW_T1_RELATIVE_PATH = Path("mri") / "rawavg.mgz"

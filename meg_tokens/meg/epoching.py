@@ -28,6 +28,11 @@ SUBJECT_EVENT_OVERRIDES = {
     }
 }
 
+# The three lookups below normalize, unlike the rest of the pipeline, because
+# a miss here is silent: an unmatched key means a known-bad run is quietly
+# treated as ordinary rather than raising. Path builders can trust the CLI's
+# canonical labels because a wrong one fails loudly; a known-issues table
+# cannot.
 KNOWN_TRAILING_TRIAL_MISMATCHES = {
     ('H01', 'Fast', '2'), ('H01', 'Fast', '3'), ('H01', 'Fast', '4'), ('H01', 'RT', '1'), ('H01', 'RT', '2'), ('H01', 'Slow', '3'),
     ('H01', 'Slow', '4'), ('H03', 'RT', '1'), ('H03', 'RT', '2'), ('H03', 'Slow', '4'), ('H04', 'RT', '1'),
@@ -496,3 +501,98 @@ def save_epochs_and_events(
             'epochs': epochs_path,
             'eve': eve_path
         }
+
+
+def realign_epochs(
+    epochs: mne.Epochs,
+    align_to: str = 'go',
+    tmin_new: float = -1.0,
+    tmax_new: float = 4.0,
+    mean_rt: float = 0.0
+) -> mne.Epochs:
+    """
+    Re-aligns and slices epochs trial-by-trial relative to a behavioral trigger
+    stored in the epochs metadata ('tGO', 'tEnterTarget', or 'tTrialEnd').
+    
+    Args:
+        epochs: mne.Epochs object with metadata populated.
+        align_to: Event to align to ('go', 'enter', 'feedback', 'DT').
+        tmin_new: New start time in seconds relative to the alignment event.
+        tmax_new: New end time in seconds relative to the alignment event.
+        mean_rt: Mean reaction time in milliseconds (subtracted if aligning to 'DT').
+        
+    Returns:
+        A new mne.EpochsArray containing the re-aligned trials.
+    """
+    if epochs.metadata is None:
+        raise ValueError("Epochs object must have metadata populated for re-alignment.")
+        
+    sfreq = epochs.info['sfreq']
+    tmin = epochs.tmin # original tmin (negative)
+    
+    # Get original data shape: (n_epochs, n_channels, n_times)
+    data = epochs.get_data()
+    n_epochs, n_channels, _ = data.shape
+    
+    # Calculate target length in samples
+    n_samples_new = int(round((tmax_new - tmin_new) * sfreq))
+    realigned_data = np.zeros((n_epochs, n_channels, n_samples_new))
+    
+    metadata = epochs.metadata.copy()
+    
+    for i in range(n_epochs):
+        row = metadata.iloc[i]
+        
+        # Calculate alignment offset relative to original Go trigger (time 0 in epoch)
+        if align_to == 'go':
+            offset_ms = 0.0
+        elif align_to == 'enter':
+            # tEnterTarget and tGO are in ms in metadata
+            offset_ms = float(row['tEnterTarget'] - row['tGO'])
+        elif align_to == 'feedback':
+            offset_ms = float(row['tTrialEnd'] - row['tGO'])
+        elif align_to == 'DT':
+            # Align to Decision Time: shift target entry back by subject's mean RT
+            offset_ms = float(row['tEnterTarget'] - row['tGO']) - mean_rt
+        else:
+            raise ValueError(f"Unknown alignment event: {align_to}")
+            
+        # Convert offset to samples from the start of the epoch
+        # Start of epoch is at tmin seconds (which is negative)
+        offset_samples = int(round((offset_ms / 1000.0 - tmin) * sfreq))
+        
+        # Slice window around the offset
+        start_idx = offset_samples + int(round(tmin_new * sfreq))
+        end_idx = start_idx + n_samples_new
+        
+        # Guard bounds
+        if start_idx < 0 or end_idx > data.shape[2]:
+            # Pad with zeros if slice is out of bounds
+            trial_data = np.zeros((n_channels, n_samples_new))
+            
+            # Find overlap range
+            src_start = max(0, start_idx)
+            src_end = min(data.shape[2], end_idx)
+            
+            dest_start = src_start - start_idx
+            dest_end = dest_start + (src_end - src_start)
+            
+            trial_data[:, dest_start:dest_end] = data[i, :, src_start:src_end]
+        else:
+            trial_data = data[i, :, start_idx:end_idx]
+            
+        realigned_data[i] = trial_data
+        
+    # Build new Info and EpochsArray
+    info = epochs.info.copy()
+    
+    # Create EpochsArray
+    realigned_epochs = mne.EpochsArray(
+        realigned_data,
+        info=info,
+        tmin=tmin_new,
+        metadata=metadata,
+        verbose=False
+    )
+    
+    return realigned_epochs

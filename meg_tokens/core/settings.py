@@ -11,10 +11,16 @@ SOURCE_STAGES = ("cov", "bem", "src", "fwd", "inv", "apply")
 
 @dataclass(frozen=True)
 class PreprocessingConfig:
+    """Preprocessing settings. ``streams`` names the cleaners to run per recording.
+
+    ``run_ica`` and ``notch_freqs`` are gone: line noise is removed by ZapLine
+    rather than a notch, and ICA is one of three cleaners rather than an
+    on/off switch, so neither can express what this stage now does.
+    """
+
     high_pass: float = 0.5
     low_pass: float = 150.0
-    notch_freqs: Optional[Tuple[float, ...]] = None
-    run_ica: bool = False
+    streams: Optional[Tuple[str, ...]] = None
     ica_exclude: Optional[Tuple[int, ...]] = None
 
     def __post_init__(self) -> None:
@@ -22,8 +28,8 @@ class PreprocessingConfig:
             raise ValueError("high_pass must be non-negative")
         if self.low_pass <= self.high_pass:
             raise ValueError("low_pass must be greater than high_pass")
-        if self.notch_freqs is not None and any(value <= 0 for value in self.notch_freqs):
-            raise ValueError("notch frequencies must be positive")
+        if self.streams is not None and not self.streams:
+            raise ValueError("streams must name at least one cleaner")
 
 
 @dataclass(frozen=True)
@@ -69,14 +75,23 @@ class RawStagingConfig:
 
 @dataclass(frozen=True)
 class EpochingConfig:
+    """``stream`` names which preprocessed derivative to epoch.
+
+    Preprocessing writes one per cleaner, so epoching has to say which it consumes;
+    there is no "the" preprocessed recording any more.
+    """
+
     tmin: float = -0.5
     tmax: float = 2.0
     alignment: str = "go"
+    stream: str = "ica"
 
     def __post_init__(self) -> None:
         alignment = self.alignment.lower()
         if alignment not in {"go", "enter", "feedback"}:
             raise ValueError(f"Unknown alignment event: {self.alignment}")
+        if self.stream not in ("dss", "ica", "ssp"):
+            raise ValueError(f"Unknown stream: {self.stream}")
         if self.tmax <= self.tmin:
             raise ValueError("tmax must be greater than tmin")
         object.__setattr__(self, "alignment", alignment)

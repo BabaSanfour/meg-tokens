@@ -28,10 +28,10 @@ def test_preprocess_run_resolves_its_own_input_from_the_run_identity(tmp_path, m
     seen = []
 
     def _capture(path, **kwargs):
-        seen.append(path)
+        seen.append(str(path))
         raise _Resolved
 
-    monkeypatch.setattr(preprocessing_workflow, "load_and_filter_raw", _capture)
+    monkeypatch.setattr(preprocessing_workflow, "read_staged_raw", _capture)
     with pytest.raises(_Resolved):
         preprocess_run(project, RunSpec(subject="H01", run="Fast1"))
 
@@ -96,7 +96,7 @@ def test_epoch_subjects_consumes_staged_raw_and_behavior(tmp_path):
         subject="H1",
         run="1",
         condition="Fast",
-        processing="filt",
+        processing="ica",
     )
     raw_path.parent.mkdir(parents=True)
     info = mne.create_info(

@@ -64,7 +64,9 @@ power_bands:
 preprocessing:
   high_pass: 0.5
   low_pass: 150.0
-  run_ica: false
+  # Cleaners to write, and which one the downstream stages consume.
+  streams: [dss, ica, ssp]
+  stream: ica
 
 statistics:
   permutations: 1000

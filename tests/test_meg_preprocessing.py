@@ -4,7 +4,9 @@ import tempfile
 import mne
 import numpy as np
 import pandas as pd
-from meg_tokens.meg.preprocessing import realign_epochs, save_clean_raw
+from meg_tokens.io import DerivativeLayout
+from meg_tokens.meg.epoching import realign_epochs
+from meg_tokens.meg.preprocessing import STREAMS, stream_paths
 
 
 def test_realign_epochs():
@@ -36,21 +38,26 @@ def test_realign_epochs():
     assert realigned_dt.get_data().shape == (3, 2, 1000)
 
 
-def test_save_clean_raw_derivative(tmp_path):
-    info = mne.create_info(ch_names=['MEG1', 'MEG2'], sfreq=1000.0, ch_types=['mag', 'mag'])
-    data = np.zeros((2, 1000))
-    raw = mne.io.RawArray(data, info)
+def test_stream_paths_name_the_cleaner_in_proc_and_keep_the_condition(tmp_path):
+    """`proc` carries the stream; `desc` keeps the condition and grows the tag.
 
-    path = save_clean_raw(raw, tmp_path, subject_id='H1', run_id='Slow1', processing='filt')
+    The previous layout put `clean`/`filt` in `proc` to say whether ICA had
+    run, which cannot name three cleaners for one recording.
+    """
+    layout = DerivativeLayout(tmp_path)
+    paths = stream_paths(layout, "H1", "Slow", 1, "dss")
 
-    assert path.endswith(
-        "derivatives/sub-H01/meg/sub-H01_task-tokens_run-1_proc-filt_desc-slow_raw.fif"
+    assert paths["cleaned"].name == (
+        "sub-H01_task-tokens_run-1_proc-dss_desc-slow_raw.fif"
     )
-    assert os.path.exists(path)
-    sidecar = path.replace(".fif", ".json")
-    assert os.path.exists(sidecar)
-    with open(sidecar, "r", encoding="utf-8") as f:
-        meta = json.load(f)
-    assert meta["subject"] == "H01"
-    assert meta["condition"] == "Slow"
-    assert meta["run"] == "1"
+    assert paths["artifact"].name == (
+        "sub-H01_task-tokens_run-1_proc-dss_desc-slow-artifact_raw.fif"
+    )
+    assert paths["sidecar"].name.endswith("_raw.json")
+
+
+def test_every_stream_gets_a_distinct_path(tmp_path):
+    """Three cleaners write three derivatives for one recording."""
+    layout = DerivativeLayout(tmp_path)
+    paths = [stream_paths(layout, "H1", "Slow", 1, s)["cleaned"] for s in STREAMS]
+    assert len(set(paths)) == len(STREAMS)

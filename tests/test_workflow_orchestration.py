@@ -8,7 +8,8 @@ from meg_tokens.io import DerivativeLayout
 ROOT = Path(__file__).resolve().parents[1]
 
 RUN_LABEL = "Fast3"
-WILDCARDS = {"subject": "H09", "run_number": "3", "condition": "fast", "band": "alpha"}
+WILDCARDS = {"subject": "H09", "run_number": "3", "condition": "fast",
+             "band": "alpha", "stream": "ica"}
 
 
 def load_snakefile_constants(bids_root):
@@ -119,17 +120,25 @@ def test_snakefile_state_directory_cannot_collide_with_a_subject(snakefile):
 
 
 def test_clean_pattern_matches_the_layout(snakefile):
+    """The pattern must agree with the layout for every stream, not just one.
+
+    Preprocessing fans the DAG out three ways, so a drift that only affected one
+    cleaner would leave the other two silently unbuildable.
+    """
     layout = DerivativeLayout(snakefile["BIDS_ROOT"])
-    assert_pattern_matches_layout(
-        snakefile,
-        "CLEAN_PATTERN",
-        layout.preprocessed_raw(
+    for stream in snakefile["STREAMS"]:
+        actual = snakefile["CLEAN_PATTERN"].format(**{**WILDCARDS, "stream": stream})
+        expected = layout.preprocessed_raw(
             subject=WILDCARDS["subject"],
             run=RUN_LABEL,
             condition=WILDCARDS["condition"],
-            processing=snakefile["PROCESSING"],
-        ),
-    )
+            processing=stream,
+        )
+        assert actual == str(expected), (
+            f"CLEAN_PATTERN has drifted from DerivativeLayout for stream {stream!r}.\n"
+            f"  Snakefile pattern -> {actual}\n"
+            f"  DerivativeLayout  -> {expected}"
+        )
 
 
 def test_source_manifest_pattern_matches_the_layout(snakefile):

@@ -1,24 +1,20 @@
-"""BIDS-MEG raw layer writer: real copies of matched CTF sessions.
+"""The BIDS-MEG raw layer: writing it, and finding it again.
 
-The writer half of Stage 0. ``meg_tokens.meg.raw_staging`` decides *which*
-numbered raw session is which behavioral run and records that in the
-manifest; ``meg_tokens.workflows.raw_staging`` applies the reviewed
-manifest; this module performs the copy itself.
+``write_meg_bids`` / ``write_emptyroom_bids`` are Stage 0's writer half --
+``meg.raw_staging`` decides which numbered session is which run,
+``workflows.raw_staging`` applies the reviewed manifest, this performs the
+copy. ``mne_bids.write_raw_bids`` does the copying rather than ``copytree``
+because a CTF ``.ds`` is not relocatable: every file inside must share the
+directory's basename. It also emits the standard sidecars; what this module
+adds is the BIDS entities, the trigger events under this project's
+subject-aware codes, and the empty-room link.
 
-Copies are real and one-directional: the raw acquisition tree and ``tdms/``
-stay untouched read-only sources, and ``BIDS/`` is an independent copy that
-can be deleted and rebuilt from them at any time.
+Everything else is discovery, used by the later stages rather than by Stage 0.
+The run-grid walkers iterate :data:`RAW_MEG_RUNS` rather than globbing, so a
+recording missing anywhere in the chain is a *named* absence.
 
-``mne_bids.write_raw_bids`` does the copying rather than a plain
-``shutil.copytree`` because a CTF session is not relocatable by copying
-alone -- every file inside a ``.ds`` must share the enclosing directory's
-basename, so giving the directory a BIDS name means renaming its contents
-too -- and because it also emits the standard sidecars (``channels.tsv``,
-``*_meg.json``, ``coordsystem.json``, ``dataset_description.json``,
-``participants.tsv``) from the recording itself. What this module adds is
-only what mne_bids cannot know: the BIDS entities, the real trigger events
-written to ``*_events.tsv`` under this project's subject-aware event codes,
-and the empty-room link.
+Subject labels arrive canonical: the CLI normalizes them once on entry and
+the staged tree is canonical by construction, so nothing here re-checks.
 """
 
 from __future__ import annotations
@@ -33,11 +29,8 @@ from mne_bids import BIDSPath, write_raw_bids
 if TYPE_CHECKING:
     from meg_tokens.io import DerivativeLayout
 
-from meg_tokens.core import RunSpec, normalize_subject_id
+from meg_tokens.core import RunSpec
 from meg_tokens.meg.epoching import DEFAULT_EVENT_IDS, get_event_id
-
-mne.set_log_level("ERROR")
-
 
 #: Every recording the Tokens protocol acquires per subject, in protocol order.
 RAW_MEG_RUNS = (
@@ -55,7 +48,7 @@ def raw_meg_path(
     *,
     task: str = "tokens",
 ) -> Path:
-    """Where Stage 0 stages one recording. ``subject`` must be canonical."""
+    """Where Stage 0 stages one recording."""
     return (
         Path(bids_root)
         / f"sub-{subject}"
@@ -84,7 +77,7 @@ def raw_meg_sessions(
 
 
 def headshape_path(bids_root: str | Path, subject: str) -> Path:
-    """Where Stage 0 stages a subject's head shape. ``subject`` must be canonical."""
+    """Where Stage 0 stages a subject's head shape."""
     return Path(bids_root) / f"sub-{subject}" / "meg" / f"sub-{subject}_headshape.eeg"
 
 
@@ -106,35 +99,31 @@ def preprocessed_meg_runs(
     layout: "DerivativeLayout",
     subject: str,
     *,
-    processing: Optional[str] = None,
+    stream: str,
 ) -> list[tuple[RunSpec, Path]]:
-    """Every preprocessed run of one subject, with its identity, in protocol order.
+    """Every preprocessed run of one subject for one cleaner, in protocol order.
 
     The derivative-side counterpart to :func:`raw_meg_sessions`, and it walks
     the same :data:`RAW_MEG_RUNS` grid for the same reason: a run that failed
     to preprocess is then a *named* absence rather than a shorter list nobody
     notices. Globbing the derivative directory cannot tell those apart.
 
-    ``processing`` defaults to preferring ``clean`` over ``filt``, matching
-    what ``preprocess_run`` writes with and without ICA, so epoching consumes
-    the more processed derivative when both exist.
+    ``stream`` is required rather than defaulted. Preprocessing writes one
+    derivative per cleaner, and the three are alternatives rather than degrees
+    of the same thing, so there is no more-processed one to fall back to.
     """
-    subject = normalize_subject_id(subject)
-    candidates = (processing,) if processing else ("clean", "filt")
     runs = []
     for condition, run in RAW_MEG_RUNS:
-        for candidate in candidates:
-            path = layout.preprocessed_raw(
-                subject=subject,
-                run=str(run),
-                condition=condition,
-                processing=candidate,
+        path = layout.preprocessed_raw(
+            subject=subject,
+            run=str(run),
+            condition=condition,
+            processing=stream,
+        )
+        if path.is_file():
+            runs.append(
+                (RunSpec(subject=subject, run=str(run), condition=condition), path)
             )
-            if path.is_file():
-                runs.append(
-                    (RunSpec(subject=subject, run=str(run), condition=condition), path)
-                )
-                break
     return runs
 
 
@@ -151,7 +140,6 @@ def epoched_meg_runs(
     chain: a run absent from the source stage is a named run that failed to
     epoch, not an entry the discovery quietly never produced.
     """
-    subject = normalize_subject_id(subject)
     runs = []
     for condition, run in RAW_MEG_RUNS:
         path = layout.epochs(
@@ -184,7 +172,6 @@ def associated_emptyroom(
     than a guarantee of the format: a subject whose runs disagree is refused
     instead of being given whichever one sorted first.
     """
-    subject = normalize_subject_id(subject)
     root = Path(bids_root)
     sessions = raw_meg_sessions(root, subject, task=task)
     if not sessions:
@@ -193,10 +180,12 @@ def associated_emptyroom(
             "Run `meg-tokens meg apply-raw-staging` first."
         )
 
-    recorded = set()
+    recorded: set[str] = set()
+    missing_sidecars = []
     for _, path in sessions:
         sidecar = path.with_suffix(".json")
         if not sidecar.is_file():
+            missing_sidecars.append(sidecar.name)
             continue
         associated = json.loads(sidecar.read_text(encoding="utf-8")).get(
             "AssociatedEmptyRoom"
@@ -204,9 +193,15 @@ def associated_emptyroom(
         if associated:
             recorded.add(str(associated))
 
+    if not recorded and missing_sidecars:
+        raise FileNotFoundError(
+            f"{subject} has {len(missing_sidecars)} run(s) with no sidecar "
+            f"({', '.join(sorted(missing_sidecars)[:3])}...), so no empty-room "
+            "association can be read. Re-run `meg-tokens meg apply-raw-staging`."
+        )
     if not recorded:
         raise FileNotFoundError(
-            f"{subject} has no AssociatedEmptyRoom in any run sidecar: no "
+            f"{subject}'s run sidecars name no AssociatedEmptyRoom: no "
             "empty-room session was acquired on its recording day. Empty-room "
             "noise covariance is not available for this subject."
         )
@@ -227,7 +222,7 @@ def associated_emptyroom(
     return noise_path
 
 
-def _combined_event_id(subject: str) -> dict:
+def _combined_event_id(subject: str) -> dict[str, int]:
     """Every alignment's trigger code in one dict, for this one subject.
 
     All four alignments are merged rather than passing whichever one a later
@@ -254,7 +249,7 @@ def write_meg_bids(
     *,
     subject: str,
     condition: str,
-    run: int,
+    run: int | str,
     bids_root: str | Path,
     task: str = "tokens",
     empty_room_bids_path: Optional[BIDSPath] = None,
@@ -293,7 +288,6 @@ def write_meg_bids(
     that means nothing here (this project coregisters from a
     separately-managed ``-trans.fif``, never from ``coordsystem.json``).
     """
-    subject = normalize_subject_id(subject)
     bids_path = BIDSPath(
         subject=subject,
         task=task,

@@ -1,75 +1,89 @@
 # MEG Tokens Data Contract
 
-This project targets behavioral replication of the legacy scripts using modern
-MNE-Python, BIDS/MNE-BIDS-style derivatives, and explicit analysis tensors.
+Behavioral replication of the legacy scripts using modern MNE-Python,
+BIDS/MNE-BIDS-style derivatives, and explicit analysis tensors.
 
-## Core Rules
+## Rules
 
-- Analysis code must use real project inputs only; nothing generates fake
-  MEG, source, or behavior data.
-- Missing inputs raise a clear error naming the required file.
-- Modern MNE/scientific-Python APIs are preferred over step-by-step ports
-  when they preserve the same scientific behavior.
+- Real project inputs only; nothing generates fake MEG, source or behavior data.
+- Missing inputs raise an error naming the required file.
+- Modern MNE/scientific-Python APIs over step-by-step ports, where they
+  preserve the same scientific behavior.
+- MEG in MNE-native formats under a BIDS derivatives root; behavior as `.tsv`
+  with JSON sidecars. No `.mat`, `.h5`, or undocumented pickles.
 
 ## Behavioral module boundaries
 
-Behavioral code follows one dependency direction:
+One dependency direction, never feeding back:
 
 ```text
 project I/O → behavior schema/tables → trial features → analyses → workflows
 ```
 
-`behavior/schema.py` defines and validates table contracts, `behavior/tdms.py`
-interprets TDMS source records only, and `behavior/tables.py` composes the
-generic project table loader with the schema. Later stages
-(`behavior/features.py`, `behavior/math/`, `behavior/analyses/`) build on top
-of this without feeding back into it. Workflows locate inputs, call these
-layers, and write outputs; they never implement scientific formulas
-themselves.
+| Module | Owns |
+| :--- | :--- |
+| `schema.py` | defines and validates table contracts |
+| `tdms.py` | interprets TDMS records only; emits `RAW_TRIAL_COLUMNS`, every field LabVIEW wrote and nothing inferred. Raises on a label that is neither a known code (`x`/`e`/`a`/`m`/`r`) nor an integer |
+| `tables.py` | composes the project table loader with the schema |
+| `classification.py` | adds trial classes, applied by the derivative stage that owns the choice (`ProjectConfig.infer_random_classes`) |
+| workflows | locate inputs, call these layers, write outputs; never implement formulas |
 
-**Transcription and judgement are separated at the parser boundary.**
-`behavior/tdms.py` emits `RAW_TRIAL_COLUMNS` -- every field LabVIEW wrote,
-and nothing inferred. Trial classes are *not* among them: a trial recorded
-as `'x'` carries no class, and recovering one means reading it back out of
-the designed success-probability profile, which is an interpretation. That
-belongs to `behavior/classification.py`, applied by the derivative stage
-that owns the choice (`ProjectConfig.infer_random_classes`).
+Both inputs to class inference (`sTrialClassRaw`, `sp_design_correct`) survive
+into the raw table, so a derivative is regenerable from the staged layer alone.
 
-The parser still *validates* the recorded label, raising on anything that
-is neither a known code (`x`/`e`/`a`/`m`/`r`) nor an integer, so a
-malformed log fails at transcription where the file and trial number are
-still in hand. It just declines to interpret it. Because both inputs to
-inference (`sTrialClassRaw`, `sp_design_correct`) survive into the raw
-table, a derivative can be regenerated -- with inference on or off -- from
-the staged raw layer alone, with no access to the `.tdms` container.
+## Paths and filenames
 
-## Storage
+BIDS-Derivatives entity ordering (`sub-ses-task-acq-run-proc-space-desc-suffix`,
+see `meg_tokens/io/contract.py`), but `desc` is a hyphen-joined growing tag list
+(`desc-slow_beh`) rather than a single value. Every value chained into `desc` is
+recorded verbatim in the sidecar's `metadata`; the two must never disagree.
+Changing this breaks every `DerivativeLayout` path builder.
 
-- Raw and cleaned MEG data uses MNE-native formats under a BIDS derivatives
-  root.
-- Parsed behavior runs are `.tsv` tables under
-  `derivatives/sub-<ID>/beh/` with JSON sidecars.
-- No `.mat`, `.h5`, or undocumented pickle files.
+Build paths with `meg_tokens.io.derivative_path`, never by hand:
 
-## Filename (`desc`) Convention
+```python
+from meg_tokens.io import derivative_path
 
-Output filenames follow BIDS-Derivatives entity ordering
-(`sub-ses-task-acq-run-proc-space-desc-suffix`, see
-`meg_tokens/io/contract.py`), but `desc` is a hyphen-joined, growing tag list
-(e.g. `desc-slow_beh`) rather than a single value. Every value chained into
-`desc` is also recorded verbatim in the JSON sidecar's `metadata` -- the two
-must never disagree. This is a deliberate, project-wide convention:
-changing it is a breaking change across every `DerivativeLayout` path
-builder, not a local fix.
+path = derivative_path(
+    "/data/tokens-bids", subject="H01", datatype="beh",
+    task="tokens", run="1", description="slow", suffix="beh", extension=".tsv",
+)
+# /data/tokens-bids/derivatives/sub-H01/beh/sub-H01_task-tokens_run-1_desc-slow_beh.tsv
+```
+
+`datatype` defaults to `"meg"`.
+
+## Preprocessing derivatives
+
+Three cleaned recordings per staged run, one per cleaner, on a shared trunk.
+`proc` names the cleaner (`dss`, `ica`, `ssp`); `desc` keeps the condition and
+grows the `artifact` tag onto it. The artifact file is the residual — what that
+cleaner removed — so the three estimates are the same quantity.
+
+```
+derivatives/sub-H01/meg/sub-H01_task-tokens_run-1_proc-dss_desc-fast_raw.fif
+derivatives/sub-H01/meg/sub-H01_task-tokens_run-1_proc-dss_desc-fast-artifact_raw.fif
+derivatives/sub-H01/meg/sub-H01_task-tokens_run-1_proc-dss_desc-fast_raw.json
+```
+
+Sidecar carries `stream`, `rank` and `n_dimensions_removed` (all three cleaners
+reduce rank and the inverse operator needs it), `compensation_grade_source` and
+`compensation_applied`, the bad channels per detector, annotated seconds before
+and after cleaning, and the per-cleaner detail.
+
+`preprocessed_meg_runs` requires an explicit `processing=` stream — the three
+cleaners are alternatives, not degrees of one thing, so there is no default.
 
 ## Stage 0: Raw BIDSification
 
-Raw CTF media has no condition/run label in its session names
-(`H02_DDM-tthiery_20180213_03.ds`) -- only a subject prefix, date, and
-sequential index. `meg-tokens meg stage-raw` matches each session to a
-behavioral run and writes a reviewable manifest; `meg-tokens meg
-apply-raw-staging` reads that manifest (fresh or hand-edited) and copies
-matched data into:
+Raw CTF media carries no condition/run label (`H02_DDM-tthiery_20180213_03.ds`
+is a subject prefix, date and sequential index). Two entry points, and no
+separate command per data type:
+
+| Command | Does |
+| :--- | :--- |
+| `meg-tokens meg stage-raw` | matches each session to a behavioral run, writes the manifest |
+| `meg-tokens meg apply-raw-staging` | copies what the manifest says, fresh or hand-edited |
 
 ```text
 BIDS/sub-H02/meg/sub-H02_task-tokens_acq-slow_run-1_meg.ds
@@ -78,38 +92,28 @@ BIDS/sub-H02/anat/sub-H02_T1w.nii.gz
 BIDS/sub-emptyroom/ses-20180213/meg/sub-emptyroom_ses-20180213_task-noise_meg.ds
 ```
 
-`stage-raw` and `apply-raw-staging` are the only two entry points; there is
-no separate command per data type.
+Entities: condition uses `acq` (`Slow2` -> `acq-slow_run-2`) because `desc` is
+derivatives-only in BIDS; `task` stays singular (`tokens`); no `ses` entity,
+one acquisition date per subject.
 
-Matching never guesses. Nominal trial duration pre-filters candidates into
-protocol classes (315s Slow/Fast, 135s RT, everything else excluded), and
-within a class a run is identified by its **inter-trial-interval
-fingerprint**: the logged per-trial `nInitialTime` gaps and the real MEG
-trial-start pulse gaps are the same physical intervals measured on two
-unrelated clocks, so the correct pairing reproduces them to well under a
-millisecond while any other candidate is off by hundreds. A match is
-accepted only when its mean absolute error is within
-`fingerprint_max_error_ms` (5ms) *and* beats the runner-up by at least
-`fingerprint_min_separation` (20x) *and* no other run claims the same
-session; on the real dataset correct matches score 0.39-0.57ms at
-144-892x, so these thresholds sit in an empty gap rather than on a
-boundary. Runs the fingerprint declines fall back to `KNOWN_SESSION_OVERRIDES`
-(H01/H05, kept as a cross-check -- a fingerprint that contradicts one is
-flagged for review, never staged), then to chronological 1:1 pairing when
-the remaining candidate and run counts are equal. Anything still unresolved
-is flagged `ambiguous` with each candidate's pulse count and fingerprint
-error as evidence, for hand-resolution in the manifest. Every accepted pair
-is additionally cross-checked against the real trigger-pulse count.
+### Matching
 
-**H01 and H05** are the only subjects whose duration counts don't match
-8-Slow/Fast + 2-RT (H01: 10 SLOWFAST; H05: 9 SLOWFAST, 1 RT). Pinned as
-`KNOWN_SESSION_OVERRIDES`, cross-referenced against
-`archive/replicated/DDM_scripts/scripts_new/55_CTF_to_FIF.ipynb` (H01,
-labeled `Pilot01` there). H05's RT deficit is a real recording gap, not an
-ambiguity. The fingerprint independently reproduces all 17 entries; the
-overrides now serve only as a cross-check and a fallback.
+Candidates are pre-filtered by duration class (315s Slow/Fast, 135s RT,
+everything else excluded), then matched on inter-trial-interval fingerprint.
+A fingerprint match is accepted only when **all three** hold:
 
-**Known dataset gaps** -- permanent, not resolvable by re-running Stage 0:
+- mean absolute error within `fingerprint_max_error_ms` (5ms)
+- beats the runner-up by at least `fingerprint_min_separation` (20x)
+- no other run claims the same session
+
+Fallback order, then: `KNOWN_SESSION_OVERRIDES` (H01/H05) -> chronological 1:1
+pairing when candidate and run counts are equal -> flagged `ambiguous` for
+hand-resolution. Every accepted pair is cross-checked against the
+trigger-pulse count.
+
+### Known dataset gaps
+
+Permanent, not resolvable by re-running Stage 0:
 
 | Subject | Kind | Gap |
 | :--- | :--- | :--- |
@@ -117,83 +121,55 @@ overrides now serve only as a cross-check and a fallback.
 | H05 | noise | not found, any date |
 | H07, H10 | anat | no FreeSurfer reconstruction |
 | H26/H27 | noise (`20181206`) | `_01.ds` `.hc` corrupt (`RuntimeError: HPI information not available`); `_02.ds` valid |
+| H11 | runs Fast3/4, Slow3/4 | acquired at gradient compensation grade 0; the other 315 task runs are grade 3 |
 
-`KNOWN_NOISE_OVERRIDES` (`meg_tokens/meg/raw_staging.py`) redirects
-H26/H27's noise date to `_02.ds`, same pattern as `KNOWN_SESSION_OVERRIDES`.
+`KNOWN_NOISE_OVERRIDES` (`meg_tokens/meg/raw_staging.py`) redirects H26/H27's
+noise date to `_02.ds`, same pattern as `KNOWN_SESSION_OVERRIDES`.
 
-**Head shapes** are staged as verbatim copies of the native CTF Polhemus export, `BIDS/sub-*/meg/sub-*_headshape.eeg`. BIDS names this slot `sub-<label>_headshape.<ext>` and leaves the extension to the digitizer's own format, so the native file is the standard-compliant thing to stage.
+H11's grade cannot be corrected when staging: CTF keeps it in the `.res4`
+header and applies compensation on read, so an in-memory correction is not
+carried into a copied `.ds`. `read_staged_raw` raises those four runs to grade
+3; the sidecar records `compensation_grade_source` and `compensation_applied`.
 
-Because `desc` is derivatives-only in real BIDS, condition uses `acq`
-instead (`Slow2` -> `acq-slow_run-2`); `task` stays singular (`tokens`); no
-`ses` entity (one acquisition date per subject).
+### Manifest
 
-**Manifest** (`derivatives/sub-group/meg/sub-group_task-tokens_desc-rawstaging_manifest.tsv`,
-via `DerivativeLayout.raw_staging_manifest()`) is the complete Stage 0 plan
-for a subject: every file that will be staged, of every kind, plus every
-gap. One review pass covers the whole raw layer. The columns are
-`MatchResult`'s fields in its declared order -- the dataclass is the single
-definition, and the workflow derives the header from it: `subject, kind
-(run|noise|headshape|anat), condition, run, date, source_path, match_method
-(fingerprint|known_override|fast_path|ambiguous|found|not_found),
-meg_start_pulse_count, behavior_trial_count, count_agreement
-(exact|within_tolerance|mismatch|not_applicable|not_checked), action
-(stage|review), note, fingerprint_error_ms, fingerprint_separation`.
-`count_agreement` is `not_checked` for `ambiguous` rows (no candidate
-session picked yet, so nothing to count pulses on). The two `fingerprint_*`
-columns are recorded for every scored row, `fast_path` ones included, so a
-chronologically-assigned match is auditable on the same evidence as a
-fingerprinted one; they are blank where no score exists and
-`fingerprint_separation` is `inf` when a duration class held a single
-candidate. Only
-`action == "stage"` rows are materialized. To resolve a
-`review` row: its `note` lists every real candidate with its Start-pulse
-count -- set `source_path` and `action = stage`, save, and re-run
-`apply-raw-staging` (it applies the manifest exactly as saved, never
-recomputing the plan).
+`derivatives/sub-group/meg/sub-group_task-tokens_desc-rawstaging_manifest.tsv`,
+via `DerivativeLayout.raw_staging_manifest()`. Every file that will be staged,
+of every kind, plus every gap -- one review pass covers the whole raw layer.
+Columns are `MatchResult`'s fields in declared order; the dataclass is the
+single definition and the workflow derives the header from it.
 
-**MEG raw layer:** each matched `.ds` session is copied via
-`mne_bids.write_raw_bids`, which also generates `channels.tsv`,
-`*_meg.json`, `coordsystem.json`, `dataset_description.json`, and
-`participants.tsv`. `*_events.tsv` comes from the real trigger channel
-(`mne.find_events`); CTF's `MarkerFile.mrk` annotations are dropped first
-(`raw.set_annotations(None)`) to avoid double-counting. Empty-room noise is
-copied under `sub-emptyroom/ses-<date>/meg/` and cross-referenced via
-`AssociatedEmptyRoom`. Originals on the media and in `tdms/` are never
-modified. Re-copying always passes `overwrite=True` (real per-run
-digitization varies by sub-mm noise; harmless since coregistration uses a
-separately-managed `-trans.fif`, never `coordsystem.json`).
-`meg_tokens/workflows/sources.py`'s empty-room lookup reads this tree,
-resolving each subject's noise through the `AssociatedEmptyRoom` its own run
-sidecars carry (`associated_emptyroom`), so the association Stage 0 recorded is
-the one the covariance uses.
+| Column | Values / rule |
+| :--- | :--- |
+| `subject` | |
+| `kind` | `run` \| `noise` \| `headshape` \| `anat` |
+| `condition`, `run`, `date` | blank where the kind has none (`anat` carries no `date`) |
+| `source_path` | edit this to resolve a `review` row |
+| `match_method` | `fingerprint` \| `known_override` \| `fast_path` \| `ambiguous` \| `found` \| `not_found` |
+| `meg_start_pulse_count`, `behavior_trial_count` | |
+| `count_agreement` | `exact` \| `within_tolerance` \| `mismatch` \| `not_applicable` \| `not_checked`; `not_checked` for `ambiguous` rows, which have no candidate to count on |
+| `action` | `stage` \| `review`; only `stage` rows are materialized |
+| `note` | for `review` rows, every real candidate with its Start-pulse count |
+| `fingerprint_error_ms`, `fingerprint_separation` | recorded for every scored row including `fast_path`, so a chronological match is auditable on the same evidence; blank where no score exists, `separation` is `inf` when a duration class held one candidate |
 
-**Behavior raw layer:** `BIDS/sub-<ID>/beh/*_beh.tsv` is a minimally-parsed
-TDMS export (`parse_tdms_file(path)`, which never infers trial classes --
-see "Behavioral module boundaries" above) under
-raw-legal BIDS entities, independent of and additive to
-`derivatives/sub-*/beh/*_beh.tsv` (the `behavior ingest` output,
-which already makes real analysis choices like trial-class inference, so
-stays a derivative). Staged for every requested subject's TDMS files
-regardless of MEG match status.
+To resolve a `review` row: set `source_path` and `action = stage`, save, re-run
+`apply-raw-staging`. It applies the manifest exactly as saved and never
+recomputes the plan.
 
-**Anatomical (MRI) raw layer:** an `anat` manifest row per subject, copying
-`subjects_dir/<ID>/mri/rawavg.mgz` -- native per-subject voxel
-geometry/intensity, unlike `mri/T1.mgz`, which every subject shares as a
-uniformly resampled 256x256x256 8-bit conformed volume -- into
-`BIDS/sub-<ID>/anat/sub-<ID>_T1w.nii.gz` via `mne_bids.write_anat`. The
-`.mgz`→`.nii.gz` conversion is lossless: identical shape, bit-identical
-voxel data and affine, `sform_code = 2` (SCANNER_ANAT); only the dtype's
-byte order is normalised.
+### What each layer stages
 
-Anat needs no matching -- there is at most one reconstruction per subject,
-so discovery *is* the decision, and the row is `found`/`not_found` exactly
-like `noise` and `headshape`. It is *not* a separate command: a subject
-without a reconstruction (H07/H10) surfaces as a `not_found` / `review` row
-in the same list as every other gap, rather than in a second command's
-separate output. The `anat` row carries no `date`, since the MRI is a
-separate acquisition from the MEG session. `subjects_dir` itself is
-untouched and still feeds the BEM/source-space stages directly, which use
-the conformed volumes.
+| Layer | Rule |
+| :--- | :--- |
+| MEG | each matched `.ds` via `mne_bids.write_raw_bids`, which also writes `channels.tsv`, `*_meg.json`, `coordsystem.json`, `dataset_description.json`, `participants.tsv`. `*_events.tsv` comes from the trigger channel (`mne.find_events`); CTF's `MarkerFile.mrk` annotations are dropped first (`raw.set_annotations(None)`) to avoid double-counting |
+| Empty room | under `sub-emptyroom/ses-<date>/meg/`, cross-referenced via `AssociatedEmptyRoom`, which is what `workflows/sources.py` resolves noise through |
+| Behavior | `parse_tdms_file(path)` under raw-legal entities; never infers trial classes. Independent of and additive to `derivatives/sub-*/beh/*_beh.tsv`. Staged for every requested subject regardless of MEG match status |
+| Head shape | verbatim copy of the native CTF Polhemus export to `BIDS/sub-*/meg/sub-*_headshape.eeg`; BIDS leaves this extension to the digitizer's format |
+| Anat | `subjects_dir/<ID>/mri/rawavg.mgz` -> `BIDS/sub-<ID>/anat/sub-<ID>_T1w.nii.gz` via `mne_bids.write_anat`. Lossless: identical shape, bit-identical voxels and affine, `sform_code = 2`. Row is `found`/`not_found`, needs no matching. `subjects_dir` itself is untouched |
+
+Originals on the media and in `tdms/` are never modified. Re-copying passes
+`overwrite=True`: per-run digitization varies by sub-mm noise, which is
+harmless because coregistration uses a separately-managed `-trans.fif`, never
+`coordsystem.json`.
 
 ## Stage 1: Behavioral Log Parsing
 
@@ -236,17 +212,10 @@ tTrialEnd` on chosen trials; equal-length `nTokenNum`/`nTokenDir`/`tTime`/
 
 ## Stage 2: Behavioral Metrics Extraction
 
-**Stage 2 reads Stage 1's `derivatives/sub-*/beh/*_beh.tsv` tables**, not the
-raw BIDS layer -- it is a pure function of the trial-class-inferred behavior
-derivatives, with no dependency on `raw/`, `tdms/`, or Stage 0 having run in
-this process. `behavior/features.py` performs the single deterministic
-transform from those tables to the canonical trial-feature table;
-`behavior/analyses/summary.py` and `behavior/analyses/performance.py` build
-on it. Neither module selects trials or infers anything Stage 1 didn't
-already decide -- eligibility is expressed as boolean flags on every row,
-never by deleting it.
-
-Stage 2 writes three group derivatives:
+Input: Stage 1's `derivatives/sub-*/beh/*_beh.tsv`. Eligibility is expressed as
+boolean flags on every row, never by deleting it. Subject exclusions
+(`ProjectConfig.subject_exclusions`) are applied before any table is built, so
+an excluded subject never enters the motor baseline either.
 
 ```text
 derivatives/sub-group/beh/sub-group_task-tokens_desc-trialfeatures_beh.tsv
@@ -254,183 +223,119 @@ derivatives/sub-group/beh/sub-group_task-tokens_desc-summary_beh.tsv
 derivatives/sub-group/beh/sub-group_task-tokens_desc-groupstats_beh.tsv
 ```
 
-**Trial-feature table** (`build_trial_features`): one row per staged trial
-across every subject, including never-started and no-response trials. Its
-MEG join key is `subject`, `condition`, `run`, and one-based
-`run_trial_index`. Motor baseline is each subject's arithmetic mean `rawRT`
-across RT-condition trials with a response, computed once and stamped onto
-every one of that subject's rows. `dt_ms` is `rawRT - motor_baseline_ms`,
-computed only for started, chosen Fast/Slow trials -- everywhere else
-(RT-condition, never-started, no-response rows) it is `NaN`. Negative
-`dt_ms` (an anticipation) is retained rather than clipped, and flagged
-separately as `dt_anticipation`.
+### Trial features
 
-`logged_spd` is the logged chosen-target success probability nearest the
-motor-corrected commitment time (`tEnterTarget - motor_baseline_ms`), read
-from the trial's parallel `nProb`/`tTime` sequences.
-`logged_spd_validated_15row` repeats that same value only when the trial's
-token log has exactly 15 rows (`token_log_rows == 15`); otherwise it is
-`NaN` -- there is no silent fallback to the unvalidated value when
-validation fails. `evidence_at_decision` is `logged_spd - 0.5`. The
-`sp_design_*` / `sum_log_lr_*` / `token_lead_at_decision` columns are the
-*designed* (not logged) evidence, derived purely from `sTokenDirs` and
-`nCorrectChoice`: `sp_design_early`/`sum_log_lr_design_early` are always
-evaluated after the third jump regardless of when the subject actually
-responded, while the `_at_decision` variants use the number of designed
-tokens the subject had actually observed by commitment. A correct-target
-value outside `{1, 2}` or a design shorter than three tokens returns
-`NaN`/`pd.NA` rather than a guess.
+`build_trial_features`: one row per staged trial across every subject,
+including never-started and no-response trials. MEG join key is `subject`,
+`condition`, `run`, one-based `run_trial_index`.
 
-Four boolean eligibility flags summarize selection without deleting rows:
-`is_started` (outcome is not `OUTCOME_NEVER_STARTED`), `has_choice` (finite
-`rawRT`), `is_no_response` (started but no choice), and
-`primary_analysis_eligible` (started, chosen, and a Fast/Slow condition --
-excludes RT-condition runs and never-started/no-response rows).
-`design_time_alignment_valid` additionally requires the 15-row token log.
-Analyses that need lapses (started, chosen, but not primary-eligible for
-some other reason) select them explicitly rather than relying on a flag's
-absence.
+| Column | Rule |
+| :--- | :--- |
+| `motor_baseline_ms` | subject's arithmetic mean `rawRT` over RT-condition trials with a response; computed once, stamped on every row of that subject |
+| `dt_ms` | `rawRT - motor_baseline_ms`, only for started, chosen Fast/Slow trials; `NaN` on RT-condition, never-started and no-response rows |
+| `dt_anticipation` | flags negative `dt_ms`, which is retained rather than clipped |
+| `logged_spd` | logged chosen-target success probability nearest the motor-corrected commitment time (`tEnterTarget - motor_baseline_ms`), from the parallel `nProb`/`tTime` sequences |
+| `logged_spd_validated_15row` | the same value only when `token_log_rows == 15`; otherwise `NaN`, with no fallback |
+| `evidence_at_decision` | `logged_spd - 0.5` |
+| `sp_design_early`, `sum_log_lr_design_early` | *designed* evidence from `sTokenDirs` and `nCorrectChoice`, always evaluated after the third jump regardless of when the subject responded |
+| `sp_design_*_at_decision`, `sum_log_lr_*_at_decision`, `token_lead_at_decision` | same, but using the designed tokens observed by commitment |
 
-**Subject summary** (`summarize_behavior`): one row per subject. Reports the
-motor baseline; Fast/Slow/RT and trial-class trial and decision-time counts;
-percent-correct (0--100 scale) overall and by condition; and paired
-all-logged/validated-15-row SPD means, overall and by trial class (`easy`,
-`ambiguous`, `misleading` -- unclassified trials are excluded from the
-class-keyed breakdowns but still counted in the overall figures). Counts
-follow the eligibility rule named by the column, and two differently-named
-counts are deliberately not the same denominator: `n_fast_trials` counts
-every started Fast-condition row including no-response trials, while
-`n_fast_dt_trials` counts only finite decision times among
-primary-analysis-eligible trials.
+A correct-target value outside `{1, 2}`, or a design shorter than three
+tokens, yields `NaN`/`pd.NA` rather than a guess.
 
-**Group statistics** (`behavior_group_statistics`): one row per fixed,
-declared-in-advance contrast -- Fast-vs-Slow decision time, Fast-vs-Slow raw
-error count, all three pairwise trial-class decision-time contrasts, and all
-three class contrasts for each SPD view. Each row carries a paired t-test
-and Cohen's dz from `behavior/math/inference.paired_subject_statistics`,
-pairing by subject row and excluding a subject from one contrast when
-either value is non-finite. Contrasts are never chosen from observed
-results and receive no multiplicity correction; error counts are raw
-trial counts, not converted to rates.
+| Eligibility flag | True when |
+| :--- | :--- |
+| `is_started` | outcome is not `OUTCOME_NEVER_STARTED` |
+| `has_choice` | finite `rawRT` |
+| `is_no_response` | started but no choice |
+| `primary_analysis_eligible` | started, chosen, Fast/Slow condition -- excludes RT runs and never-started/no-response rows |
+| `design_time_alignment_valid` | additionally requires the 15-row token log |
 
-Subject exclusions (`ProjectConfig.subject_exclusions`) are applied before
-any of the three tables are built, so an excluded subject's trials never
-enter the motor-baseline calculation, the trial-feature table, or either
-summary.
+Lapses (started, chosen, not primary-eligible for another reason) are selected
+explicitly, never by a flag's absence.
+
+### Subject summary
+
+`summarize_behavior`: one row per subject -- motor baseline; Fast/Slow/RT and
+trial-class trial and decision-time counts; percent-correct (0--100) overall
+and by condition; paired all-logged/validated-15-row SPD means, overall and by
+trial class (`easy`, `ambiguous`, `misleading`, with unclassified trials
+excluded from class breakdowns but counted in the overall figures).
+
+Counts follow the eligibility rule named by the column, and two similarly named
+counts are deliberately different denominators: `n_fast_trials` counts every
+started Fast row including no-response trials; `n_fast_dt_trials` counts only
+finite decision times among primary-eligible trials.
+
+### Group statistics
+
+`behavior_group_statistics`: one row per fixed, declared-in-advance contrast --
+Fast-vs-Slow decision time, Fast-vs-Slow raw error count, the three pairwise
+trial-class decision-time contrasts, and the three class contrasts for each SPD
+view. Each row carries a paired t-test and Cohen's dz from
+`behavior/math/inference.paired_subject_statistics`, excluding a subject from a
+contrast when either value is non-finite. No multiplicity correction; error
+counts are raw trial counts, not rates.
 
 ## Stage 2b: Behavioral Characterization Analyses
 
-**Stage 2b reads Stage 2's trial-feature and subject-summary tables**, not
-the raw Stage 1 layer, and requires Stage 2 to have run first --
-`analyze_behavior_characterization` raises `FileNotFoundError` naming
-`behavior analyze` otherwise. It runs the fixed battery of analyses
-described in `docs/behavior.md` ("Analyses") -- distributions, condition x
-class and session-order effects, lapses, continuous evidence, criterion
-decline and urgency, psychophysical reverse correlation, conditional
-accuracy, choice history and post-error slowing, sequential-sampling model
-fits, individual differences, and cross-species comparison -- implemented
-under `behavior/analyses/` and orchestrated by
+Input: Stage 2's trial-feature and subject-summary tables. The analyses are
+listed in `docs/behavior.md` ("Analyses"), implemented under
+`behavior/analyses/` and orchestrated by
 `workflows/behavior_characterization.py`.
 
 Each analysis writes its own derivative and, where it has one, a matching
-`*stats` group-statistics derivative, so that one failed model never
-truncates the rest of the output:
+`*stats` group-statistics derivative, so one failed model never truncates the
+rest of the output:
 
 ```text
 derivatives/sub-group/beh/sub-group_task-tokens_desc-conditionclass_beh.tsv
 derivatives/sub-group/beh/sub-group_task-tokens_desc-conditionclassstats_beh.tsv
 ```
 
-The analysis name, the subjects included and excluded, and both source table
-paths are recorded in every derivative's JSON sidecar, so a derivative states
-its own provenance without a second lookup. Inference throughout is
-"per-subject fit followed by a group test on the fitted values" (two-stage
-summary statistics), also recorded in the sidecar.
+Every sidecar records the analysis name, the subjects included and excluded,
+and both source table paths.
 
-The two sequential-sampling derivatives are the exception to that two-stage
-note. `ssmcomparison` holds one maximum-likelihood fit per subject,
-condition, and model family (`ddm`, the bounded integrator, and `urgency`,
-the urgency-gating model) with log-likelihood, AIC, BIC, the criterion
-difference against the integrator fit, the trial count, and
-`n_token_sequences`, the number of distinct token sequences in the cell.
-Both models are driven by the trial's own token-by-token evidence
-trajectory, derived from `token_directions` and `nCorrectChoice`, so the
-fit needs both columns present. `ssmcomparisonstats` carries two analyses,
-distinguished by its `analysis` column: `ssm_model_comparison`, the
-per-condition group test of the criterion difference, and
-`ssm_urgency_condition_contrast`, the paired Fast-minus-Slow contrast on
-every fitted urgency-model parameter. The two models do not share a
-parameter set: `ddm` carries
-`drift_scale`, `bound`, `nondecision_s`, and `urgency` carries
-`drift_scale`, `urgency_scale`, `urgency_onset_s`, `nondecision_s`, with
-every column present in the table and missing where a model does not use it.
-Both need the optional `pyddm` dependency
-(`pip install meg-tokens[modeling]`).
+Two analyses join optional inputs:
 
-**The fits are a separate step.** They dominate the Stage 2b runtime, so
-`behavior ssm-fit --subjects <ids> --n-jobs <n>` computes them and writes one
-table per subject at the subject-level path:
+| Analysis | Optional input | When absent |
+| :--- | :--- | :--- |
+| `speciescomparison` | `ssmcomparison` | omits `urgency_minus_integrator_bic`, `urgency_growth_rate_per_s`, `urgency_growth_rate_fast_minus_slow` -- each one one-sample test against zero, sharing that table's row shape |
+| `individual_profile` (source of `individualprofile`, `individualcorrelations`) | `--neural-metrics`, a TSV/CSV with a `subject` column | those columns are absent, not backfilled |
+
+### Sequential-sampling derivatives
+
+Fitting is a separate step -- `behavior ssm-fit --subjects <ids> --n-jobs <n>`
+-- writing per-subject tables at the subject-level path. `behavior
+characterization` fits nothing: it concatenates whichever per-subject tables
+exist, names any subject missing one in `sequential_sampling_subjects_missing`,
+and omits the `ssm*` derivatives when none exists. `behavior subjects` prints
+the subject list the two steps agree on. Both models need the optional `pyddm`
+dependency (`pip install meg-tokens[modeling]`).
 
 ```text
 derivatives/sub-H01/beh/sub-H01_task-tokens_desc-ssmcomparison_beh.tsv
 ```
 
-Those tables carry the same columns as the group `ssmcomparison`, restricted
-to one subject. `ssm-fit` writes two further per-subject tables from the same
-fitted models, because refitting to draw a curve costs half an hour:
+| Derivative | One row per | Holds |
+| :--- | :--- | :--- |
+| `ssmcomparison` | subject, condition, model family | log-likelihood, AIC, BIC, criterion difference against the integrator fit, trial count, `n_token_sequences`, and `t_dur_s` -- the integration horizon, so a fit is reconstructible from its row via `_build_model(model, t_dur_s, {parameter: value, ...})` |
+| `ssmcomparisonstats` | analysis | `ssm_model_comparison` and `ssm_urgency_condition_contrast`, distinguished by the `analysis` column |
+| `ssmtimecourse` | subject, condition, model, trial class, time point (20 ms grid) | `criterion`, `mean_decision_variable`, `predicted_density_correct`/`_error`, `observed_density_correct`/`_error` |
+| `ssmtrialpredictions` | trial, model, keyed by `trial_id` | `criterion_at_decision`, `decision_variable_at_decision`, `predicted_accuracy` |
 
-- `ssmtimecourse` -- one row per subject, condition, model, trial class and
-  time point (20 ms grid), holding `criterion`, `mean_decision_variable`, and
-  `predicted_density_correct`/`_error` beside
-  `observed_density_correct`/`_error`. The criterion does not depend on the
-  trial class and the observed densities do not depend on the model; both
-  repeat, so one row is a complete plotting record. The mean decision variable
-  is the noise-free trajectory of the *unabsorbed* process, so it can pass the
-  criterion rather than stopping at it.
-- `ssmtrialpredictions` -- one row per trial and model, keyed by `trial_id`,
-  holding `criterion_at_decision`, `decision_variable_at_decision` and
-  `predicted_accuracy`. This is the model-derived regressor Tier C5 joins to
-  source-space features.
+`ssmtimecourse` and `ssmtrialpredictions` are written by `ssm-fit` from the
+same fitted models, because refitting to draw a curve costs half an hour.
 
-`ssmcomparison` carries `t_dur_s`, the integration horizon each cell was
-fitted with, so a fitted model is exactly reconstructible from its row:
-`_build_model(model, t_dur_s, {parameter: value, ...})`.
+| Model | Parameters |
+| :--- | :--- |
+| `ddm`, the bounded integrator | `drift_scale`, `bound`, `nondecision_s` |
+| `urgency`, the urgency-gating model | `drift_scale`, `urgency_scale`, `urgency_onset_s`, `nondecision_s` |
 
-`behavior characterization` fits nothing: it concatenates
-whichever per-subject tables exist, and names any subject still missing one in
-`sequential_sampling_subjects_missing`. When none exists, the `ssm*`
-derivatives are omitted and the rest of the battery is written as usual.
-`behavior subjects` prints the subject list the two steps agree on. A
-subject-condition cell with fewer
-than 50 scorable trials is written with `converged=false` and missing
-estimates rather than fitted; anticipations (non-positive `dt_ms`) are the
-one place in the pipeline a trial is dropped instead of flagged -- a
-first-passage density has no support before the process starts.
+Every parameter column is present in the table and missing where a model does
+not use it.
 
-`speciescomparison` gains three rows from `ssmcomparison` when it is
-supplied: `urgency_minus_integrator_bic`, `urgency_growth_rate_per_s`, and
-`urgency_growth_rate_fast_minus_slow`. They share the row shape of the rest
-of that table -- one one-sample test against zero.
-
-`individual_profile` -- the source of the `individualprofile` and
-`individualcorrelations` derivatives -- optionally joins a subject-level MEG
-metrics table (`--neural-metrics`, a TSV/CSV with a `subject` column) into
-the individual-difference profile; when omitted, those columns are simply
-absent rather than backfilled.
-
-## Path Convention
-
-Use `meg_tokens.io.derivative_path` for BIDS-derivatives-style paths:
-
-```python
-from meg_tokens.io import derivative_path
-
-path = derivative_path(
-    "/data/tokens-bids", subject="H01", datatype="beh",
-    task="tokens", run="1", description="slow", suffix="beh", extension=".tsv",
-)
-```
-
-This yields
-`/data/tokens-bids/derivatives/sub-H01/beh/sub-H01_task-tokens_run-1_desc-slow_beh.tsv`
-(`datatype` defaults to `"meg"` when omitted).
+A subject-condition cell with fewer than 50 scorable trials is written with
+`converged=false` and missing estimates. Anticipations (non-positive `dt_ms`)
+are dropped rather than flagged -- the one place in the pipeline a trial is
+deleted.

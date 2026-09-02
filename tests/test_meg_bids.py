@@ -88,3 +88,40 @@ def test_write_meg_bids_and_write_emptyroom_bids_real_media_integration(tmp_path
     assert len(events) == 111
     assert events["trial_type"].value_counts().to_dict() == {"Start": 56, "Go": 55}
     assert events.duplicated(subset=["sample", "trial_type"]).sum() == 0
+
+
+def test_importing_the_module_does_not_change_mne_logging():
+    """A library module must not reconfigure logging for the whole process.
+
+    Five workflow modules import this one for a path helper; setting the log
+    level at module scope meant any of those imports silently discarded a
+    caller's own logging choice.
+    """
+    import subprocess
+    import sys
+
+    probe = (
+        "import mne, sys; before = mne.utils.logger.level;"
+        "import meg_tokens.meg.meg_bids, meg_tokens.meg.anat_bids;"
+        "sys.exit(0 if mne.utils.logger.level == before else 1)"
+    )
+    assert subprocess.run([sys.executable, "-c", probe]).returncode == 0
+
+
+def test_a_missing_sidecar_is_not_reported_as_a_missing_recording(tmp_path):
+    """Absent sidecars and sidecars naming no noise are different facts.
+
+    Only the second says anything about the acquisition, and H05 -- the one
+    subject with no empty room -- is exactly where that distinction matters.
+    """
+    from meg_tokens.meg.meg_bids import associated_emptyroom, raw_meg_path
+
+    staged = raw_meg_path(tmp_path, "H01", "Fast", 1)
+    staged.mkdir(parents=True)
+
+    with pytest.raises(FileNotFoundError, match="no sidecar"):
+        associated_emptyroom(tmp_path, "H01")
+
+    staged.with_suffix(".json").write_text("{}", encoding="utf-8")
+    with pytest.raises(FileNotFoundError, match="no empty-room session was acquired"):
+        associated_emptyroom(tmp_path, "H01")

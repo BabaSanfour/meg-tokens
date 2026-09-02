@@ -12,7 +12,7 @@ import argparse
 
 import pytest
 
-from meg_tokens.cli.main import _COMMAND_DEST, _HANDLERS, build_parser
+from meg_tokens.cli.main import _COMMAND_DEST, _HANDLERS, build_parser, main
 
 
 def command_tree() -> list[tuple[str, str]]:
@@ -79,3 +79,31 @@ def test_report_behavior_rejects_an_unknown_format():
         build_parser().parse_args(
             ["--config", "dummy.toml", "report", "behavior", "--formats", "bogus"]
         )
+
+
+def test_subjects_are_normalized_once_on_entry(monkeypatch):
+    """The boundary owns the canonical form, so nothing downstream re-checks.
+
+    `--subjects H1` used to reach the workflows as the literal string, which is
+    why every layer normalized defensively. Doing it here means a path helper
+    can trust its caller.
+    """
+    seen = {}
+
+    class _Result:
+        outputs = ()
+
+    monkeypatch.setitem(
+        _HANDLERS,
+        ("meg", "preprocess"),
+        lambda project, args: (seen.update(subjects=args.subjects), _Result())[1],
+    )
+    main(["--config", "tokens.toml", "meg", "preprocess", "--subjects", "H1", "h2", "H03"])
+
+    assert seen["subjects"] == ["H01", "H02", "H03"]
+
+
+def test_an_unparseable_subject_fails_at_the_boundary(capsys):
+    with pytest.raises(SystemExit):
+        main(["--config", "tokens.toml", "meg", "preprocess", "--subjects", "nope"])
+    assert "Invalid subject ID" in capsys.readouterr().err

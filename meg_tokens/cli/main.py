@@ -7,6 +7,8 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Callable, Optional, Sequence
 
+import mne
+
 from meg_tokens import __version__
 from meg_tokens.core import (
     ConnectivityConfig,
@@ -28,7 +30,6 @@ from meg_tokens.core import (
     StatisticsConfig,
     normalize_subject_id,
 )
-
 
 Handler = Callable[[ProjectConfig, argparse.Namespace], object]
 
@@ -223,8 +224,9 @@ def build_parser() -> argparse.ArgumentParser:
     preprocess.add_argument("--condition")
     preprocess.add_argument("--high-pass", dest="high_pass", type=float, default=0.5)
     preprocess.add_argument("--low-pass", dest="low_pass", type=float, default=150.0)
-    preprocess.add_argument("--notch-freqs", dest="notch_freqs", type=float, nargs="+")
-    preprocess.add_argument("--run-ica", dest="run_ica", action="store_true")
+    preprocess.add_argument("--streams", dest="streams", nargs="+",
+                            choices=("dss", "ica", "ssp"),
+                            help="cleaners to run; default all three")
     preprocess.add_argument("--ica-exclude", dest="ica_exclude", type=int, nargs="*")
 
     epoch = meg_commands.add_parser(
@@ -791,8 +793,7 @@ def _meg_preprocess(project: ProjectConfig, args: argparse.Namespace) -> object:
     settings = PreprocessingConfig(
         high_pass=args.high_pass,
         low_pass=args.low_pass,
-        notch_freqs=tuple(args.notch_freqs) if args.notch_freqs else None,
-        run_ica=args.run_ica,
+        streams=tuple(args.streams) if args.streams else None,
         ica_exclude=tuple(args.ica_exclude) if args.ica_exclude is not None else None,
     )
     if args.run is None:
@@ -1367,6 +1368,9 @@ _HANDLERS: dict[tuple[str, str], Handler] = {
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
     """Execute one workflow command."""
+    # Set here rather than at module scope in the library: importing a module
+    # for a path helper should not reconfigure logging for the whole process.
+    mne.set_log_level("ERROR")
     parser = build_parser()
     args = parser.parse_args(argv)
     # The one place a subject label enters the system. Normalizing here means

@@ -6,7 +6,6 @@ from pathlib import Path
 from typing import Optional, Sequence
 
 import mne
-import numpy as np
 
 from meg_tokens.behavior.tables import read_behavior_table
 from meg_tokens.core import (
@@ -33,9 +32,12 @@ from meg_tokens.meg.meg_bids import (
     staged_subjects,
 )
 from meg_tokens.meg.preprocessing import (
-    load_and_filter_raw,
-    run_ica_rejection,
-    save_clean_raw,
+    STREAMS,
+    artifact_events,
+    build_trunk,
+    read_staged_raw,
+    run_stream,
+    save_stream,
 )
 
 
@@ -45,7 +47,7 @@ def preprocess_run(
     *,
     settings: PreprocessingConfig = PreprocessingConfig(),
 ) -> WorkflowResult:
-    """Filter one staged CTF recording, optionally apply ICA, and persist it.
+    """Preprocess one staged CTF recording through every stream.
 
     The single-run primitive Snakemake parallelizes over. It resolves its own
     input from the run's identity rather than being handed a path, so exactly
@@ -68,47 +70,43 @@ def preprocess_run(
             f"No staged raw MEG for {run.subject} {run.condition} run {run.run} at "
             f"{input_path}. Run `meg-tokens meg apply-raw-staging` first."
         )
-    notch_freqs = (
-        np.asarray(settings.notch_freqs, dtype=float)
-        if settings.notch_freqs is not None
-        else None
-    )
-    raw = load_and_filter_raw(
-        str(input_path),
-        notch_freqs=notch_freqs,
-        high_pass=settings.high_pass,
-        low_pass=settings.low_pass,
-        preload=True,
-    )
-    if settings.run_ica:
-        ica = run_ica_rejection(raw)
-        if settings.ica_exclude is not None:
-            ica.exclude = [int(index) for index in settings.ica_exclude]
-        ica.apply(raw)
+    # The trunk is built once and shared: computing bad channels or segments
+    # per stream would make the streams differ in two ways at once, and the
+    # comparison between cleaners would not mean anything.
+    raw, source_grade = read_staged_raw(input_path)
+    trunk, report = build_trunk(raw, source_grade)
+    events = artifact_events(trunk)
 
-    output_path = Path(
-        save_clean_raw(
-            raw,
-            str(project.bids_root),
-            subject_id=run.subject,
-            run_id=run.run,
-            condition=run.condition,
-            processing="clean" if settings.run_ica else "filt",
+    streams = tuple(settings.streams or STREAMS)
+    unknown = [name for name in streams if name not in STREAMS]
+    if unknown:
+        raise ValueError(f"unknown stream(s) {unknown}; expected from {list(STREAMS)}")
+
+    outputs: list[Path] = []
+    ranks: dict[str, int] = {}
+    for stream in streams:
+        result, tail = run_stream(trunk, events, stream)
+        paths = save_stream(
+            result, report, tail, DerivativeLayout(project.bids_root),
+            run.subject, run.condition, run.run,
         )
-    )
+        outputs.extend(paths.values())
+        ranks[stream] = result.rank(report.n_meg_channels)
+        del result
+
     return WorkflowResult(
         stage="meg_preprocessing",
         inputs=(input_path,),
-        outputs=(output_path,),
+        outputs=tuple(outputs),
         settings={
             "subject": run.subject,
             "run": run.run,
             "condition": run.condition,
-            "high_pass": settings.high_pass,
-            "low_pass": settings.low_pass,
-            "notch_freqs": settings.notch_freqs,
-            "run_ica": settings.run_ica,
-            "ica_exclude": settings.ica_exclude,
+            "streams": list(streams),
+            "compensation_applied": report.compensation_applied,
+            "bad_channels": report.bad_channels,
+            "annotated_seconds": report.annotated_seconds,
+            "rank": ranks,
         },
     )
 
@@ -159,8 +157,7 @@ def preprocess_subjects(
             "n_runs": len(outputs),
             "high_pass": settings.high_pass,
             "low_pass": settings.low_pass,
-            "notch_freqs": settings.notch_freqs,
-            "run_ica": settings.run_ica,
+            "streams": list(settings.streams or STREAMS),
             "ica_exclude": settings.ica_exclude,
         },
     )
@@ -189,7 +186,7 @@ def epoch_subjects(
     outputs = []
 
     for subject in subjects:
-        runs = preprocessed_meg_runs(raw_layout, subject)
+        runs = preprocessed_meg_runs(raw_layout, subject, stream=settings.stream)
         if not runs:
             raise FileNotFoundError(
                 f"No preprocessed raw FIF files found for {subject} under "

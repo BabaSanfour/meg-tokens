@@ -36,15 +36,22 @@ RUN_BY_ENTITY = {
     for condition, run in RUN_CELLS
 }
 BAND_BY_ENTITY = {band.replace("_", "-"): band for band in POWER_BANDS}
-PROCESSING = "clean" if PREPROCESSING.get("run_ica", False) else "filt"
+# Preprocessing writes one derivative per cleaner, so the DAG fans out three ways per
+# recording and every downstream rule has to say which stream it consumes.
+STREAMS = tuple(PREPROCESSING.get("streams", ("dss", "ica", "ssp")))
+STREAM = PREPROCESSING.get("stream", "ica")
+if STREAM not in STREAMS:
+    raise ValueError(
+        f"preprocessing.stream {STREAM!r} is not among preprocessing.streams {list(STREAMS)}: "
+        "the stream consumed downstream must be one that preprocessing actually writes"
+    )
 CLEAN_PATTERN = str(
     DERIVATIVES
     / "sub-{subject}"
     / "meg"
     / (
-        "sub-{subject}_task-tokens_run-{run_number}_proc-"
-        + PROCESSING
-        + "_desc-{condition}_raw.fif"
+        "sub-{subject}_task-tokens_run-{run_number}_proc-{stream}"
+        "_desc-{condition}_raw.fif"
     )
 )
 SOURCE_MANIFEST_PATTERN = str(
@@ -121,13 +128,14 @@ def run_for_entities(condition, run_number):
     return RUN_BY_ENTITY[key]
 
 
-def clean_raw(subject, run):
+def clean_raw(subject, run, stream=None):
+    """The derivative a downstream rule consumes, from one named stream."""
     return str(
         LAYOUT.preprocessed_raw(
             subject=subject,
             run=run,
             condition=condition_for_run(run),
-            processing="clean" if PREPROCESSING.get("run_ica", False) else "filt",
+            processing=stream or STREAM,
         )
     )
 
@@ -278,14 +286,17 @@ rule preprocess:
             )
         )
     output:
-        CLEAN_PATTERN
+        # One invocation writes every stream, because the trunk is shared: the
+        # streams must not be separate jobs or each would recompute it and
+        # they could disagree about bad channels and segments.
+        expand(CLEAN_PATTERN, stream=STREAMS, allow_missing=True)
     params:
         run=lambda wildcards: run_for_entities(
             wildcards.condition, wildcards.run_number
         ),
         high_pass=PREPROCESSING.get("high_pass", 0.5),
         low_pass=PREPROCESSING.get("low_pass", 150.0),
-        ica="--run-ica" if PREPROCESSING.get("run_ica", False) else "",
+        streams=" ".join(STREAMS),
     shell:
         """
         meg-tokens --config {PROJECT_CONFIG:q} meg preprocess \
@@ -294,7 +305,7 @@ rule preprocess:
           --condition {wildcards.condition:q} \
           --high-pass {params.high_pass} \
           --low-pass {params.low_pass} \
-          {params.ica}
+          --streams {params.streams}
         """
 
 

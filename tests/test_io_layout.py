@@ -17,9 +17,9 @@ def test_layout_builds_core_stage_paths():
     assert layout.preprocessed_raw(
         subject="H1",
         run="Slow1",
-        processing="filt",
+        processing="ica",
     ).as_posix() == (
-        f"{prefix}/meg/sub-H01_task-tokens_run-1_proc-filt_desc-slow_raw.fif"
+        f"{prefix}/meg/sub-H01_task-tokens_run-1_proc-ica_desc-slow_raw.fif"
     )
     assert layout.epochs(
         subject="H1",
@@ -46,12 +46,12 @@ def test_layout_discovers_raw_identity_without_losing_condition(tmp_path):
         subject="H1",
         run="1",
         condition="Slow",
-        processing="filt",
+        processing="ica",
     )
     raw_path.parent.mkdir(parents=True)
     raw_path.write_text("", encoding="utf-8")
 
-    (run, found), = preprocessed_meg_runs(layout, "H1")
+    (run, found), = preprocessed_meg_runs(layout, "H1", stream="ica")
     assert found == raw_path
     assert run.subject == "H01"
     assert run.run == "1"

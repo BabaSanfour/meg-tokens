@@ -116,7 +116,7 @@ def _scaled_anatomy(
     # scale_mri faithfully rescales every source space it finds in the
     # template's bem/, and fsaverage ships several large prebuilt ones -- 1.2 of
     # the 1.5 GB a scaled anatomy would otherwise occupy. This project uses none
-    # of them: Step D builds its own source space and stores it as a derivative.
+    # of them: source reconstruction builds its own source space and stores it as a derivative.
     for source_space in (subjects_dir / subject / "bem").glob("*-src.fif"):
         source_space.unlink()
     return subject
