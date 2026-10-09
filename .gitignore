@@ -65,7 +65,6 @@ venv.bak/
 
 # Project specific exclusions
 archive/
-migration_map.md
 /tokens.toml
 # Machine-local roots; workflow/config.yaml.template is the tracked copy.
 workflow/config.yaml

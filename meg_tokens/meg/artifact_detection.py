@@ -1,7 +1,7 @@
 """Deriving artifact-detection thresholds, and testing that they work.
 
 Two ideas, both needed by the bad-channel and bad-segment detection in preprocessing
-(``docs/meg_pipeline_plan.md``).
+(``docs/meg.md``).
 
 **Thresholds as multiples of a measured noise floor.** :func:`robust_scale`
 takes the median absolute deviation of *adjacent-sample* differences at the

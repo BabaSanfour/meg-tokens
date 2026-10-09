@@ -1,6 +1,6 @@
 """Preprocessing: one shared trunk, three cleaners, three outputs per recording.
 
-The specification is ``docs/meg_pipeline_plan.md``. The shape is::
+The specification is ``docs/meg.md``. The shape is::
 
     read + compensate - ZapLine - bandpass - bad channels - bad segments (1)
                                                                   |

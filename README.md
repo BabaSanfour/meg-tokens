@@ -7,18 +7,26 @@ Analysis library for decision-making dynamics on the **Tokens Task** with MEG. `
 *   **`meg_tokens/`**: package.
     *   `core/`: subject/run identifiers, project config, workflow result models.
     *   `behavior/`: TDMS parsing, behavioral metrics.
-    *   `meg/`: preprocessing, ICA, source localization.
+    *   `meg/`: raw staging, coregistration, three-stream preprocessing (DSS/ICA/SSP), epoching, source localization.
     *   `features/`: ERP, power, spectral, Hilbert, PAC, connectivity estimators.
     *   `analysis/`: statistics, decoding, PCA, dPCA estimators.
     *   `workflows/`: filesystem-aware processing/analysis stages.
     *   `reports/`: figures, report tables.
     *   `cli/`: the `meg-tokens` command.
     *   `io/`: derivative layout, `.npy`/JSON/xarray/table contracts.
+    *   `validation/`: golden-reference and SPD comparisons (`meg-tokens validate`).
 *   **`workflow/`**: Snakemake DAG, local/Slurm profiles.
 *   **`tests/`**: unit tests.
-*   **`docs/`**: [`behavior.md`](docs/behavior.md) (behavioral results, figures and their conventions), [`meg.md`](docs/meg.md) (MEG pipeline), [`data_contract.md`](docs/data_contract.md) (persisted data and metadata), [`refactor/architecture.md`](docs/refactor/architecture.md) (architecture contract).
+*   **`docs/`**: [`behavior.md`](docs/behavior.md) (behavioral results, figures and their conventions), [`meg.md`](docs/meg.md) (MEG pipeline specification, deviations from the paper, open decisions, alignment QC and subject exclusion), [`data_contract.md`](docs/data_contract.md) (persisted data and metadata).
 *   **`pyproject.toml`**: package metadata/deps.
 *   **`archive/`**: raw scripts copied from the external drives -- `DDM_scripts/` (`scripts_new/` Python/Jupyter + `matlab_scripts/`), `DDM_analysis_scripts/` (Jupyter, from `DDM/scripts/`).
+
+Dependencies point down this list and never back up: `core` → `io` → domain
+packages (`behavior`, `meg`, `features`, `analysis`, `reports`) → `workflows` →
+`cli` → `workflow/`. The CLI holds no scientific calculation or derivative
+naming; domain modules never import workflows or the CLI; the Snakefile invokes
+only `meg-tokens` commands, and its profiles change resources, never scientific
+parameters. There are no `utils` modules. The boundary test enforces this.
 
 ## Pipeline Execution Flow & Module Map
 
@@ -31,7 +39,7 @@ Module map, in pipeline order. Stage numbers live only under [Running the Pipeli
 | **Behavioral Metrics Extraction** | [`features.py`](meg_tokens/behavior/features.py) and [`performance.py`](meg_tokens/behavior/analyses/performance.py) | Computes choice RTs, accuracy, difficulty levels, and behavioral summaries. |
 | **Behavioral Characterization Analyses** | [`behavior_characterization.py`](meg_tokens/workflows/behavior_characterization.py) and [`behavior/analyses/`](meg_tokens/behavior/analyses) | Runs the full analysis battery described in `docs/behavior.md` over the trial-feature table: distributions, design/session effects, evidence, criterion decline, individual differences, and more. |
 | **Behavioral Reporting** | [`behavior.py`](meg_tokens/reports/behavior.py) | Renders performance diagnostics and RT distributions. |
-| **MEG Preprocessing & Filtering** | [`preprocessing.py`](meg_tokens/meg/preprocessing.py) | Loads raw CTF MEG, applies filters, performs ICA decomposition, and coregisters head points. |
+| **MEG Preprocessing** | [`preprocessing.py`](meg_tokens/meg/preprocessing.py) | One shared trunk per recording (compensation, ZapLine, band-pass, bad channels and segments), then three cleaners -- DSS, ICA, SSP -- each persisted with its artifact estimate. |
 | **Epoch Extraction & Event Alignment** | [`epoching.py`](meg_tokens/meg/epoching.py) | Segments MEG data into trial epochs aligned to triggers and behavior. |
 | **Neural Source Localization** | [`sources.py`](meg_tokens/meg/sources.py) | Computes noise covariance, BEM models, sets up source spaces, and applies minimum-norm inverses. |
 | **Source-Space Time-Frequency Power** | [`time_frequency.py`](meg_tokens/features/time_frequency.py) | Extracts band power from source estimates using modern MNE calls. |
@@ -58,8 +66,6 @@ Data root `meg-tokens`:
 passed via `--config`; `raw_meg_root`/`behavior_root`/`bids_root`/`subjects_dir` derive from it.
 Relative paths resolve from the config file's location.
 
----
-*Refactored/organized starting 2026-06-25.*
 
 ## Machines, environments, and execution rules
 
@@ -97,9 +103,6 @@ Two traps worth stating plainly:
 **Never use a deleting rsync, `git reset`, or a force-overwrite against either
 checkout.** Inspect both local and remote `git status` first — the cluster
 carries its own untracked `logs/`, and losing those costs a re-derivation.
-(`scripts/render_figs.sh` and `scripts/rerun_behavior.sh` used to be cluster-only;
-they are tracked now, as `scripts/behavior_report.sh` and
-`scripts/behavior_analyze.sh`.)
 
 ### Where each stage runs
 
@@ -220,9 +223,12 @@ meg-tokens --config tokens.toml behavior qc
 ```
 
 
-### Stage 3: MEG Preprocessing & Filtering
-Finds the staged CTF recordings, applies filters, and optionally runs ICA.
-Defaults to every staged subject:
+### Stage 3: MEG Preprocessing
+Builds one shared trunk per staged CTF recording (compensation, ZapLine,
+0.5–150 Hz, bad channels and segments), then cleans it with DSS, ICA and SSP
+and writes one `proc-<stream>` derivative per cleaner. The specification is
+`docs/meg.md`. Defaults to every staged subject and all three
+streams (`--streams` narrows):
 ```bash
 meg-tokens --config tokens.toml meg preprocess
 meg-tokens --config tokens.toml meg preprocess --subjects H01 H02
@@ -233,346 +239,29 @@ meg-tokens --config tokens.toml meg preprocess --subjects H01 --run Slow1
 ```
 
 ### Stage 4: Epoch Extraction & Event Alignment
-Slices Stage 3's filtered continuous MEG into event-locked trial epochs, aligned to Stage 1 behavior TSV derivatives:
+Slices one Stage 3 stream (`ica` until the canonical stream is decided) into event-locked trial epochs, aligned to Stage 1 behavior TSV derivatives:
 ```bash
 meg-tokens --config tokens.toml meg epoch \
   --alignment go \
   --subjects H01 H02
 ```
 
-### Stage 5: Behavioral Distributions & Metrics Plotting
-Generates behavioral diagnostic plots, including decision time probability densities and brain-behavior scatterplots.
+### Stage 5: Behavioral Figures
+Renders the behavioral figure battery from the group derivatives (`--list-figures` names them):
 ```bash
-meg-tokens --config tokens.toml report behavior --subjects H01 H02 H03
+meg-tokens --config tokens.toml report behavior --figures all
 ```
 
-### Stage 6: Neural Source Localization
-Builds noise covariance, BEM, source-space, forward, inverse, and trial source-estimate derivatives for each subject.
-```bash
-meg-tokens --config tokens.toml meg source \
-  --subjects H01 H02 \
-  --run Slow1 \
-  --alignment go \
-  --spacing oct6
-```
+### Stages 6 onward: source reconstruction, features, group analyses
 
-For legacy deep/volume analyses, request a mixed surface+volume source space
-with FreeSurfer aseg labels. This writes a distinct
-`desc-oct6-mixed_src.fif` derivative.
-
-```bash
-meg-tokens --config tokens.toml meg source \
-  --subjects H01 \
-  --run Slow1 \
-  --alignment go \
-  --spacing oct6 \
-  --volume-labels Left-Putamen Right-Putamen Left-Caudate Right-Caudate
-```
-
-### Stage 7: Time-Frequency Power Extraction
-Extracts source-space frequency-band power from the Stage 6 source-estimate manifest using sliding-window Hilbert, Morlet, or multitaper transforms.
-```bash
-meg-tokens --config tokens.toml features power \
-  --subjects H01 H02 \
-  --run Slow1 \
-  --alignment go \
-  --source-method dSPM \
-  --method hilbert \
-  --bands alpha beta gamma_low \
-  --width 400 \
-  --step 110
-```
-
-### Stage 7b: Power Spectral Density & Specparam Modeling
-Computes Welch or multitaper PSD on Stage 4 Epochs FIF derivatives and fits `specparam` models to separate periodic and aperiodic spectral structure, writing `.npy`/`.tsv` derivatives with JSON sidecars.
-
-```bash
-meg-tokens --config tokens.toml features spectral \
-  --subjects H01 H02 H03 \
-  --condition Fast \
-  --alignment go \
-  --method welch \
-  --fmin 1.0 \
-  --fmax 100.0
-```
-
-### Stage 8: ERP Slicing & Parcellation
-Slices Stage 6 source estimates relative to task events, pads Go-aligned trials before response, parcellates into cortical atlases, and writes trial-level `.npy` arrays with aligned trial metadata.
-*(Note: This natively replicates legacy scripts like `08_Decoding_SRC_POWER_Trial_types_time_Trial_Types.py` that extracted condition-specific Trial Types arrays).*
-```bash
-meg-tokens --config tokens.toml features erp \
-  --subjects H01 H02 \
-  --run Slow1 \
-  --alignment go \
-  --source-method dSPM \
-  --parc HCPMMP1 \
-  --max-duration-samples 400 \
-  --min-rt-ms 100.0
-```
-
-All-source and volume source-coordinate exports use the same alignment and
-trial metadata contract:
-
-```bash
-meg-tokens --config tokens.toml features erp \
-  --subjects H01 H02 \
-  --run Slow1 \
-  --alignment go \
-  --source-method dSPM \
-  --feature-space all_source
-```
-
-Use `--feature-space volume` for source estimates produced from mixed or volume
-source spaces.
-
-### Stage 9: Group-Level Statistics (Permutation T-Tests)
-Runs a paired subject-level permutation t-test on Stage 8 parcellated ERP derivatives.
-```bash
-meg-tokens --config tokens.toml analyze statistics \
-  --conditions Fast Slow \
-  --alignment go \
-  --source-method dSPM \
-  --parc HCPMMP1 \
-  --permutations 1000
-```
-
-For a one-condition hemisphere test, homologous parcellation labels are
-subtracted left-minus-right before the group permutation test:
-
-```bash
-meg-tokens --config tokens.toml analyze lateralization \
-  --condition Easy \
-  --subjects H01 H02 H03 \
-  --alignment go \
-  --source-method dSPM \
-  --parc HCPMMP1 \
-  --permutations 1000
-```
-
-### Stage 10: Statistical Plotting & Correlations
-Generates summary tables and selected label time-course figures from Stage 9 group-statistics derivatives. Optional behavior correlations read Stage 1 behavior TSV derivatives.
-```bash
-meg-tokens --config tokens.toml report statistics \
-  --conditions Fast Slow \
-  --alignment go \
-  --source-method dSPM \
-  --parc HCPMMP1 \
-  --top-n 8
-```
-
-```bash
-meg-tokens --config tokens.toml report statistics \
-  --conditions Fast Slow \
-  --alignment go \
-  --source-method dSPM \
-  --parc HCPMMP1 \
-  --labels Label_1-lh Label_2-rh \
-  --correlate-behavior
-```
-
-> **Tip:** You can append `--help` or `-h` to any of these commands to view all available path override arguments.
-
-### Stage 11: Brain-Behavior Correlations
-(Integrated directly into Stage 10 execution output. Automatically generated alongside stats).
-
-### Stage 12: Time-Resolved MVPA Decoding (Classification)
-Runs time-resolved Linear Discriminant Analysis over Stage 8 ERP/parcellation derivatives or Stage 7 source-power derivatives. Outputs are `.npy` arrays with JSON sidecars plus a decoding time-course figure.
-
-```bash
-meg-tokens --config tokens.toml analyze decoding \
-  --feature-source erp \
-  --conditions Fast Slow \
-  --alignment go \
-  --source-method dSPM \
-  --parc HCPMMP1 \
-  --permutations 100
-```
-
-```bash
-meg-tokens --config tokens.toml analyze decoding \
-  --feature-source power \
-  --conditions Fast Slow \
-  --alignment go \
-  --source-method dSPM \
-  --band alpha \
-  --permutations 100
-```
-
-Trial-metadata decoding, such as sensory-evidence classes inside Fast/Slow runs, uses the Stage 8 `erptrials.tsv` metadata:
-
-```bash
-meg-tokens --config tokens.toml analyze decoding \
-  --feature-source erp \
-  --input-conditions Fast Slow \
-  --conditions Easy Ambiguous Misleading \
-  --class-column sTrialClass \
-  --class-values 1 2 3 \
-  --alignment go \
-  --source-method dSPM \
-  --parc HCPMMP1
-```
-
-ROI and lateralized analyses are configurations of the same decoding workflow:
-
-```bash
-meg-tokens --config tokens.toml analyze decoding \
-  --conditions Fast Slow \
-  --roi Label_1-lh
-
-meg-tokens --config tokens.toml analyze decoding \
-  --conditions Fast Slow \
-  --lateralize
-```
-
-### Stage 12.5: PCA Trajectories and Loadings
-This replaces the legacy `@nmData` MATLAB PCA trajectory framework (`Neural_space_Thomas_*.m`, `Neural_space_AL_all_sources.m`) and the PCA/LDA plotting notebooks.
-
-The replicated behavior is: load real Stage 7 power or Stage 8 ERP derivatives, optionally select labels/ROIs, average trials into subject-level condition observations by default, fit PCA over condition-by-time samples, project condition means onto shared loadings, and save `.npy`/`.tsv` outputs with JSON sidecars.
-
-```bash
-meg-tokens --config tokens.toml analyze decomposition \
-  --analysis pca \
-  --feature-source erp \
-  --conditions Fast Slow \
-  --subjects H01 H02 H03 \
-  --alignment go \
-  --source-method dSPM \
-  --parc HCPMMP1 \
-  --fit-time-range -1.25 0.70 \
-  --n-components 20
-```
-
-For Stage 7 power derivatives:
-
-```bash
-meg-tokens --config tokens.toml analyze decomposition \
-  --analysis pca \
-  --feature-source power \
-  --conditions Correct Error \
-  --band theta \
-  --alignment feedback \
-  --n-components 15
-```
-
-Useful options: `--labels`, `--lateralize`, `--average-unit trial`, `--transform sqrt` for non-negative power, and `--project-centered` if you explicitly want centered scikit-learn projections instead of the nmData-style raw projection.
-
-The PCA stage writes `*_pcatrajectory.npy`, `*_pcaloadings.npy`, `*_pcavariance.npy`, `*_pcacondmeans.npy`, `*_pcafitscores.npy`, `*_pcafitsamples.tsv`, and `*_pcaobservations.tsv`.
-
-```bash
-meg-tokens --config tokens.toml report pca-trajectory \
-  --timecourse-path /path/to/sub-group_task-tokens_desc-fast-vs-slow-erp-go-dSPM-HCPMMP1-pca_pcatrajectory.npy \
-  --components 1 2 3
-
-meg-tokens --config tokens.toml report pca-timecourse \
-  --timecourse-path /path/to/sub-group_task-tokens_desc-fast-vs-slow-erp-go-dSPM-HCPMMP1-pca_pcatrajectory.npy \
-  --components 3
-
-meg-tokens --config tokens.toml report pca-variance \
-  --variance-path /path/to/sub-group_task-tokens_desc-fast-vs-slow-erp-go-dSPM-HCPMMP1-pca_pcavariance.npy
-```
-
-For source-space power PCA, loading sidecars carry source vertices when Stage 6 provided them:
-
-```bash
-meg-tokens --config tokens.toml report pca-loadings \
-  --loadings-path /path/to/sub-group_task-tokens_desc-correct-vs-error-power-feedback-dSPM-theta-pca_pcaloadings.npy \
-  --subjects-dir /path/to/freesurfer/subjects
-```
-
-### Stage 12.6: Optional Demixed PCA
-`meg-tokens analyze decomposition --analysis dpca` builds demixed-PCA tensors from real ERP derivatives and their `erptrials.tsv` sidecars. This mode requires the optional Python `dPCA` package.
-
-```bash
-meg-tokens --config tokens.toml analyze decomposition \
-  --analysis dpca \
-  --conditions Fast Slow \
-  --marginalize-cols sTrialClass nChoiceMade nCorrectChoice \
-  --n-components 20
-
-meg-tokens --config tokens.toml report dpca \
-  --dpca-root /path/to/tokens-bids \
-  --n-components 3
-```
-
-### Stage 13: Functional Connectivity
-Extracts spectral connectivity between Stage 8 parcellated source time courses. This replaces `08_SRC_Connectivity.py` and `08_SRC_Connectivity_all2ROI.py` without writing full vertex-to-vertex matrices.
-
-```bash
-meg-tokens --config tokens.toml features connectivity \
-  --subjects H01 H02 H03 \
-  --conditions Fast Slow \
-  --alignment enter \
-  --source-method dSPM \
-  --parc HCPMMP1 \
-  --method imcoh \
-  --bands delta theta alpha beta \
-  --before-window 0.7 1.4 \
-  --after-window 1.6 2.3
-```
-
-#### Example 1: Circular Connectivity (Chord Diagrams) (Replicates `08_Plot_connectivity_circle.ipynb`)
-To calculate subject-level permutation tests on active-minus-baseline connectivity and plot significant edges:
-
-```bash
-meg-tokens --config tokens.toml report connectivity \
-  --condition Fast \
-  --band alpha \
-  --p-threshold 0.05 \
-  --permutations 1000
-```
-
-#### Example 2: Seed-Based Spatial Connectivity Maps (Replicates `08_Seed_based_connectivity_final.ipynb`)
-To extract the connectivity profile from one seed ROI to all other ROIs:
-
-```bash
-meg-tokens --config tokens.toml report seed-connectivity \
-  --condition Fast \
-  --band alpha \
-  --seed-roi 17Networks_LH_SomMotA_1-lh \
-  --p-threshold 0.05 \
-  --permutations 1000
-```
-
-### Stage 14: Hilbert Features for PAC/CFC
-Extracts band-filtered signal, Hilbert amplitude, Hilbert power, and phase from Stage 8 parcellated source time courses. This modernizes the Brainpipe amplitude/power/sigfilt extraction visible in the legacy CFC notebooks and writes `.npy` arrays with JSON sidecars.
-
-```bash
-meg-tokens --config tokens.toml features hilbert \
-  --subjects H01 H02 H03 \
-  --conditions Fast Slow \
-  --alignment go \
-  --source-method dSPM \
-  --parc HCPMMP1 \
-  --bands theta alpha beta gamma_low \
-  --feature-types amplitude phase power sigfilt
-```
-
-### Stage 15: PAC/CFC Modulation Index
-Computes final phase-amplitude coupling statistics from Stage 14 low-frequency phase and high-frequency amplitude derivatives.
-
-```bash
-meg-tokens --config tokens.toml features pac \
-  --subjects H01 H02 H03 \
-  --conditions Fast Slow \
-  --phase-bands theta \
-  --amplitude-bands gamma_low gamma_high \
-  --alignment go \
-  --source-method dSPM \
-  --parc HCPMMP1 \
-  --n-bins 18 \
-  --time-window 0.0 1.5
-```
-
-### Golden Validation
-Compares modern derivatives against frozen real-reference `.npy`, `.tsv`, or
-`.csv` outputs. The command writes a validation report and exits nonzero if any
-comparison fails.
-
-```bash
-meg-tokens --config tokens.toml validate golden \
-  --comparison-config /path/to/golden_validation.json \
-  --out-tsv /path/to/tokens-bids/derivatives/sub-group/meg/sub-group_task-tokens_desc-golden-validation_validation.tsv
-```
+Commands exist for every later stage -- `meg source`, `features
+{erp,power,spectral,hilbert,pac,connectivity}`, `analyze
+{statistics,lateralization,decoding,decomposition,spatial-decoding}`, the
+matching `report` figures, and `validate golden` -- but they were ported from
+the original notebooks and **none has run on this project's data**. Each is
+rebuilt against [`docs/meg.md`](docs/meg.md) when
+its stage is reached; until then treat them as unverified, and read their
+options from `meg-tokens <domain> <command> --help`.
 
 ## Workflow Orchestration
 

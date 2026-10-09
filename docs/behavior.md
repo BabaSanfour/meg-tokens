@@ -125,40 +125,15 @@ with the horizon-dependent exact posterior.
   condition, and model. `behavior ssm-fit` runs the complete Thura et
   al. (2012) reproduction, doi:10.1152/jn.01071.2011: urgency gating, a
   bounded integrator, a collapsing-bound integrator, and an
-  additive-urgency sensitivity model —
-  four candidates fit to the same canonical `primary_analysis_eligible`
-  trials, hand-specific motor-corrected decision times, token timing
-  (200 ms), finite-difference solver grid, explicit 2% uniform lapse
-  mixture, and first-passage boundary convention, followed by the
-  compute-node-only `behavior ssm-aggregate` and `behavior ssm-evaluate`
-  stages. Every candidate is reported with log-likelihood, AIC, BIC, and the
-  criterion difference against the integrator fit; the group table counts
-  the subjects each model wins, tests that difference across subjects, and
-  carries the paired Fast-minus-Slow contrast on every fitted urgency
-  parameter.
-
-**The four candidate models.** The primary reproduction is the multiplicative
-urgency-gating model: a 200-ms leaky evidence state is multiplied by a
-linearly growing urgency signal and compared with a fixed threshold. Its
-equivalent behavioral criterion is `T/(b + mt)`, which declines with time.
-The fixed-bound evidence integrator is the baseline. A hyperbolically
-collapsing-bound integrator is an alternative explanation, and additive
-urgency is a sensitivity analysis rather than a claim about the 2012
-mechanism.
-
-The scalar signed-difference representation cannot identify a common additive
-urgency drive: a common input to two race channels cancels in their difference.
-The implemented additive sensitivity therefore adds a time-growing drive in
-the *current evidence-preference* direction, which is odd under target-label
-reversal and never uses the post-hoc correct target. It is explicitly not
-treated as evidence for a unique additive mechanism. The paper itself notes
-that current behavioral paradigms do not conclusively distinguish additive and
-multiplicative urgency (Thura et al., 2012, doi:10.1152/jn.01071.2011).
-
-The mechanistic comparison is not an optimality test unless reward values,
-movement/nondecision timing, and intertrial timing are verified from the
-acquisition/task specification. Those inputs are not part of the current
-trial-feature contract, so no reward-rate claim is made by default.
+  additive-urgency sensitivity model, fit to the same trials under one
+  observation model, followed by the compute-node-only aggregation and
+  evaluation stages (order: `README.md`, "Stage ordering for the
+  sequential-sampling models"). Every candidate is reported with
+  log-likelihood, AIC, BIC, and the criterion difference against the
+  integrator fit; the group table counts the subjects each model wins, tests
+  that difference across subjects, and carries the paired Fast-minus-Slow
+  contrast on every fitted urgency parameter. The four candidates, why each is
+  included, and the shared conventions: "Model specification," below.
 
 ### `behavior/analyses/individual.py`
 
@@ -167,7 +142,7 @@ trial-feature contract, so no reward-rate claim is made by default.
   accuracy, and lapse rate, correlated pairwise.
   `behavior characterization --neural-metrics` will additionally join a
   subject-level MEG table into `individualprofile`; nothing reads those
-  columns yet, and no figure draws them (Tier C5).
+  columns yet, and no figure draws them.
 - `speciescomparison` — DT by class, SP at decision by class, criterion
   decline, and the urgency-gating results (the model's advantage over
   integration, its fitted urgency growth, and that growth's
@@ -184,10 +159,8 @@ are in "Figure conventions and output contract" below. The registry contains 18
 figures, numbered in scientific-narrative order (foundation, commitment
 policy, mechanistic adjudication, sequential adaptation, individual
 differences) rather than implementation order, and runs contiguously from
-F01 to F18. **Every figure in the battery is built, audited and reported
-below.** F-numbers are not durable identifiers across revisions of this
-document; the figure key is, so cite the key when a reference has to
-survive.
+F01 to F18. F-numbers are not durable identifiers; cite the figure key when a
+reference has to survive.
 
 | F# | Key | Derivative(s) | Shows |
 | :--- | :--- | :--- | :--- |
@@ -292,14 +265,10 @@ obey. They are cheap to state and expensive to retrofit.
 | `trialfeatures` | Not a result. It is the trial-level layer behind the distribution, drift, criterion, posterior, and continuous-evidence figures. |
 | `groupstats` | Not a figure of its own; its rows are drawn as figure annotations. Drawing a table as a chart adds nothing. |
 | `extremedttrials` | Summarized as subject counts in the cohort-composition panel; the per-trial derivative needs no figure of its own. |
-| `speciescomparison` | Its ten rows are the measures the monkey literature states its results in, and every one is already drawn in the act that produced it (F07, F08, F09, F13, F14). Published monkey values may not be plotted beside them by design, so what remained was ten numbers reported elsewhere drawn as a chart — and a forest sharing a zero reference that is meaningless for seven of them. See "Cross-species translation"; the derivative is still computed. |
-| `ssmtrialpredictions` | Trial-level model-derived regressors for the Tier C5 MEG join (`criterion_at_decision`, `decision_variable_at_decision`, `predicted_accuracy`), not a behavioural result. Revisit when the source-space features they join to exist. |
-| `individualprofile` × MEG metrics | A behaviour-vs-neural scatter was registered and never rendered: it is gated on a subject-level MEG table that does not exist, and its r/p would have had to be computed in the plotting layer against rule 1. Removed rather than left as a permanently unbuildable entry. `behavior characterization --neural-metrics` still performs the analysis-side join. |
-| `ssmhierarchical*`, `ssmpopulation*` | **Removed.** The first pair were stale outputs of an earlier name (deleted 2026-08-21); the empirical-Bayes population tables that superseded them were removed on 2026-08-22 with the figure they existed for. No code writes or reads any of the four. Listed so the names are not reintroduced. |
-| `posteriorgrid`, `posteriorgridstats`, `posteriordiscretization`, `posteriordiscretizationstats`, `posteriorevidencesensitivity`, `posteriorevidencesensitivitystats`, `posteriorevidenceindex`, `posteriorevidenceindexstats`, `posteriorevidenceagreement` | **Removed 2026-08-23.** Nine tables diagnosing how coarsely the design's success-probability grid discretizes late in a trial. No figure, no verification script and no line of this document ever read a number from them; they supported one qualitative sentence in "The declining evidence criterion is an artifact of the evidence scale", which now stands as a stated limitation. Roughly 700 lines of `analyses/evidence.py` went with them. |
-| `criteriondeclinestats`, `urgencystats`, `lapsestats` | **Removed 2026-08-23.** Group tests over subject-level fits that nothing read: the criterion figure (F09) tests the *scale contrast* through `criterionscalestats`, and the cohort panel (F01) draws lapse counts, not a lapse-rate contrast. The subject-level `criteriondecline`, `urgency` and `lapses` tables they summarized are all still written. |
-| `ssmmechanisticstats`, `ssmexclusionsensitivity` | **Removed 2026-08-23.** The first duplicated rows that `ssmcomparisonstats` already carries — the same `mechanistic_model_statistics` call, written twice under two names. The second recomputed those statistics with one subject held out and was read by nothing; the prespecified robustness story is `ssmrobustness*` and `ssmexclusionrobustness*`, which stay. |
-| Response vigor (Tier B8) | Dropped upstream — movement time is not recorded (Known Issues, Stage 1). Nothing to plot, and nothing must be plotted against the null field. |
+| `speciescomparison` | Every one of its ten rows is already drawn in the act that produced it (F07, F08, F09, F13, F14); why it gets no figure of its own is in "Cross-species translation". The derivative is still computed. |
+| `ssmtrialpredictions` | Trial-level model-derived regressors for the MEG join (`criterion_at_decision`, `decision_variable_at_decision`, `predicted_accuracy`), not a behavioural result. Revisit when the source-space features they join to exist. |
+| `individualprofile` × MEG metrics | No figure: there is no subject-level MEG table, and its r/p would have to be computed in the plotting layer against rule 1. `behavior characterization --neural-metrics` performs the analysis-side join. |
+| Response vigor | Movement time is not recorded (Known Issues, Stage 1); nothing must be plotted against the null field. |
 
 ### Output format, naming, sidecars
 
@@ -311,11 +280,9 @@ accepted for figures destined for hand-editing.
 **Path.** `<root>/derivatives/sub-group/fig/sub-group_task-tokens_desc-<analysis>-<view>_behavior.pdf`,
 where the figure key `<analysis>-<view>` becomes the `desc` entity so a figure
 file names its own source, and `<analysis>` is the derivative that supplies its
-statistics. `desc` is a hyphen-joined growing tag list per
-`docs/data_contract.md`; both segments are lowercase alphanumeric and both are
-recorded verbatim in the sidecar (`analysis`, `view`). The contract's rule —
-*every value chained into `desc` is also recorded in the sidecar metadata, and
-the two must never disagree* — is enforced by a test.
+statistics. Both segments are lowercase alphanumeric and are recorded verbatim
+in the sidecar (`analysis`, `view`), under the `desc` rule of
+`docs/data_contract.md` ("Paths and filenames"), which a test enforces.
 
 **Sidecars.** One per figure, written with `save_sidecar`. Note the collision
 and use it deliberately: `io.sidecar_path` calls `Path.with_suffix(".json")`,
@@ -346,8 +313,7 @@ never call `save_sidecar` per format.
 ```
 
 `columns_read` is not decoration: it makes "which variable is this figure
-actually showing?" answerable without reading code — the question the
-`rawRT`/`dt_ms` defect once answered wrongly. A test asserts that `dt_ms`
+actually showing?" answerable without reading code. A test asserts that `dt_ms`
 appears, and `rawRT` does not, in the decision-time figures' sidecars.
 
 ## Known Issues (Stage 0–1)
@@ -362,12 +328,13 @@ how each was handled, and its impact.
 | 3 non-standard `.tdms` filenames (scratch fragments: H03 `temp_180214.tdms`, H18 `temp_181024.tdms`, H23 `temp_181121.tdms`) | Explicit `behavior_ignore_files` allowlist; any other non-matching file still errors | 320/323 retained runs |
 | H01, H05 raw-session duration counts don't match 8-Slow/Fast + 2-RT | `KNOWN_SESSION_OVERRIDES`, cross-referenced against the acquisition notebook (H01 labeled `Pilot01` there); fingerprint independently reproduces all 17 entries | H05 RT1 confirmed unmatched — real gap, not ambiguity |
 | H01 headshape not found on any known drive | Left `not_found` / review | No headshape derivative for H01 |
-| H05 RT1 has no raw MEG counterpart | Left `ambiguous` / review, 0 candidates | RT1 excluded from H05's MEG-joined analyses |
-| H05 has no empty-room recording, any date | Left `not_found` / review | No empty-room for H05 |
-| H07, H10 have no FreeSurfer reconstruction | Left `not_found` / review | No anat/BEM for H07, H10 |
-| H26/H27 shared empty-room `_01.ds` `.hc` corrupt (`RuntimeError: HPI information not available`) | `KNOWN_NOISE_OVERRIDES` redirects to the valid retake `_02.ds` | H26/H27 empty-room resolved |
 | H01 Slow3, H06 Slow2, H10 Fast2: Start-pulse count mismatch at the trailing boundary | `KNOWN_TRAILING_TRIAL_MISMATCHES`, staged with a note instead of sent to review | 3 runs recovered |
 | H06 Start/Go trigger codes swapped vs. every other subject | `SUBJECT_EVENT_OVERRIDES` (event code `524288` is Start for H06, `262144` elsewhere) | H06 matches and epochs correctly |
+
+Permanent gaps — H05 RT1 (no raw MEG counterpart; excluded from H05's
+MEG-joined analyses) and empty-room, H07/H10 anatomy, and H26/H27's corrupt
+empty-room (redirected to `_02.ds`) — are in `docs/data_contract.md`, "Known
+dataset gaps".
 
 ### Stage 1: Behavioral Log Parsing
 
@@ -388,9 +355,6 @@ Ordered as a scientific argument, not by figure number:
 - Checks on block order, response side, and time on task next.
 - The classification reference frame used by the class-based results.
 - Finally the condition, difficulty, distribution, and confidence results.
-
-Figure numbers now follow this same narrative order (see "Figures," above,
-for the full F01-F18 mapping).
 
 ### Cohort and trial composition
 
@@ -529,13 +493,10 @@ Figure: `conditionorder-balance` (F02).
   reliably faster with one hand once the motor baseline accounts for the
   hand. The two-alternative design is balanced in every way that would bias
   a choice analysis.
-- **This is the result of a correction, not the raw data.** Under a single
-  pooled motor baseline the same contrast gave −22.8 ms, p = .023 — an
-  apparent left-hand speed advantage. The RT runs, which contain no
-  deliberation, show a 13.9 ms hand difference of their own, so that
-  "advantage" was motor latency the pooled baseline could not remove.
-  Subtracting each hand's own baseline reduces it to −9.8 ms (p = .354).
-  See "Deliberate deviations from the preprint's analysis," below.
+- **This is the result of a correction, not the raw data.** A single pooled
+  motor baseline gives −22.8 ms, p = .023 — motor latency, not a left-hand
+  speed advantage. See "Deliberate deviations from the preprint's analysis,"
+  below.
 - A residual ~10 ms remains, and the bound cannot exclude it. It is small
   relative to the Fast/Slow effect (127 ms) and common to both conditions,
   so it cannot generate that effect — but lateralised motor preparation is
@@ -720,9 +681,6 @@ preprint's exclusions):
   neither, and the 2.3% matching both are trivial (pre-first-token or
   post-final-token values) — none has a complete `sTokenDirs` match.
   Confirms the exclusion-from-design-time-alignment policy above.
-- Parser defect (scientific-notation probabilities near 0/1) traced to the
-  first parser commit (`13e07c6`), not the refactor; fix verified across
-  all 320 retained runs.
 
 ### Urgency and evidence quality are separable: the same stretch factor at every difficulty
 
@@ -794,10 +752,9 @@ preprint's exclusions):
   classes that differ by 400 ms in mean decision time. Urgency and evidence
   quality are separable knobs, which is what licenses treating F06 (rate) and
   F07 (shape) as distinct effects rather than one effect seen twice.
-- This is a positive claim, not a failure to detect an interaction. The
-  earlier framing ("no interaction on either measure") asserted absence from
-  p > .05; the log-scale result instead shows the multiplicative description
-  leaves essentially nothing unexplained.
+- This is a positive claim, not a failure to detect an interaction: the
+  log-scale result shows the multiplicative description leaves essentially
+  nothing unexplained.
 - Subjects took ~11% longer under Slow and were **no more accurate for it**.
   Read cautiously: accuracy here is largely fixed by the stimulus (easy is at
   ceiling, misleading below chance by construction), so there may have been
@@ -1009,11 +966,8 @@ Figure: `dtdistribution-condition` (F06).
   p = .077).
 - Under the corrected design-frame classification the sign reverses and the
   effect is solid: **misleading is reliably faster than ambiguous** (t = 5.43,
-  p = 6.3e-6 on the full-sample mean; see "Preprint Replication," below).
-- Mechanism: chosen-frame "misleading" is 53.7% genuine errors on
-  easy/ambiguous stimuli, not misleading stimuli, which inflates its mean DT
-  under the old classification — diagnosed in "Trial-classification reference
-  frame."
+  p = 6.3e-6 on the full-sample mean). Mechanism and the 28-subject
+  frame-by-frame comparison: "Trial-classification reference frame," above.
 
 Figure: `dtdistribution-class` (F07).
 
@@ -1444,16 +1398,16 @@ significance marker.
 
 **Interpretation.**
 
-- **This figure does not license a "continuous evidence" claim, and the
-  previous version of it made one.** A four-level factor fitted with OLS
+- **This figure does not license a "continuous evidence" claim.** A
+  four-level factor fitted with OLS
   returns a slope, but there is no linearity to test and no shape to see.
 - **It also cannot corroborate the class analysis, because it is largely a
   recoding of it.** All 1,718 misleading trials sit below chance and no easy or
   unclassified trial does; the 0.81 level holds only easy and unclassified
-  trials; and the cut itself is the one the classification rule reads. The
-  earlier claim that the continuous and class analyses "agree, so the
-  three-class reduction is not creating the DT effect" carries much less than
-  it appears to — they are largely the same variable.
+  trials; and the cut itself is the one the classification rule reads. That
+  the two analyses "agree, so the three-class reduction is not creating the DT
+  effect" therefore carries much less than it appears to — they are largely
+  the same variable.
 - **What it establishes is the size of what early evidence leaves open.** Three
   tokens fix a great deal — accuracy runs 0.38 to 0.99 across the levels — and
   still leave 350 ms of decision time and 0.21 of accuracy to be settled by
@@ -1468,16 +1422,13 @@ Figure: `continuousevidence-effects` (F11) — A and B are **clustered by
 evidence level**, one marker per class within each cluster, chance marked on B.
 The encoding follows the claim: the comparison is *within* a level, so it is
 the vertical spread inside a cluster rather than a gap between the ends of two
-lines. An earlier version drew a line per class across the levels, which put
-every comparison at line endpoints — ambiguous stopped at 0.61 exactly where
-easy began — and read as two disconnected halves. Error bars are within-subject
-across the classes in a cluster, which is the contrast each marker reports; the
-faint connectors carry the weaker across-level claim. Only the three designed
-classes are drawn. The figure key is unchanged from the version that called
-this predictor continuous: keys are the durable reference across revisions of
-this document, and the derivative names follow the key rather than the claim.
+lines. Error bars are within-subject across the classes in a cluster, which is
+the contrast each marker reports; the faint connectors carry the weaker
+across-level claim. Only the three designed classes are drawn. The key and the
+derivative names still say "continuous": keys are the durable reference, and
+derivative names follow the key rather than the claim.
 
-### The choice kernel shows primacy; the Fast/Slow reweighting it appeared to show does not survive correction
+### The choice kernel shows primacy; the Fast/Slow reweighting survives correction only at jumps 2–4
 
 **Result.**
 
@@ -1492,12 +1443,11 @@ this document, and the derivative names follow the key rather than the claim.
 | :--- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | Weight | 2.69 | 2.39 | 2.40 | 2.07 | 1.75 | 1.75 | 1.65 | 1.26 |
 
-- **The condition claim is weaker than it was reported to be.** Eight
-  independent per-jump tests need a corrected threshold; at Bonferroni
-  α = .00625 the Fast-minus-Slow difference survives at **jumps 2, 3 and 4
-  only**. At an uncorrected .05 it also reaches jumps 1 and 5, which is what
-  the earlier version of this figure marked and what the earlier note in
-  earlier drafts described as "jumps 1–5".
+- **The condition effect is confined to jumps 2–4.** Eight independent
+  per-jump tests need a corrected threshold; at Bonferroni α = .00625 the
+  Fast-minus-Slow difference survives at **jumps 2, 3 and 4 only**. Earlier
+  drafts reported "jumps 1–5", which holds only at an uncorrected .05 and is
+  withdrawn.
 - **"Identical from jump 6" is not established.** The late differences are
   small but their bounds are wide relative to the weights they sit on:
   jump 6 Δ = +0.29 excluding only differences above 0.74, jump 7 Δ = +0.24
@@ -1531,14 +1481,12 @@ the y-range and flatten the three series they exist to contextualise.
 **Result.**
 
 - Four sequential-sampling models were fitted to the same
-  `primary_analysis_eligible` trials, with the same observation model,
-  motor-corrected non-decision time, 200-ms token interval, 2% lapse mixture,
-  and validation folds: a fixed-bound integrator (`ddm`), the 2012
-  urgency-gating reproduction (`urgency`), a hyperbolically collapsing bound
-  (`collapsing`), and a label-symmetric additive-drive variant
-  (`additive_urgency`). Specification: the module docstring of
-  `behavior/analyses/sequential_sampling.py`; the four candidates and why
-  each is included: "The four candidate models," above.
+  `primary_analysis_eligible` trials, with the same observation model and
+  validation folds: a fixed-bound integrator (`ddm`), the 2012 urgency-gating
+  reproduction (`urgency`), a hyperbolically collapsing bound (`collapsing`),
+  and a label-symmetric additive-drive variant (`additive_urgency`).
+  Specification, shared conventions, and why each is included: "Model
+  specification," below.
 - **In sample**, ΔBIC against the integrator (negative favours the candidate;
   `ssmcomparisonstats`, `condition = all`, n = 32):
 
@@ -1589,47 +1537,35 @@ the y-range and flatten the three series they exist to contextualise.
   same reason the fitted urgency parameters are not (below).
 - **Additive urgency is not supported, and that is a weak conclusion by
   construction.** A common additive drive to two race channels cancels in a
-  signed difference (see "The four candidate models"), so this variant is a
+  signed difference (see "Model specification"), so this variant is a
   sensitivity analysis, not a test of additive mechanisms. Its null should not
   be read as evidence against additive urgency in general.
 - **Model selection and parameter recovery both hold in the region the fits
-  actually occupy** (F15; `ssmparameterrecoverystats`, `ssmmodelrecoverystats`,
-  jobs `56148178` + `56176860`, 2026-08-22). Truths are drawn from the accepted
-  per-subject fits rather than from a hypercube over the optimizer bounds, at
-  the production estimator's three starts, with each synthetic dataset sized to
-  the real median subject × condition cell (240 trials over eight empirical
-  lead paths).
+  actually occupy** (F15; `ssmparameterrecoverystats`, `ssmmodelrecoverystats`).
+  Truths are drawn from the accepted per-subject fits rather than from a
+  hypercube over the optimizer bounds, at the production estimator's three
+  starts, with each synthetic dataset sized to the real median subject ×
+  condition cell (240 trials over eight empirical lead paths).
 
   The correct model wins in **47 of 48** cases — one true-`ddm` case selects
-  `collapsing` — and the decision is markedly firmer than in the superseded
-  study: the median BIC margin between best and second is **22.8 points
-  against 8.9**, and cases decided by under 10 points fall from 26/48 to 18/48.
+  `collapsing` — with a median BIC margin between best and second of **22.8
+  points**; 18/48 cases are decided by under 10 points.
 
   The urgency parameters recover essentially perfectly:
 
-| parameter | superseded study | this study | 95% CI |
-| :--- | ---: | ---: | :--- |
-| `urgency_scale` | 0.444 | **0.994** | [+0.98, +1.00] |
-| `urgency_onset_s` | 0.325 | **0.986** | [+0.95, +1.00] |
-| `additive_scale` | 0.463 | **0.904** | [+0.69, +0.97] |
-| `drift_scale` (urgency) | 0.937 | 0.983 | [+0.94, +1.00] |
+| parameter | r | 95% CI |
+| :--- | ---: | :--- |
+| `urgency_scale` | **0.994** | [+0.98, +1.00] |
+| `urgency_onset_s` | **0.986** | [+0.95, +1.00] |
+| `additive_scale` | **0.904** | [+0.69, +0.97] |
+| `drift_scale` (urgency) | 0.983 | [+0.94, +1.00] |
 
-  **This supersedes the earlier finding that the urgency parameters are
-  unidentified.** That study drew urgency `drift_scale` truths at 1.125–3.875
-  against fitted values of 0.083–0.383 — disjoint ranges — on 160 synthetic
-  trials over four stylised sequences at two starts. It was measuring whether
-  the models are separable *somewhere* in parameter space, which is not the
-  question the fits raise.
-
-  Two limits are measured rather than assumed. **`nondecision_s` does not
-  recover** for `urgency`, `ddm` or `collapsing` (r = −0.29, 0.24, −0.44), and
-  the reason is resolution, not the models: those parameters span 0.007–0.009 s
-  across the fitted cells, which is 0.7–0.9 of the solver's 10 ms step, while
-  `additive_urgency`'s non-decision spans 0.976 s — 98 times the step — and
-  recovers at r = 1.000. A quantity finer than the discretisation that
-  generated it cannot be estimated from it. **`boundary_rate` is 0.33–0.67**,
-  necessarily: a subject whose `urgency_scale` sits at its 2.0 bound supplies a
-  truth at that bound, and refitting lands there again.
+  **This reverses an earlier finding that the urgency parameters are
+  unidentified**, which came from a recovery study that drew its truths from
+  the optimizer bounds, a region disjoint from the fitted values, and so asked
+  whether the models are separable *somewhere* in parameter space rather than
+  where the fits lie. The limits that remain (`nondecision_s`,
+  `boundary_rate`) are under "What is identified, and what is not," below.
 - **Six-configuration robustness: the winner never changes**
   (`ssmrobustness`, `ssmrobustnessstats`). Varying the filter time constant
   (100/300 ms), the solver grid (20 ms), the post-horizon evidence
@@ -1647,17 +1583,14 @@ the y-range and flatten the three series they exist to contextualise.
   under `expanded_bounds`, where no cell is censored
   (`ssmrobustnessstats`, `analysis = ssm_robustness_parameter_contrast`). It
   holds in all six configurations (−0.101 to −0.181, p = .010 to .021). This
-  bounds the censoring objection. It is now corroborated rather than
-  constrained by the recovery result: with `urgency_scale` recovering at
-  r = 0.99 in the fitted region, a subject's estimate is a measurement of that
-  subject, so the contrast is a contrast between measured values.
+  bounds the censoring objection, and the recovery result corroborates it:
+  with `urgency_scale` recovering at r = 0.99 in the fitted region, a
+  subject's estimate is a measurement of that subject, so the contrast is a
+  contrast between measured values.
 - **The win does not come from the subjects whose fit has no
-  observed-information SE.** This began as an answer to the objection that the
-  model wins *because* a poorly recovered parameter runs free. The re-run
-  recovery removes the premise — `urgency_scale` recovers at r = 0.99 — but
-  the subset comparison is kept because it independently shows the result does
-  not depend on which subjects yielded a finite Hessian
-  (`ssmheldoutrobustness`, `analysis = ssm_heldout_identifiability_subset`):
+  observed-information SE.** The result does not depend on which subjects
+  yielded a finite Hessian (`ssmheldoutrobustness`,
+  `analysis = ssm_heldout_identifiability_subset`):
 
 | Subset | n | urgency − collapsing | t | p |
 | :--- | ---: | ---: | ---: | ---: |
@@ -1718,12 +1651,9 @@ the y-range and flatten the three series they exist to contextualise.
 - **Identified: the individual fitted urgency parameters** —
   `urgency_scale` r = 0.994, `urgency_onset_s` r = 0.986, `drift_scale`
   r = 0.983, `additive_scale` r = 0.904, `collapse_rate` r = 0.939
-  (`ssmparameterrecoverystats`, F15). **This reverses the earlier entry**,
-  which read them as unidentified on the strength of a recovery study run in a
-  parameter region disjoint from the fits; see the recovery bullet above for
-  what changed and why.
+  (`ssmparameterrecoverystats`, F15).
 
-  Two standing cautions survive the reversal. Each correlation is still
+  Two cautions stand. Each correlation is
   estimated from **12 recovery cases**, so the intervals are wide enough that
   the parameters should not be ranked against one another by r. And
   `boundary_rate` is 0.33–0.67, because truths drawn from real fits inherit
@@ -1733,7 +1663,9 @@ the y-range and flatten the three series they exist to contextualise.
   (r = −0.29, 0.24, −0.44). This is a resolution limit rather than a statement
   about the models: across the fitted cells those parameters span 0.007–0.009 s,
   which is 0.7–0.9 of the solver's 10 ms step, while `additive_urgency`'s
-  non-decision spans 98 steps and recovers at r = 1.000. What is fitted is the
+  non-decision spans 0.976 s — 98 steps — and recovers at r = 1.000. A
+  quantity finer than the discretisation that generated it cannot be estimated
+  from it. What is fitted is the
   residual after motor correction, a few milliseconds, so this is the expected
   result rather than a surprising one — but no individual non-decision estimate
   should be read for those three models.
@@ -1859,13 +1791,11 @@ the y-range and flatten the three series they exist to contextualise.
   confidence-at-commitment pattern (F08). Three independent routes, one
   conclusion — **the commitment policy on this task is time-dependent, and the
   multiplicative form fits best.**
-- What this does *not* license is the parameter-level reading: how fast a
-  given subject's urgency grows, or whether they are behaving optimally. The
-  recovery analysis makes the first unavailable and the missing reward
-  specification makes the second unaskable.
-- F09's withdrawal of the model-free criterion result costs nothing here. The
-  model comparison never rested on that figure, and it is out-of-sample
-  validated by a route the criterion scale cannot contaminate.
+- What this does *not* license is a claim that subjects behave optimally: the
+  missing reward specification makes that unaskable. How fast a given
+  subject's urgency grows *is* readable — `urgency_scale` recovers at
+  r = 0.994 in the fitted region (F15) — except where an estimate is censored
+  at its bound.
 
 **Figure F13 `ssmcomparison-model`** — six panels, mechanism above
 adjudication.
@@ -1933,11 +1863,10 @@ The panels carry no explanatory text, so what they encode is recorded here:
   **dashed**. A pair censored at both ends would otherwise draw a flat line
   that reads as a measured "no change" the fit never claimed.
 - **The censoring is asymmetric in the direction of the effect**: 3 cells in
-  Fast against 8 in Slow on criterion scale. That is the strongest objection
-  to this figure, and E answers it — the coloured row is the refit with no
-  censored cell at all (`expanded_bounds`), and its contrast is the
-  **largest** of the seven at −0.181. Censoring attenuates this effect rather
-  than manufacturing it.
+  Fast against 8 in Slow on criterion scale. E answers that objection: the
+  coloured row is the refit with no censored cell (`expanded_bounds`), whose
+  contrast is the **largest** of the seven (see the censoring bullet under
+  Result, above).
 - **E's top row is the production fit, below the rule; the rest are checks on
   it.** Its baseline refit (−0.118) and the production fit (−0.114) are
   different runs agreeing, which is why both are drawn rather than one being
@@ -1946,12 +1875,10 @@ The panels carry no explanatory text, so what they encode is recorded here:
 **What this does license, and what it does not.** In the region these fits
 occupy, criterion scale recovers at r = 0.994 and urgency onset at 0.986
 (F15), so a dot in A–C *is* that subject's fitted value and the panels are
-contrasts between measured quantities. Two limits remain. Ringed points are
-censored at the bound and are not estimates at all. And D's non-decision time
-does **not** recover for this model (r = −0.29): it spans under one solver
-step across subjects, so no individual value there should be read. D is the
-residual *after* motor correction, which is why it sits at a few
-milliseconds.
+contrasts between measured quantities. Two limits remain: ringed points are
+censored at the bound and are not estimates at all, and D's non-decision
+residual does **not** recover for this model ("What is identified, and what is
+not"), so no individual value there should be read.
 
 
 ### Post-error slowing is real, but the measure everyone quotes contains two effects
@@ -2140,8 +2067,7 @@ Three things this table is not, and one it cannot be:
 - **It has no figure.** Ten numbers reported elsewhere, drawn as a chart,
   add nothing the acts do not already carry — and a forest plot of
   incommensurate measures sharing a zero reference that is wrong for seven of
-  them misleads actively. The earlier `speciescomparison-forest` was retired
-  for this reason.
+  them misleads actively.
 - **Two comparisons in that literature have no row at all.** Movement duration
   and the decision/movement covariation both need a movement measure, and the
   logs do not record one: `tEnterCenter` and `tExitCenter` are written from the
@@ -2174,12 +2100,8 @@ silently applied.
   with the baseline for the hand that answered it (a hand with no usable RT
   response falls back to the pooled value). Effect: the left-minus-right
   asymmetry in decision time drops from −22.8 ms (p = .023) to −9.8 ms
-  (p = .354), while **every conclusion elsewhere is unchanged** — verified
-  by regenerating the full battery: Slow − Fast +127.4 → +127.1 ms with
-  identical t and p; class contrasts within 3 ms; per-class stretch factors
-  within 0.001; time-on-task slopes within 0.1; and F08's equivalence bound
-  on ambiguous-vs-misleading SPD moves from 0.019 to 0.020 SPD, still
-  passing TOST at dz = ±0.4 and failing at ±0.3. The commitment time that
+  (p = .354), while **every conclusion elsewhere is unchanged** (Slow − Fast
+  +127.4 → +127.1 ms with identical t and p). The commitment time that
   `logged_spd` is read at shifts by 10.4 ms on average, which is why SPD
   had to be re-derived rather than assumed safe.
 - **Trial classification uses the correct-target design frame**, not the
@@ -2197,8 +2119,7 @@ provenance, not result.
 
 Primary source: Thura, Beauregard-Racine, Fradet, and Cisek (2012), "Decision
 making by urgency gating: theory and experimental support," *Journal of
-Neurophysiology*, 108, 2912-2930, doi:10.1152/jn.01071.2011. Cite this and the
-2009 paper directly; never call either analysis "Paul's method." The paper
+Neurophysiology*, 108, 2912-2930, doi:10.1152/jn.01071.2011. The paper
 proposes a mechanistic account (short low-pass evidence filter x growing
 urgency signal vs. a fixed threshold), not a replacement for the descriptive
 criterion plot; our tokens arrive every 200 ms and remain visible, so the
@@ -2217,8 +2138,14 @@ correction, likelihood, and validation folds:
 3. `collapsing`: un-leaky integrator with a hyperbolically collapsing bound,
    included because it can mimic the same declining criterion.
 4. `additive_urgency`: a label-symmetric additive-drive sensitivity variant,
-   explicitly not claimed as the 2012 mechanism (a common additive drive to two
-   race channels cancels in a signed difference).
+   explicitly not claimed as the 2012 mechanism. A common additive drive to two
+   race channels cancels in a signed difference, so the scalar representation
+   cannot identify one; the variant instead adds a time-growing drive in the
+   *current evidence-preference* direction, which is odd under target-label
+   reversal and never uses the post-hoc correct target. It is not treated as
+   evidence for a unique additive mechanism, and the paper itself notes that
+   current behavioral paradigms do not conclusively distinguish additive and
+   multiplicative urgency.
 
 Shared conventions: 200-ms token interval; PyDDM absorbing finite-grid first
 passage (`dt=0.01`, `dx=0.01`, no separate overshoot correction); 2% uniform
@@ -2227,71 +2154,25 @@ subject x condition x model; the canonical `primary_analysis_eligible` trial
 set; maximum-likelihood fitting with three deterministic starts for production
 full-data fits, finite-difference Hessian SEs on final fits.
 
-### Acceptance criteria -- all met
+The comparison is not an optimality test unless reward values,
+movement/nondecision timing, and intertrial timing are verified from the
+acquisition/task specification. Those inputs are not part of the current
+trial-feature contract, so no reward-rate claim is made by default.
 
-- Prespecified eligibility and matching rules -- met (frozen matched-sequence
-  rule, canonical eligibility masks).
-- Identical observation model and validation data across models -- met.
-- Parameter-recovery and model-recovery simulations -- met (model selection
-  perfect; `urgency_scale`/`urgency_onset_s`/`additive_scale` weakly
-  identified). **Superseded 2026-08-22**: that study drew truths from the
-  optimizer bounds rather than the region the fits occupy, and is being re-run
-  from the fitted parameters; see "What is identified, and what is not."
-- Subject-level and population-level predictive comparisons -- met.
-- Posterior-predictive checks for decision-time distributions, accuracy,
-  condition effects, and early-bias sequence families -- met.
-- Explicit statement of what is identified: urgency-like time dependence is not
-  automatic proof of multiplicative urgency or of reward-rate optimality --
-  met, in "What is identified, and what is not."
-- A plain-language result entry -- met. Every number in it was re-read from the
-  retrieved derivatives rather than copied from prose.
-
-### Provenance ledger
+### Scope and outputs
 
 **Scope.** Production fit (32 subjects x 3 conditions x 4 models, three starts,
 384/384 converged), held-out three-fold evaluation (1,152 cells, all
 converged), parameter and model recovery (12 repetitions), six-configuration
 robustness (2,304 rows), strict-exclusion sensitivity (10,961 of 16,324
 trials), and the frozen matched-sequence diagnostic. Workflow code lives in
-`meg_tokens/workflows/sequential_sampling.py`, consolidated from the former
-`workflows/thura2012.py` and `workflows/behavior_characterization.py`.
-
-**Commit.** `df783f5fe31a2800bb0319cbc4a3280ab86973f4` (dirty) throughout.
-
-**Accepted job IDs.** Primary fit `55227660` (+aggregate `55262390`); held-out
-eval `55290226` (+merge `55350240`, pairwise re-merge `55454191`); recovery
-`55358783` (+aggregate `55383746`); robustness `55386493` (+aggregate
-`55428328`); exclusion `55431692` (+aggregate `55450044`). The recovery entry
-is superseded by job `56148178` (2026-08-22), which re-runs it from the fitted
-parameters at three starts.
-
-**Rejected/cancelled.** `55221612` (wrong base), `55224933` (obsolete metadata
-attempt), `55225675_0` (one-start smoke, correctly rejected by the production
-aggregator).
-
-**Source-tree hashes** (per stage, from the sidecars):
-
-| Stage | Hash |
-| :--- | :--- |
-| primary fit | `979b517caf2427d424aa541226f04e2a10948ab7957066981d4d0494f2fc1d2f` |
-| primary aggregation | `0e2969b86181ec1ab8bc42d8f6e7bbad8def5683729a05d6323e05255f8f5fc1` |
-| held-out fit | `ccb5dc49929c85cb3c6d23050069dc7c59696992fc508be9701bff7250344fa8` |
-| evaluation group (post-pairwise) | `60189f4deb4e848cafa889d1424fce618ccae59938eab507b18ec186ae8ef670` |
-| robustness | `25475454af3be95035f9a7021d7557ee4fcfcb0c7dd816d3ce2858240f1cf997` |
-| exclusion | `ab1168542cf8afb28b9d01c739651f7d209acd19ab5b6a66dc9784aca436de58` |
+`meg_tokens/workflows/sequential_sampling.py`. Each stage's sidecar records
+its `git_commit` and `source_tree_sha256`.
 
 **Outputs.** Derivatives at
 `BIDS/derivatives/sub-group/beh/` (`desc-ssm*`, 230 files). Figures F13-F15:
 `sub-group_task-tokens_desc-ssmcomparison-{model,urgency}_behavior.*` and
 `desc-ssmparameterrecovery-identifiability_behavior.*` in `.../sub-group/fig/`.
-Outputs of retired figures are kept in `fig_old/`; their builders no longer
-exist, so they cannot be regenerated.
-
-**Pipeline note.** `ssm-aggregate` is the sole writer of every `ssm*` group
-derivative; `behavior characterization` consumes the per-subject fits but
-writes none of them back, so run order between the two is free. A
-characterization-only run produces no `ssm*` group table, and F13-F15 will not
-render from it.
 
 ## References
 
@@ -2307,17 +2188,7 @@ render from it.
   108:2912–2930.
 - Thura D., Cisek P. (2014). *Deliberation and commitment in the premotor and
   primary motor cortex during dynamic decision making.* Neuron 81:1401–1416.
-- Thura D., Cos I., Trung J., Cisek P. (2014). *Context-dependent urgency
-  influences speed–accuracy trade-offs in decision-making and movement
-  execution.* J Neurosci 34(49):16442–16454.
-- Thura D., Cisek P. (2017). *The basal ganglia do not select reach targets but
-  control the urgency of commitment.* Neuron 95:1160–1170.
-- Carland M.A., Thura D., Cisek P. (2015). *The urgency-gating model can
-  explain the effects of early evidence.* Psychon Bull Rev 22:1830–1838
-  [10.3758/s13423-015-0851-2](https://doi.org/10.3758/s13423-015-0851-2).
 - Carland M.A., Thura D., Cisek P. (2019). *The urge to decide and act:
   implications for brain function and dysfunction.* The Neuroscientist.
-- HSSM — Hierarchical Sequential Sampling Modeling:
-  [lnccbrown.github.io/HSSM](https://lnccbrown.github.io/HSSM/).
 - PyDDM — generalized drift-diffusion modelling:
   [pyddm.readthedocs.io](https://pyddm.readthedocs.io/).
