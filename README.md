@@ -151,8 +151,8 @@ those still have to be verified on the cluster.
 
 `scripts/verify/` holds seven scripts that assert every number
 `docs/behavior.md` quotes against the derivative it came from. They read
-`data_root` from `tokens.toml`, so they run unchanged on any machine
-(`MEG_TOKENS_DATA_ROOT` overrides it):
+`data_root` from this checkout's `tokens.toml`, so they run unchanged on any
+machine where the data is configured:
 
 ```bash
 python -m scripts.verify.verify_doc          # Acts 1-2

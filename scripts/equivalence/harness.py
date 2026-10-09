@@ -53,9 +53,14 @@ from meg_tokens.core import ProjectConfig
 RTOL = 1e-9
 ATOL = 1e-12
 
-# Recorded provenance of the source tree, not of the result. Comparing these
-# would flag every refactor, including one that changed nothing observable.
-PROVENANCE_FIELDS = frozenset({"source_tree_sha256", "git_dirty", "git_commit"})
+# Recorded provenance -- the source tree and the interpreter and libraries a
+# derivative was made with -- not the result. Comparing these would flag every
+# refactor and every environment upgrade, including one that changed nothing
+# observable.
+PROVENANCE_FIELDS = frozenset(
+    {"source_tree_sha256", "git_dirty", "git_commit", "python", "software"}
+)
+DEFAULT_CONFIG = Path(__file__).resolve().parents[2] / "tokens.toml"
 
 STAGES: tuple[tuple[str, ...], ...] = (
     ("behavior", "ingest"),
@@ -76,21 +81,14 @@ def workspace() -> Path:
     )
 
 
-def source_root(config: str | None) -> Path:
-    """The real data root the fixture is copied from."""
-    if config:
-        return Path(ProjectConfig.from_toml(config).bids_root)
-    override = os.environ.get("MEG_TOKENS_DATA_ROOT")
-    if override:
-        return Path(override) / "BIDS"
-    return Path(ProjectConfig.from_toml("tokens.toml").bids_root)
-
-
 # --- prepare -----------------------------------------------------------------
 
 
 def prepare(config: str | None) -> int:
-    source = source_root(config)
+    # The data copied and the settings the fixture inherits come from one
+    # config: ``--config``, else this checkout's own ``tokens.toml``.
+    project = ProjectConfig.from_toml(config or DEFAULT_CONFIG)
+    source = project.bids_root
     root = workspace() / "root"
     bids = root / "BIDS"
     group = bids / "derivatives" / "sub-group" / "beh"
@@ -117,7 +115,6 @@ def prepare(config: str | None) -> int:
         shutil.copy2(item, group / item.name)
 
     config_path = workspace() / "tokens.toml"
-    project = ProjectConfig.from_toml(config or "tokens.toml")
     ignore = "\n".join(f'    "{name}",' for name in project.behavior_ignore_files)
     config_path.write_text(
         "[project]\n"
@@ -196,7 +193,10 @@ def canonical(frame: pd.DataFrame) -> pd.DataFrame:
     frame = frame.reindex(sorted(frame.columns), axis=1)
     if frame.empty:
         return frame
-    keys = frame.astype(str)
+    # Cell by cell, so a missing value sorts as the text "nan". pandas 3's
+    # ``astype(str)`` keeps it as a float NaN, and lexsort cannot order NaN
+    # against text.
+    keys = frame.map(str)
     order = np.lexsort([keys[column].to_numpy() for column in reversed(keys.columns)])
     return frame.iloc[order].reset_index(drop=True)
 
@@ -225,8 +225,10 @@ def compare_frame(name: str, reference: pd.DataFrame, candidate: pd.DataFrame) -
             b = right.to_numpy(dtype=float)
             same = np.isclose(a, b, rtol=RTOL, atol=ATOL, equal_nan=True)
         else:
-            a = left.astype(str).to_numpy()
-            b = right.astype(str).to_numpy()
+            # Cell by cell, as in ``canonical``: under pandas 3 ``astype(str)``
+            # keeps a missing value as NaN, and NaN never equals NaN.
+            a = left.map(str).to_numpy()
+            b = right.map(str).to_numpy()
             same = a == b
         if not same.all():
             index = int(np.flatnonzero(~same)[0])
