@@ -106,10 +106,10 @@ def test_workflow_result_normalizes_paths():
 
 
 def test_preprocessing_and_epoching_settings_validate_ranges():
-    assert PreprocessingConfig().high_pass == 0.5
+    assert PreprocessingConfig().streams is None
     assert EpochingConfig(alignment="ENTER").alignment == "enter"
-    with pytest.raises(ValueError, match="low_pass"):
-        PreprocessingConfig(high_pass=10.0, low_pass=5.0)
+    with pytest.raises(ValueError, match="at least one cleaner"):
+        PreprocessingConfig(streams=())
     with pytest.raises(ValueError, match="tmax"):
         EpochingConfig(tmin=1.0, tmax=0.0)
 

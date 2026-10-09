@@ -13,21 +13,14 @@ SOURCE_STAGES = ("cov", "bem", "src", "fwd", "inv", "apply")
 class PreprocessingConfig:
     """Preprocessing settings. ``streams`` names the cleaners to run per recording.
 
-    ``run_ica`` and ``notch_freqs`` are gone: line noise is removed by ZapLine
-    rather than a notch, and ICA is one of three cleaners rather than an
-    on/off switch, so neither can express what this stage now does.
+    The band and every cleaner parameter are fixed by the specification in
+    ``meg/preprocessing.py`` rather than settable here: the three streams are
+    only comparable across recordings if no run was cleaned differently.
     """
 
-    high_pass: float = 0.5
-    low_pass: float = 150.0
     streams: Optional[Tuple[str, ...]] = None
-    ica_exclude: Optional[Tuple[int, ...]] = None
 
     def __post_init__(self) -> None:
-        if self.high_pass < 0:
-            raise ValueError("high_pass must be non-negative")
-        if self.low_pass <= self.high_pass:
-            raise ValueError("low_pass must be greater than high_pass")
         if self.streams is not None and not self.streams:
             raise ValueError("streams must name at least one cleaner")
 

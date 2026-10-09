@@ -32,6 +32,8 @@ from meg_tokens.meg.meg_bids import (
     staged_subjects,
 )
 from meg_tokens.meg.preprocessing import (
+    HIGH_PASS,
+    LOW_PASS,
     STREAMS,
     artifact_events,
     build_trunk,
@@ -155,10 +157,9 @@ def preprocess_subjects(
         settings={
             "subjects": selected,
             "n_runs": len(outputs),
-            "high_pass": settings.high_pass,
-            "low_pass": settings.low_pass,
+            "high_pass": HIGH_PASS,
+            "low_pass": LOW_PASS,
             "streams": list(settings.streams or STREAMS),
-            "ica_exclude": settings.ica_exclude,
         },
     )
 

@@ -222,12 +222,9 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     preprocess.add_argument("--condition")
-    preprocess.add_argument("--high-pass", dest="high_pass", type=float, default=0.5)
-    preprocess.add_argument("--low-pass", dest="low_pass", type=float, default=150.0)
     preprocess.add_argument("--streams", dest="streams", nargs="+",
                             choices=("dss", "ica", "ssp"),
                             help="cleaners to run; default all three")
-    preprocess.add_argument("--ica-exclude", dest="ica_exclude", type=int, nargs="*")
 
     epoch = meg_commands.add_parser(
         "epoch",
@@ -791,10 +788,7 @@ def _meg_preprocess(project: ProjectConfig, args: argparse.Namespace) -> object:
     from meg_tokens.workflows.preprocessing import preprocess_run, preprocess_subjects
 
     settings = PreprocessingConfig(
-        high_pass=args.high_pass,
-        low_pass=args.low_pass,
         streams=tuple(args.streams) if args.streams else None,
-        ica_exclude=tuple(args.ica_exclude) if args.ica_exclude is not None else None,
     )
     if args.run is None:
         return preprocess_subjects(project, subjects=args.subjects, settings=settings)
