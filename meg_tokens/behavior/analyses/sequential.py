@@ -307,8 +307,11 @@ def post_error_statistics(subject_table: pd.DataFrame) -> pd.DataFrame:
                 "condition": condition,
                 "test": "descriptive",
                 "n_subjects": int(complete.sum()),
+                # A measure that does not vary has no correlation to report.
                 "pearson_r": (
-                    float(robust.corr(classical)) if complete.sum() > 2
+                    float(robust.corr(classical))
+                    if complete.sum() > 2
+                    and robust.nunique() > 1 and classical.nunique() > 1
                     else float("nan")
                 ),
                 "robust_positive": int((robust > 0).sum()),

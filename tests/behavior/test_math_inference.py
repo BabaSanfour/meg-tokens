@@ -79,9 +79,17 @@ def test_one_sample_statistics_match_scipy_and_degrade_explicitly():
     assert single["mean"] == pytest.approx(2.0)
     assert all(np.isnan(single[field]) for field in ("sem", "t", "p", "cohens_dz"))
 
-    flat = one_sample_statistics([2.0, 2.0, 2.0])
-    assert flat["mean"] == pytest.approx(2.0)
-    assert np.isnan(flat["cohens_dz"])
+    # A cell where no subject differs has no test. scipy reports t = inf,
+    # p = 0 for it -- and t ~ 1e16, p ~ 1e-32 once rounding leaves a residue,
+    # as [0.1] * 3 does -- which reads as overwhelming evidence. Two real
+    # conditional-accuracy cells (every subject at 100%) were reported so.
+    for flat_values in ([2.0, 2.0, 2.0], [0.1, 0.1, 0.1]):
+        flat = one_sample_statistics(flat_values)
+        assert flat["mean"] == pytest.approx(flat_values[0])
+        assert flat["sem"] == 0.0
+        assert all(np.isnan(flat[field]) for field in ("t", "p", "cohens_dz"))
+    # Real spread, however small, is still tested.
+    assert np.isfinite(one_sample_statistics([1.0, 1.0, 1.000001])["p"])
 
 
 # --- subject bootstrap --------------------------------------------------------

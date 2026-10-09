@@ -15,6 +15,26 @@ import numpy as np
 from scipy import stats
 
 
+def _spread(values: np.ndarray) -> float:
+    """Sample standard deviation, exactly zero when the values do not differ.
+
+    ``np.std`` leaves a rounding residue on identical values (``[0.1] * 3``
+    gives about 1.7e-17), and a t-test divides by it: scipy then reports
+    ``t ~ 1e16, p ~ 1e-32`` -- or ``t = inf, p = 0`` when no residue is left --
+    for a cell in which no subject differs from any other. A sample without
+    spread has no test, so it must read as missing rather than as overwhelming.
+
+    "Do not differ" is scipy's own precision-loss criterion (``_demean``): no
+    value lies further from the mean than ten machine epsilons of it, which
+    covers values that are equal up to the rounding of whatever computed them.
+    """
+    mean = float(np.mean(values))
+    deviation = float(np.max(np.abs(values - mean)))
+    if deviation == 0 or deviation < 10 * np.finfo(float).eps * abs(mean):
+        return 0.0
+    return float(np.std(values, ddof=1))
+
+
 def paired_subject_statistics(
     values_a,
     values_b,
@@ -72,12 +92,12 @@ def paired_subject_statistics(
     mean_b, sem_b = mean_sem(values_b)
     t_stat = p_value = effect_size = np.nan
     if n_subjects > 1:
-        result = stats.ttest_rel(values_a, values_b)
-        t_stat = float(result.statistic)
-        p_value = float(result.pvalue)
         differences = values_a - values_b
-        difference_sd = float(np.std(differences, ddof=1))
+        difference_sd = _spread(differences)
         if difference_sd > 0:
+            result = stats.ttest_rel(values_a, values_b)
+            t_stat = float(result.statistic)
+            p_value = float(result.pvalue)
             effect_size = float(np.mean(differences) / difference_sd)
 
     # The paired difference needs its own standard error and interval. Only
@@ -92,9 +112,7 @@ def paired_subject_statistics(
     bound = bound_dz = np.nan
     if n_subjects > 1:
         differences = values_a - values_b
-        sem_difference = float(
-            np.std(differences, ddof=1) / np.sqrt(n_subjects)
-        )
+        sem_difference = _spread(differences) / np.sqrt(n_subjects)
         if np.isfinite(sem_difference):
             half_width = float(
                 stats.t.ppf(0.975, n_subjects - 1) * sem_difference
@@ -177,8 +195,12 @@ def one_sample_statistics(values: Sequence[float]) -> dict[str, float]:
             "df": float("nan"),
             "cohens_dz": float("nan"),
         }
-    standard_deviation = float(np.std(array, ddof=1))
-    result = stats.ttest_1samp(array, 0.0)
+    standard_deviation = _spread(array)
+    if standard_deviation > 0:
+        result = stats.ttest_1samp(array, 0.0)
+        t_stat, p_value = float(result.statistic), float(result.pvalue)
+    else:
+        t_stat = p_value = float("nan")
     standard_error = standard_deviation / np.sqrt(n_subjects)
     # Persisted so a figure drawing these means reads the interval rather than
     # rebuilding it from mean, sem and df -- the same reason the paired
@@ -190,8 +212,8 @@ def one_sample_statistics(values: Sequence[float]) -> dict[str, float]:
         "sem": standard_error,
         "ci95_low": mean - half_width,
         "ci95_high": mean + half_width,
-        "t": float(result.statistic),
-        "p": float(result.pvalue),
+        "t": t_stat,
+        "p": p_value,
         "df": float(n_subjects - 1),
         "cohens_dz": (
             mean / standard_deviation
@@ -244,7 +266,7 @@ def equivalence_bound(values, coverage: float = 0.90) -> dict[str, float]:
         statistics["mean"], statistics["sem"], statistics["df"], coverage=coverage
     )
     bound = max(abs(low), abs(high))
-    deviation = float(np.std(array, ddof=1))
+    deviation = _spread(array)
     return {
         "equivalence_bound": bound,
         "equivalence_bound_dz": bound / deviation if deviation > 0 else float("nan"),
