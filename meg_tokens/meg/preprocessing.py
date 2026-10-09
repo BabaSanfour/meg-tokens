@@ -7,7 +7,6 @@ artifact it removed. Specification and rationale: ``docs/meg.md``.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 from pathlib import Path
 
 import mne
@@ -57,8 +56,6 @@ STREAMS = ("dss", "ica")
 
 __all__ = [
     "STREAMS",
-    "StreamResult",
-    "TrunkReport",
     "artifact_events",
     "build_trunk",
     "clean_dss",
@@ -71,47 +68,6 @@ __all__ = [
     "save_stream",
     "stream_paths",
 ]
-
-
-@dataclass
-class TrunkReport:
-    """What the shared trunk found, for the sidecar."""
-
-    compensation_grade_source: int
-    compensation_applied: bool
-    sfreq: float
-    duration_seconds: float
-    n_meg_channels: int
-    bad_channels_amplitude: list[str] = field(default_factory=list)
-    bad_channels_spectral: list[str] = field(default_factory=list)
-    bad_channels_lof: list[str] = field(default_factory=list)
-    channel_scores: dict[str, float] = field(default_factory=dict)
-    annotated_seconds: float = 0.0
-    n_annotations: int = 0
-
-    @property
-    def bad_channels(self) -> list[str]:
-        """The union: a channel any detector flagged is reported, not voted on."""
-        return sorted(
-            set(self.bad_channels_amplitude)
-            | set(self.bad_channels_spectral)
-            | set(self.bad_channels_lof)
-        )
-
-
-@dataclass
-class StreamResult:
-    """One cleaner's output: the recording, what it removed, and how much."""
-
-    stream: str
-    cleaned: mne.io.BaseRaw
-    artifact: mne.io.BaseRaw
-    n_dimensions_removed: int
-    detail: dict = field(default_factory=dict)
-
-    def rank(self, n_channels: int) -> int:
-        """Rank after cleaning. the inverse operator needs this."""
-        return n_channels - self.n_dimensions_removed
 
 
 def read_staged_raw(path: str | Path, *, preload: bool = True) -> tuple[mne.io.BaseRaw, int]:
@@ -207,12 +163,13 @@ def spectral_outlier_channels(
     )
 
 
-def build_trunk(raw: mne.io.BaseRaw, source_grade: int) -> tuple[mne.io.BaseRaw, TrunkReport]:
+def build_trunk(raw: mne.io.BaseRaw, source_grade: int) -> tuple[mne.io.BaseRaw, dict]:
     """ZapLine, bandpass, bad channels, bad segments -- once, shared by every stream.
 
     ZapLine runs on the unfiltered recording, while the harmonics still exist.
     Bad channels are recorded and scored but not dropped: the decision is left
-    to a later stage that can see the cohort distribution.
+    to a later stage that can see the cohort distribution. Returns the trunk and
+    what it found, keyed as the sidecar records it.
     """
     from mne_denoise.zapline import ZapLine
 
@@ -240,20 +197,21 @@ def build_trunk(raw: mne.io.BaseRaw, source_grade: int) -> tuple[mne.io.BaseRaw,
     spectral_bads, scores = spectral_outlier_channels(raw, picks)
     lof_bads = find_bad_channels_lof(raw, picks=picks, verbose=False)
 
-    report = TrunkReport(
-        compensation_grade_source=source_grade,
-        compensation_applied=source_grade != COMPENSATION_GRADE,
-        sfreq=float(raw.info["sfreq"]),
-        duration_seconds=float(raw.times[-1]),
-        n_meg_channels=int(len(picks)),
-        bad_channels_amplitude=sorted(amplitude_bads),
-        bad_channels_spectral=sorted(spectral_bads),
-        bad_channels_lof=sorted(lof_bads),
-        channel_scores=scores,
-        annotated_seconds=float(np.sum(annotations.duration)),
-        n_annotations=int(len(annotations)),
-    )
-    return raw, report
+    return raw, {
+        "compensation_grade_source": source_grade,
+        "compensation_applied": source_grade != COMPENSATION_GRADE,
+        "source_sfreq": float(raw.info["sfreq"]),
+        "duration_seconds": float(raw.times[-1]),
+        "n_meg_channels": int(len(picks)),
+        # The union: a channel any detector flagged is reported, not voted on.
+        "bad_channels": sorted(set(amplitude_bads) | set(spectral_bads) | set(lof_bads)),
+        "bad_channels_amplitude": sorted(amplitude_bads),
+        "bad_channels_spectral": sorted(spectral_bads),
+        "bad_channels_lof": sorted(lof_bads),
+        "channel_scores": scores,
+        "trunk_annotated_seconds": float(np.sum(annotations.duration)),
+        "trunk_annotations": int(len(annotations)),
+    }
 
 
 def _artifact_of(before: mne.io.BaseRaw, cleaned: mne.io.BaseRaw) -> mne.io.BaseRaw:
@@ -268,7 +226,7 @@ def _artifact_of(before: mne.io.BaseRaw, cleaned: mne.io.BaseRaw) -> mne.io.Base
     return artifact
 
 
-def clean_ica(raw: mne.io.BaseRaw, events: dict[str, np.ndarray]) -> StreamResult:
+def clean_ica(raw: mne.io.BaseRaw, events: dict[str, np.ndarray]) -> tuple[mne.io.BaseRaw, int, dict]:
     """20-component ICA on the filtered copy, both EOG channels and the ECG.
 
     The paper describes two bipolar EOG channels but its code passed only the
@@ -296,13 +254,10 @@ def clean_ica(raw: mne.io.BaseRaw, events: dict[str, np.ndarray]) -> StreamResul
     # indices as `["3", "7"]` and calls it done.
     ica.exclude = sorted(int(index) for index in exclude)
 
-    cleaned = ica.apply(raw.copy())
-    return StreamResult(
-        stream="ica",
-        cleaned=cleaned,
-        artifact=_artifact_of(raw, cleaned),
-        n_dimensions_removed=len(ica.exclude),
-        detail={"n_components": 20, "excluded": [int(i) for i in ica.exclude]},
+    return (
+        ica.apply(raw.copy()),
+        len(ica.exclude),
+        {"n_components": 20, "excluded": list(ica.exclude)},
     )
 
 
@@ -341,7 +296,7 @@ def dss_subtract(
     return cleaned, n_removed
 
 
-def clean_dss(raw: mne.io.BaseRaw, events: dict[str, np.ndarray]) -> StreamResult:
+def clean_dss(raw: mne.io.BaseRaw, events: dict[str, np.ndarray]) -> tuple[mne.io.BaseRaw, int, dict]:
     """Cardiac, then ocular, then muscle -- each a DSS bias pointed at one artifact."""
     from mne_denoise.dss.denoisers import BandpassBias, CycleAverageBias
 
@@ -371,10 +326,7 @@ def clean_dss(raw: mne.io.BaseRaw, events: dict[str, np.ndarray]) -> StreamResul
     removed += n
     detail["muscle_components"] = n
 
-    return StreamResult(
-        stream="dss", cleaned=current, artifact=_artifact_of(raw, current),
-        n_dimensions_removed=removed, detail=detail,
-    )
+    return current, removed, detail
 
 
 CLEANERS = {"dss": clean_dss, "ica": clean_ica}
@@ -403,14 +355,21 @@ def finish(raw: mne.io.BaseRaw) -> tuple[mne.io.BaseRaw, dict]:
 
 def run_stream(
     trunk: mne.io.BaseRaw, events: dict[str, np.ndarray], stream: str
-) -> tuple[StreamResult, dict]:
-    """One cleaner, then the shared tail, on a copy of the trunk."""
+) -> tuple[mne.io.BaseRaw, mne.io.BaseRaw, dict]:
+    """One cleaner, then the shared tail: the cleaned recording, what the
+    cleaner removed, and the stream's sidecar fields."""
     if stream not in CLEANERS:
         raise ValueError(f"unknown stream {stream!r}; expected one of {sorted(CLEANERS)}")
-    result = CLEANERS[stream](trunk, events)
-    result.cleaned, tail = finish(result.cleaned)
-    result.artifact.resample(RESAMPLE_HZ, verbose=False)
-    return result, tail
+    cleaned, n_removed, detail = CLEANERS[stream](trunk, events)
+    artifact = _artifact_of(trunk, cleaned)
+    cleaned, tail = finish(cleaned)
+    artifact.resample(RESAMPLE_HZ, verbose=False)
+    return cleaned, artifact, {
+        "stream": stream,
+        "n_dimensions_removed": n_removed,
+        **{f"tail_{key}": value for key, value in tail.items()},
+        **{f"detail_{key}": value for key, value in detail.items()},
+    }
 
 
 def stream_paths(
@@ -441,9 +400,10 @@ def stream_paths(
 
 
 def save_stream(
-    result: StreamResult,
-    trunk: TrunkReport,
-    tail: dict,
+    cleaned: mne.io.BaseRaw,
+    artifact: mne.io.BaseRaw,
+    stream_record: dict,
+    trunk_record: dict,
     layout,
     subject: str,
     condition: str,
@@ -454,30 +414,18 @@ def save_stream(
     """Persist a stream's cleaned recording, its artifact, and the sidecar."""
     import json
 
-    paths = stream_paths(layout, subject, condition, run, result.stream)
+    paths = stream_paths(layout, subject, condition, run, stream_record["stream"])
     paths["cleaned"].parent.mkdir(parents=True, exist_ok=True)
-    result.cleaned.save(str(paths["cleaned"]), overwrite=overwrite, verbose=False)
-    result.artifact.save(str(paths["artifact"]), overwrite=overwrite, verbose=False)
+    cleaned.save(str(paths["cleaned"]), overwrite=overwrite, verbose=False)
+    artifact.save(str(paths["artifact"]), overwrite=overwrite, verbose=False)
 
     sidecar = {
-        "stream": result.stream,
         "condition": condition.lower(),
         "run": str(run),
-        "n_dimensions_removed": result.n_dimensions_removed,
-        "rank": result.rank(trunk.n_meg_channels),
-        "n_meg_channels": trunk.n_meg_channels,
-        "compensation_grade_source": trunk.compensation_grade_source,
-        "compensation_applied": trunk.compensation_applied,
-        "source_sfreq": trunk.sfreq,
-        "duration_seconds": trunk.duration_seconds,
-        "bad_channels": trunk.bad_channels,
-        "bad_channels_amplitude": trunk.bad_channels_amplitude,
-        "bad_channels_spectral": trunk.bad_channels_spectral,
-        "bad_channels_lof": trunk.bad_channels_lof,
-        "trunk_annotated_seconds": trunk.annotated_seconds,
-        "trunk_annotations": trunk.n_annotations,
-        **{f"tail_{key}": value for key, value in tail.items()},
-        **{f"detail_{key}": value for key, value in result.detail.items()},
+        **trunk_record,
+        **stream_record,
+        # The inverse operator needs the rank; both cleaners remove dimensions.
+        "rank": trunk_record["n_meg_channels"] - stream_record["n_dimensions_removed"],
     }
     with paths["sidecar"].open("w", encoding="utf-8") as handle:
         # No `default=` fallback. A value JSON cannot represent is a type that

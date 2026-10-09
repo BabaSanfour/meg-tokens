@@ -63,7 +63,7 @@ def compare_streams(
     for stream in streams:
         started = time.monotonic()
         try:
-            result = CLEANERS[stream](trunk, events)
+            cleaned, n_removed, detail = CLEANERS[stream](trunk, events)
         except Exception as error:  # a named failure, not a silent skip
             rows.append({
                 "stream": stream, "failed": repr(error),
@@ -72,12 +72,12 @@ def compare_streams(
             continue
         row = {
             "stream": stream,
-            "n_dimensions_removed": int(result.n_dimensions_removed),
-            "rank": int(result.rank(len(picks))),
-            "detail": result.detail,
+            "n_dimensions_removed": int(n_removed),
+            "rank": int(len(picks) - n_removed),
+            "detail": detail,
             "seconds": round(time.monotonic() - started, 1),
         }
-        row.update(score_cleaning(trunk, result.cleaned, picks, events, references))
+        row.update(score_cleaning(trunk, cleaned, picks, events, references))
         rows.append(row)
-        del result
+        del cleaned
     return rows

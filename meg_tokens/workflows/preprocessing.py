@@ -76,7 +76,7 @@ def preprocess_run(
     # per stream would make the streams differ in two ways at once, and the
     # comparison between cleaners would not mean anything.
     raw, source_grade = read_staged_raw(input_path)
-    trunk, report = build_trunk(raw, source_grade)
+    trunk, trunk_record = build_trunk(raw, source_grade)
     events = artifact_events(trunk)
 
     streams = tuple(settings.streams or STREAMS)
@@ -87,14 +87,16 @@ def preprocess_run(
     outputs: list[Path] = []
     ranks: dict[str, int] = {}
     for stream in streams:
-        result, tail = run_stream(trunk, events, stream)
+        cleaned, artifact, stream_record = run_stream(trunk, events, stream)
         paths = save_stream(
-            result, report, tail, DerivativeLayout(project.bids_root),
-            run.subject, run.condition, run.run,
+            cleaned, artifact, stream_record, trunk_record,
+            DerivativeLayout(project.bids_root), run.subject, run.condition, run.run,
         )
         outputs.extend(paths.values())
-        ranks[stream] = result.rank(report.n_meg_channels)
-        del result
+        ranks[stream] = (
+            trunk_record["n_meg_channels"] - stream_record["n_dimensions_removed"]
+        )
+        del cleaned, artifact
 
     return WorkflowResult(
         stage="meg_preprocessing",
@@ -105,9 +107,9 @@ def preprocess_run(
             "run": run.run,
             "condition": run.condition,
             "streams": list(streams),
-            "compensation_applied": report.compensation_applied,
-            "bad_channels": report.bad_channels,
-            "annotated_seconds": report.annotated_seconds,
+            "compensation_applied": trunk_record["compensation_applied"],
+            "bad_channels": trunk_record["bad_channels"],
+            "annotated_seconds": trunk_record["trunk_annotated_seconds"],
             "rank": ranks,
         },
     )

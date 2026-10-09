@@ -141,7 +141,7 @@ def search_recording(
     trunk rather than two.
     """
     raw, source_grade = read_staged_raw(path)
-    trunk, trunk_report = build_trunk(raw, source_grade)
+    trunk, trunk_record = build_trunk(raw, source_grade)
     del raw
     events = artifact_events(trunk)
     picks = mne.pick_types(trunk.info, meg=True, ref_meg=False, eeg=False, exclude=[])
@@ -223,13 +223,13 @@ def search_recording(
         "streams": stream_rows,
         "presence": presence,
         "trunk": {
-            "compensation_grade_source": trunk_report.compensation_grade_source,
-            "compensation_applied": trunk_report.compensation_applied,
-            "sfreq": trunk_report.sfreq,
-            "duration_seconds": trunk_report.duration_seconds,
-            "n_meg_channels": trunk_report.n_meg_channels,
-            "n_bad_channels": len(trunk_report.bad_channels),
-            "annotated_seconds": trunk_report.annotated_seconds,
+            "compensation_grade_source": trunk_record["compensation_grade_source"],
+            "compensation_applied": trunk_record["compensation_applied"],
+            "sfreq": trunk_record["source_sfreq"],
+            "duration_seconds": trunk_record["duration_seconds"],
+            "n_meg_channels": trunk_record["n_meg_channels"],
+            "n_bad_channels": len(trunk_record["bad_channels"]),
+            "annotated_seconds": trunk_record["trunk_annotated_seconds"],
         },
         "rows": rows,
     }

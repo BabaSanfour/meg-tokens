@@ -68,8 +68,9 @@ derivatives/sub-H01/meg/sub-H01_task-tokens_run-1_proc-dss_desc-fast_raw.json
 
 Sidecar carries `stream`, `rank` and `n_dimensions_removed` (both cleaners
 reduce rank and the inverse operator needs it), `compensation_grade_source` and
-`compensation_applied`, the bad channels per detector, annotated seconds before
-and after cleaning, and the per-cleaner detail.
+`compensation_applied`, the bad channels per detector with every channel's
+spectral outlier score (`channel_scores`), annotated seconds before and after
+cleaning, and the per-cleaner detail.
 
 `preprocessed_meg_runs` requires an explicit `processing=` stream — the three
 cleaners are alternatives, not degrees of one thing, so there is no default.
