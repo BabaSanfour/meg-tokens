@@ -591,8 +591,8 @@ def _build_result(
         note = " ".join(filter(None, [
             note,
             "Start-pulse count differs from a documented "
-            "KNOWN_TRAILING_TRIAL_MISMATCHES case (see docs/meg.md "
-            "section 3) -- independently verified as boundary-only, staging anyway.",
+            "KNOWN_TRAILING_TRIAL_MISMATCHES case (see docs/meg.md, "
+            "Trailing-boundary mismatches) -- independently verified as boundary-only, staging anyway.",
         ]))
     return MatchResult(
         subject=run.subject,

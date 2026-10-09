@@ -102,7 +102,7 @@ def calculate_motor_baseline_by_side(rt_dfs: list[pd.DataFrame]) -> dict[int, fl
     p = .003) in a task with no deliberation in it -- so it is motor, and a
     single pooled baseline leaves it inside ``dt``. Subtracting the matching
     hand's baseline removes it: the left-minus-right asymmetry in decision
-    time falls from -22.8 ms (p = .023) to -8.9 ms (p = .39) while the
+    time falls from -22.8 ms (p = .023) to -9.8 ms (p = .354) while the
     Fast/Slow effect is unchanged at +127.1 ms (was +127.4).
 
     This departs from the preprint, which pools both hands; recorded in
