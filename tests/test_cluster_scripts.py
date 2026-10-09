@@ -46,25 +46,25 @@ def invocations(script: Path) -> list[list[str]]:
     return found
 
 
-@pytest.mark.parametrize("script", sorted(SCRIPTS.glob("*.sh")), ids=lambda p: p.name)
-def test_every_scripted_command_is_one_the_cli_accepts(script):
-    for argv in invocations(script):
-        stderr = io.StringIO()
-        try:
-            with contextlib.redirect_stderr(stderr):
-                build_parser().parse_args(argv)
-        except SystemExit:  # pragma: no cover - only on a real mismatch
-            pytest.fail(f"{script.name} runs a command the CLI rejects:\n  {stderr.getvalue()}")
+def test_every_scripted_command_is_one_the_cli_accepts():
+    for script in sorted(SCRIPTS.glob("*.sh")):
+        for argv in invocations(script):
+            stderr = io.StringIO()
+            try:
+                with contextlib.redirect_stderr(stderr):
+                    build_parser().parse_args(argv)
+            except SystemExit:  # pragma: no cover - only on a real mismatch
+                pytest.fail(f"{script.name} runs a command the CLI rejects:\n  {stderr.getvalue()}")
 
 
-@pytest.mark.parametrize("script", sorted(SCRIPTS.glob("ssm_*.sh")), ids=lambda p: p.name)
-def test_an_ssm_launcher_is_named_for_the_command_it_submits(script):
+def test_an_ssm_launcher_is_named_for_the_command_it_submits():
     """`ssm_recovery_aggregate.sh` submits `behavior ssm-recovery-aggregate`.
 
     Ten launchers differing only in which stage they call are impossible to
     keep straight by reading them, so the name carries the answer.
     """
-    expected = script.stem.removesuffix("_array").replace("_", "-")
-    commands = {argv[argv.index("behavior") + 1] for argv in invocations(script)}
-    # Array launchers also ask the CLI for the subject list to index into.
-    assert commands - {"subjects"} == {expected}, f"{script.name} submits {sorted(commands)}"
+    for script in sorted(SCRIPTS.glob("ssm_*.sh")):
+        expected = script.stem.removesuffix("_array").replace("_", "-")
+        commands = {argv[argv.index("behavior") + 1] for argv in invocations(script)}
+        # Array launchers also ask the CLI for the subject list to index into.
+        assert commands - {"subjects"} == {expected}, f"{script.name} submits {sorted(commands)}"

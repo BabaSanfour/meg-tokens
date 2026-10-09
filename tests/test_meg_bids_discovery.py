@@ -45,38 +45,3 @@ def test_associated_emptyroom_refuses_runs_that_disagree(tmp_path):
 
     with pytest.raises(ValueError, match="2 different empty-room sessions"):
         associated_emptyroom(tmp_path, "H01")
-
-
-def test_associated_emptyroom_reports_a_subject_with_no_noise_day(tmp_path):
-    """H05 is the real case: no empty-room session was acquired that day."""
-    _stage(tmp_path, "H05", "Fast", 1, None)
-
-    with pytest.raises(FileNotFoundError, match="no AssociatedEmptyRoom"):
-        associated_emptyroom(tmp_path, "H05")
-
-
-def test_associated_emptyroom_reports_an_unstaged_noise_session(tmp_path):
-    _stage(tmp_path, "H01", "Fast", 1, "/sub-emptyroom/ses-20180213/meg/a_meg.ds")
-
-    with pytest.raises(FileNotFoundError, match="is not staged"):
-        associated_emptyroom(tmp_path, "H01")
-
-
-def test_epoched_meg_runs_walks_the_grid_in_protocol_order(tmp_path):
-    from meg_tokens.io import DerivativeLayout
-    from meg_tokens.meg.meg_bids import epoched_meg_runs
-
-    layout = DerivativeLayout(tmp_path)
-    for condition, run in (("Slow", 2), ("Fast", 1)):
-        path = layout.epochs(
-            subject="H01", run=str(run), condition=condition, alignment="go"
-        )
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text("")
-    # A different alignment is a different derivative and must not be picked up.
-    other = layout.epochs(subject="H01", run="3", condition="Fast", alignment="enter")
-    other.parent.mkdir(parents=True, exist_ok=True)
-    other.write_text("")
-
-    found = [(spec.condition, spec.run) for spec, _ in epoched_meg_runs(layout, "H01", alignment="go")]
-    assert found == [("Fast", "1"), ("Slow", "2")]

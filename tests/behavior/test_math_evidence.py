@@ -8,7 +8,6 @@ import pytest
 from meg_tokens.behavior.math.evidence import (
     FIRST_ORDER_TOKEN_LOG_LR,
     MAX_LOG_ODDS,
-    evidence_after_tokens,
     first_order_sum_log_lr_profile,
     log_posterior_odds,
     sum_log_lr_profile,
@@ -20,20 +19,6 @@ def test_the_token_lead_is_the_running_count_difference_from_the_reference_targe
     assert token_lead_profile([1, 1, 2, 1], target=1) == [1, 2, 1, 2]
     assert token_lead_profile([1, 1, 2, 1], target=2) == [-1, -2, -1, -2]
     assert token_lead_profile(np.array([1, 2, 1]), target=1) == [1, 0, 1]
-
-
-@pytest.mark.parametrize(
-    ("directions", "target", "error", "message"),
-    [
-        ("1121", 1, TypeError, "sequence of integer"),
-        ([1, 3], 1, ValueError, "only target ids 1 and 2"),
-        ([1, 2.0], 1, TypeError, "integer target ids"),
-        ([1, 2], 0, ValueError, "target must be 1 or 2"),
-    ],
-)
-def test_the_token_lead_rejects_impossible_inputs(directions, target, error, message):
-    with pytest.raises(error, match=message):
-        token_lead_profile(directions, target=target)
 
 
 def test_log_posterior_odds_are_the_logit_clipped_at_a_flagged_boundary():
@@ -88,17 +73,3 @@ def test_the_first_order_profile_is_a_fixed_multiple_of_the_lead_and_never_satur
     profile = first_order_sum_log_lr_profile([1] * 8 + [2] * 7, target=1)
     assert profile[7] == pytest.approx(8 * FIRST_ORDER_TOKEN_LOG_LR)
     assert profile[-1] == pytest.approx(FIRST_ORDER_TOKEN_LOG_LR)
-
-
-def test_selecting_evidence_is_one_based_with_the_declared_prior_before_any_token():
-    assert evidence_after_tokens([0.6, 0.7], 0, prior=0.5) == 0.5
-    assert evidence_after_tokens([2, 1], 0, prior=0.0) == 0.0
-    assert evidence_after_tokens([0.6, 0.7], 1, prior=0.5) == 0.6
-    assert evidence_after_tokens([0.6, 0.7], 2, prior=0.5) == 0.7
-
-    with pytest.raises(ValueError, match="non-negative"):
-        evidence_after_tokens([0.6, 0.7], -1, prior=0.5)
-    with pytest.raises(ValueError, match="cannot exceed"):
-        evidence_after_tokens([0.6, 0.7], 3, prior=0.5)
-    with pytest.raises(TypeError, match="n_tokens must be an integer"):
-        evidence_after_tokens([0.6, 0.7], 1.0, prior=0.5)

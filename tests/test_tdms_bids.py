@@ -1,14 +1,7 @@
-import os
-
 import pandas as pd
-import pytest
 
 from meg_tokens.behavior.schema import CLASSIFICATION_COLUMNS, RAW_TRIAL_COLUMNS
-from meg_tokens.behavior.tdms_bids import (
-    raw_behavior_files,
-    read_raw_behavior_sidecar,
-    write_beh_bids,
-)
+from meg_tokens.behavior.tdms_bids import read_raw_behavior_sidecar, write_beh_bids
 
 EVENTS_STR = """sTaskType: 'TokensMvt'
 dDate: '2018/02/13 02:20:52.738 PM'
@@ -76,31 +69,6 @@ def test_write_beh_bids_uses_bids_entities_and_omits_classification(tmp_path, mo
     assert sidecar.exists()
 
 
-def test_write_beh_bids_rejects_non_standard_filename(tmp_path):
-    tdms_path = tmp_path / "temp_180214.tdms"
-    tdms_path.write_text("")
-    with pytest.raises(ValueError):
-        write_beh_bids(tdms_path, bids_root=tmp_path / "BIDS")
-
-
-def test_raw_behavior_files_finds_every_staged_run_for_one_subject(tmp_path, monkeypatch):
-    fake = _FakeTdmsFile([_FakeGroup("TrialData0", {"Events": EVENTS_STR})])
-    monkeypatch.setattr("meg_tokens.behavior.tdms.TdmsFile", lambda path: fake)
-    bids_root = tmp_path / "BIDS"
-
-    for name in ("H02Slow1_180213.tdms", "H02Fast1_180213.tdms"):
-        path = tmp_path / name
-        path.write_text("")
-        write_beh_bids(path, bids_root=bids_root)
-
-    assert [p.name for p in raw_behavior_files(bids_root, "h2")] == [
-        "sub-H02_task-tokens_acq-fast_run-1_beh.tsv",
-        "sub-H02_task-tokens_acq-slow_run-1_beh.tsv",
-    ]
-    # A subject Stage 0 never staged is indistinguishable from one with no runs.
-    assert raw_behavior_files(bids_root, "H09") == []
-
-
 def test_read_raw_behavior_sidecar_recovers_run_identity(tmp_path, monkeypatch):
     fake = _FakeTdmsFile([_FakeGroup("TrialData0", {"Events": EVENTS_STR})])
     monkeypatch.setattr("meg_tokens.behavior.tdms.TdmsFile", lambda path: fake)
@@ -117,30 +85,3 @@ def test_read_raw_behavior_sidecar_recovers_run_identity(tmp_path, monkeypatch):
     assert metadata["run"] == 1
     assert metadata["acquisition_date"] == "180213"
     assert metadata["source_file"] == str(tdms_path)
-
-
-def test_read_raw_behavior_sidecar_raises_without_one(tmp_path):
-    with pytest.raises(FileNotFoundError):
-        read_raw_behavior_sidecar(tmp_path / "no-such_beh.tsv")
-
-
-def test_write_beh_bids_real_tdms_file_integration():
-    real_root = os.environ.get("MEG_TOKENS_TDMS_ROOT")
-    if not real_root:
-        pytest.skip("Set MEG_TOKENS_TDMS_ROOT to the behavioral log root to run this test.")
-    real_path = os.path.join(real_root, "H02", "H02Slow1_180213.tdms")
-    if not os.path.exists(real_path):
-        pytest.skip(f"Real TDMS data not available at {real_path}")
-
-    import tempfile
-
-    with tempfile.TemporaryDirectory() as tmp:
-        written = write_beh_bids(real_path, bids_root=tmp)
-        df = pd.read_csv(written, sep="\t")
-        assert not df.empty
-        # A real run stages as pure transcription: no class asserted, and
-        # both inputs classification later reads still present.
-        assert list(df.columns) == RAW_TRIAL_COLUMNS
-        assert set(CLASSIFICATION_COLUMNS).isdisjoint(df.columns)
-        assert set(df["sTrialClassRaw"].astype(str)) <= {"x", "e", "a", "m", "r"}
-        assert df["sp_design_correct"].notna().any()

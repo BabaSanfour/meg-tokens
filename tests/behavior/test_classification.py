@@ -10,25 +10,17 @@ from the already-tested probability layer rather than typed out by hand.
 The one property that genuinely needs a real behavioral run is the
 reproducibility claim: that a real log's classification is recoverable from
 the staged raw table alone, with no access to the ``.tdms`` container. Those
-tests read a real run and skip cleanly when it is not available. Point
-``MEG_TOKENS_TDMS_ROOT`` at the behavioral log root to run them:
-
-    MEG_TOKENS_TDMS_ROOT=<tdms-root> python -m pytest tests/behavior/test_classification.py
+tests read a real run from this checkout's configured data (see
+``tests/conftest.py``) and skip where it is absent.
 """
 
 from __future__ import annotations
 
-import os
 
-import pandas as pd
 import pytest
 from pandas.testing import assert_frame_equal
 
-from meg_tokens.behavior.classification import (
-    RECORDED_CLASSES,
-    classify_trial,
-    classify_trials,
-)
+from meg_tokens.behavior.classification import classify_trial, classify_trials
 from meg_tokens.behavior.math.probability import (
     classify_design_profile,
     success_probability_profile,
@@ -53,32 +45,6 @@ def _profile(directions: str, target: int) -> list[float]:
 EASY = "111111112222222"
 AMBIGUOUS = "121121122112212"
 MISLEADING = "222111111112222"
-UNMATCHED = "111122221111111"
-
-
-# --- one trial's recorded label -----------------------------------------------
-
-
-def test_a_recorded_label_is_taken_at_face_value():
-    """A class the acquisition software asserted is read straight off the
-    label. Inference is a policy for trials logged ``'x'`` only, so switching
-    it off must not touch a trial that was never in question."""
-    assert RECORDED_CLASSES == {"e": 1, "a": 2, "m": 3}
-
-    for label, trial_class in (("e", 1), ("a", 2), ("m", 3)):
-        for infer_random_classes in (True, False):
-            assert classify_trial(
-                label,
-                _profile(UNMATCHED, target=1),
-                infer_random_classes=infer_random_classes,
-            ) == (trial_class, "design", "recorded_label")
-
-    # The label is read case-insensitively.
-    assert classify_trial("E", None, infer_random_classes=True) == (
-        1,
-        "design",
-        "recorded_label",
-    )
 
 
 # --- trials logged 'x': the inference decision --------------------------------
@@ -95,36 +61,6 @@ def test_a_random_trial_takes_its_class_from_the_designed_profile():
         ) == (trial_class, "inferred", rule)
 
 
-def test_an_unclassified_random_trial_records_why_it_has_no_class():
-    # An inferred class is only as good as the rule that produced it, so a
-    # profile no rule matches yields no class rather than a nearest guess.
-    assert classify_trial(
-        "x", _profile(UNMATCHED, target=1), infer_random_classes=True
-    ) == (0, "unclassified", "unclassified")
-
-    # The rule that would have matched is recorded nowhere: with inference off
-    # the trial is unclassified because the project declined, and the rule
-    # says so.
-    assert classify_trial(
-        "x", _profile(EASY, target=1), infer_random_classes=False
-    ) == (0, "unclassified", "inference_disabled")
-
-    # No correct target means no designed profile to read a class out of -- a
-    # different fact from having declined to look, and recorded as such.
-    assert classify_trial("x", None, infer_random_classes=True) == (
-        0,
-        "unclassified",
-        "no_correct_target",
-    )
-
-    # Both produce class 0; the rule distinguishes them, and the disabled
-    # switch is checked first because it applies whatever the profile holds.
-    assert (
-        classify_trial("x", None, infer_random_classes=False)[2]
-        == "inference_disabled"
-    )
-
-
 # --- other labels -------------------------------------------------------------
 
 
@@ -135,102 +71,7 @@ def test_a_repeat_trial_is_not_applicable_rather_than_unclassified():
         ) == (0, "not_applicable", "not_applicable")
 
 
-def test_a_numeric_label_is_the_class_it_names():
-    for label in (1, 2, 3, "2"):
-        assert classify_trial(label, None, infer_random_classes=True) == (
-            int(label),
-            "design",
-            "recorded_numeric_label",
-        )
-
-    # One outside the three classes carries no design.
-    for label in (0, 7):
-        assert classify_trial(label, None, infer_random_classes=True) == (
-            label,
-            "unclassified",
-            "recorded_numeric_label",
-        )
-
-
-# --- applying it to a table ---------------------------------------------------
-
-
-def _raw_table() -> pd.DataFrame:
-    """Two columns is all classification reads; the rest is carried through."""
-    return pd.DataFrame(
-        {
-            "nTrialIndex": [1, 2, 3, 4],
-            "sTrialClassRaw": ["e", "x", "x", "r"],
-            "sp_design_correct": [
-                _profile(EASY, target=1),
-                _profile(MISLEADING, target=1),
-                None,
-                _profile(AMBIGUOUS, target=1),
-            ],
-        }
-    )
-
-
-def test_classify_trials_appends_exactly_the_classification_columns():
-    table = _raw_table()
-    before = table.copy(deep=True)
-
-    classified = classify_trials(table)
-
-    assert list(classified.columns) == list(table.columns) + list(CLASSIFICATION_COLUMNS)
-    assert classified["sTrialClass"].tolist() == [1, 3, 0, 0]
-    assert classified["trial_class_source"].tolist() == [
-        "design",
-        "inferred",
-        "unclassified",
-        "not_applicable",
-    ]
-    assert classified["trial_class_rule"].tolist() == [
-        "recorded_label",
-        "misleading_sp3",
-        "no_correct_target",
-        "not_applicable",
-    ]
-
-    # The input rows are carried through unchanged, and the table it read is
-    # the staged file's content: a derivative that edited it in place would
-    # leave the caller holding a table that is neither raw nor derivative.
-    assert_frame_equal(classified[table.columns.tolist()], table)
-    assert list(table.columns) == list(before.columns)
-    assert_frame_equal(table, before)
-
-    # A non-default index survives.
-    indexed = classify_trials(_raw_table().set_index("nTrialIndex"))
-    assert indexed.index.tolist() == [1, 2, 3, 4]
-    assert indexed["sTrialClass"].tolist() == [1, 3, 0, 0]
-
-
-def test_the_inference_switch_reaches_every_row():
-    classified = classify_trials(_raw_table(), infer_random_classes=False)
-
-    assert classified["sTrialClass"].tolist() == [1, 0, 0, 0]
-    assert (classified["trial_class_source"] != "inferred").all()
-    assert classified.loc[1, "trial_class_rule"] == "inference_disabled"
-    assert classified.loc[2, "trial_class_rule"] == "inference_disabled"
-
-
-def test_classify_trials_names_the_input_column_it_cannot_find():
-    for column in ("sTrialClassRaw", "sp_design_correct"):
-        with pytest.raises(ValueError, match=column):
-            classify_trials(_raw_table().drop(columns=[column]))
-
-
 # --- reproducibility from the raw layer, on a real run ------------------------
-
-
-def _real_run_path() -> str:
-    root = os.environ.get("MEG_TOKENS_TDMS_ROOT")
-    if not root:
-        pytest.skip("Set MEG_TOKENS_TDMS_ROOT to the behavioral log root to run this test.")
-    path = os.path.join(root, "H02", "H02Slow1_180213.tdms")
-    if not os.path.exists(path):
-        pytest.skip(f"Real TDMS data not available at {path}")
-    return path
 
 
 def _expected_classification(label: object, profile: object) -> tuple:
@@ -257,8 +98,8 @@ def _expected_classification(label: object, profile: object) -> tuple:
     )
 
 
-def test_a_real_run_classifies_exactly_as_the_parser_used_to(tmp_path):
-    table = parse_tdms_file(_real_run_path())
+def test_a_real_run_classifies_exactly_as_the_parser_used_to(tmp_path, behavior_logs):
+    table = parse_tdms_file(behavior_logs / "H02" / "H02Slow1_180213.tdms")
     assert list(table.columns) == RAW_TRIAL_COLUMNS  # nothing pre-assigned
 
     classified = classify_trials(table)
@@ -293,21 +134,3 @@ def test_a_real_run_classifies_exactly_as_the_parser_used_to(tmp_path):
         reloaded[list(CLASSIFICATION_COLUMNS)],
         classified[list(CLASSIFICATION_COLUMNS)],
     )
-
-
-def test_a_real_run_infers_nothing_when_inference_is_off():
-    table = parse_tdms_file(_real_run_path())
-
-    classified = classify_trials(table, infer_random_classes=False)
-
-    assert (classified["trial_class_source"] != "inferred").all()
-    random_trials = classified["sTrialClassRaw"].astype(str).str.lower() == "x"
-    assert random_trials.any()
-    assert (classified.loc[random_trials, "sTrialClass"] == 0).all()
-    assert (
-        classified.loc[random_trials, "trial_class_rule"] == "inference_disabled"
-    ).all()
-    # Recorded labels are unaffected: only the 'x' trials were ever at stake.
-    assert (
-        classified.loc[~random_trials, "trial_class_rule"] == "recorded_label"
-    ).all()

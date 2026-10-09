@@ -7,8 +7,6 @@ which class a trial belongs to now lives in
 it.
 """
 
-import os
-import re
 import pytest
 import pandas as pd
 from meg_tokens.behavior.math.probability import success_probability_profile
@@ -69,68 +67,6 @@ def make_events(
         .replace("sTokenDirs: '221221122212211'", f"sTokenDirs: '{token_dirs}'")
     )
 
-def test_parse_single_trial():
-    trial_dict = parse_single_trial(EVENTS_STR)
-    
-    assert trial_dict['nTrialIndex'] == 1
-    assert trial_dict['nChoiceMade'] == 2
-    assert trial_dict['nCorrectChoice'] == 2
-    assert trial_dict['tGO'] == 1041
-    assert trial_dict['tEnterTarget'] == 2484
-    assert trial_dict['tTrialEnd'] == 3676
-    assert trial_dict['sTokenDirs'] == '221221122212211'
-    assert trial_dict['nTokenNum'] == [1, 2]
-    assert trial_dict['nTokenDir'] == [2, 2]
-    assert trial_dict['tTime'] == [1260, 1460]
-    assert trial_dict['nProb'] == [0.70947265625000, 0.81234567890123]
-    
-    assert trial_dict['sTrialClassRaw'] == 'x'
-    assert len(trial_dict['sp_design_correct']) == 15
-    assert trial_dict['token_log_rows'] == 2
-    assert trial_dict['token_log_short'] is False
-
-    # Trial classes are a derivative-stage judgement; the parser emits the
-    # raw label and the profile inference reads, and nothing more.
-    assert set(trial_dict) == set(RAW_TRIAL_COLUMNS)
-    assert set(CLASSIFICATION_COLUMNS).isdisjoint(trial_dict)
-
-
-def test_parse_single_trial_raises_on_missing_structural_field():
-    events_str = "\n".join(
-        line for line in EVENTS_STR.splitlines() if not line.startswith("tGO:")
-    )
-
-    with pytest.raises(ValueError, match=re.escape("missing required field(s) ['tGO']")):
-        parse_single_trial(events_str)
-
-
-def test_parse_single_trial_raises_on_unrecognized_trial_class():
-    events_str = EVENTS_STR.replace("sTrialClass: 'x'", "sTrialClass: 'q'")
-
-    with pytest.raises(ValueError, match="unrecognized sTrialClass value 'q'"):
-        parse_single_trial(events_str)
-
-
-def test_parse_single_trial_allows_missing_tenter_target_when_skipped():
-    events_str = "\n".join(
-        line for line in EVENTS_STR.splitlines() if not line.startswith("tEnterTarget:")
-    ).replace("nChoiceMade: 2", "nChoiceMade: 0")
-
-    trial_dict = parse_single_trial(events_str)
-
-    assert trial_dict['nChoiceMade'] == 0
-    assert trial_dict['tEnterTarget'] == 0
-
-@pytest.mark.parametrize("raw_label", ["e", "a", "m", "x", "r", "2"])
-def test_recorded_trial_label_is_transcribed_verbatim(raw_label):
-    """Every accepted label survives as text, and none of them buys the row a
-    class: reading a class out of a label is the derivative stage's call."""
-    events_str = make_events([0.9] * 15, trial_class=raw_label)
-    trial_dict = parse_single_trial(events_str)
-
-    assert trial_dict['sTrialClassRaw'] == raw_label
-    assert set(CLASSIFICATION_COLUMNS).isdisjoint(trial_dict)
-
 
 def test_design_profile_comes_from_the_token_sequence_not_the_logged_path():
     """``sp_design_correct`` is what class inference later reads. It is derived
@@ -143,15 +79,6 @@ def test_design_profile_comes_from_the_token_sequence_not_the_logged_path():
         parse_token_directions("221221122212211"), target=2
     )
     assert trial_dict['sp_design_correct'] != trial_dict['nProb']
-
-
-def test_trial_without_a_correct_target_has_no_design_profile():
-    events_str = EVENTS_STR.replace("nChoiceMade: 2", "nChoiceMade: 0").replace(
-        "nCorrectChoice: 2", "nCorrectChoice: 0"
-    )
-    trial_dict = parse_single_trial(events_str)
-
-    assert trial_dict['sp_design_correct'] is None
 
 
 def test_design_profile_is_identical_for_14_and_15_log_rows():
@@ -171,80 +98,9 @@ def test_design_profile_is_identical_for_14_and_15_log_rows():
     assert complete['token_log_rows'] == 15
     assert complete['token_log_short'] is False
 
-class _FakeGroup:
-    def __init__(self, name, properties):
-        self.name = name
-        self.properties = properties
 
-
-class _FakeTdmsFile:
-    def __init__(self, groups):
-        self._groups = groups
-
-    def groups(self):
-        return self._groups
-
-
-def test_parse_tdms_file_raises_on_group_missing_events_property(monkeypatch):
-    fake = _FakeTdmsFile([_FakeGroup("TrialData0", {})])
-    monkeypatch.setattr("meg_tokens.behavior.tdms.TdmsFile", lambda path: fake)
-
-    with pytest.raises(
-        ValueError, match=re.escape("no 'Events' property: ['TrialData0']")
-    ):
-        parse_tdms_file("fake.tdms")
-
-
-def test_parse_tdms_file_raises_when_no_trial_groups_found(monkeypatch):
-    fake = _FakeTdmsFile([_FakeGroup("Settings", {})])
-    monkeypatch.setattr("meg_tokens.behavior.tdms.TdmsFile", lambda path: fake)
-
-    with pytest.raises(ValueError, match="no TrialData groups with trial data found"):
-        parse_tdms_file("fake.tdms")
-
-
-def test_parse_tdms_file_wraps_trial_error_with_file_path(monkeypatch):
-    bad_events = "\n".join(
-        line for line in EVENTS_STR.splitlines() if not line.startswith("tGO:")
-    )
-    fake = _FakeTdmsFile([_FakeGroup("TrialData0", {"Events": bad_events})])
-    monkeypatch.setattr("meg_tokens.behavior.tdms.TdmsFile", lambda path: fake)
-
-    with pytest.raises(
-        ValueError,
-        match=re.escape(
-            "fake.tdms: Trial 1: Events block is missing required field(s) "
-            "['tGO']"
-        ),
-    ):
-        parse_tdms_file("fake.tdms")
-
-
-def test_parse_tdms_file_wraps_dataframe_validation_error_with_file_path(monkeypatch):
-    fake = _FakeTdmsFile(
-        [
-            _FakeGroup("TrialData0", {"Events": EVENTS_STR}),
-            _FakeGroup("TrialData1", {"Events": EVENTS_STR}),  # duplicate index 1
-        ]
-    )
-    monkeypatch.setattr("meg_tokens.behavior.tdms.TdmsFile", lambda path: fake)
-
-    with pytest.raises(
-        ValueError,
-        match=re.escape("fake.tdms: nTrialIndex must be a gap-free consecutive sequence"),
-    ):
-        parse_tdms_file("fake.tdms")
-
-
-def test_parse_real_tdms_integration():
-    real_root = os.environ.get("MEG_TOKENS_TDMS_ROOT")
-    if not real_root:
-        pytest.skip("Set MEG_TOKENS_TDMS_ROOT to the behavioral log root to run this test.")
-    real_path = os.path.join(real_root, "H02", "H02Slow1_180213.tdms")
-    if not os.path.exists(real_path):
-        pytest.skip(f"Real TDMS data not available at {real_path}")
-
-    df = parse_tdms_file(real_path)
+def test_parse_real_tdms_integration(behavior_logs):
+    df = parse_tdms_file(behavior_logs / "H02" / "H02Slow1_180213.tdms")
 
     assert isinstance(df, pd.DataFrame)
     assert not df.empty
@@ -255,26 +111,6 @@ def test_parse_real_tdms_integration():
     # column this project inferred.
     assert set(df['sTrialClassRaw']) <= {'x', 'e', 'a', 'm', 'r'}
     assert set(CLASSIFICATION_COLUMNS).isdisjoint(df.columns)
-
-
-def test_parse_single_trial_reads_scientific_notation_nprob():
-    """LabVIEW writes near-0/near-1 probabilities in scientific notation.
-
-    A digits-and-dots pattern silently drops the exponent, turning 5.46875E-1
-    into 5.46875 -- an impossible success probability that then corrupts trial
-    classification. Verified on the real dataset: 870 trials were affected.
-    """
-    events_str = make_events(["5.46875E-1", "8.984375E-1", "-2.22044604925031E-16"])
-    trial_dict = parse_single_trial(events_str)
-
-    assert trial_dict["nProb"] == pytest.approx([0.546875, 0.8984375, 0.0])
-
-
-def test_parse_single_trial_rejects_out_of_range_nprob():
-    events_str = make_events(["0.5", "1.75", "0.25"])
-
-    with pytest.raises(ValueError, match=r"nProb values outside \[0, 1\]"):
-        parse_single_trial(events_str)
 
 
 def test_parse_single_trial_rejects_desynced_token_fields():

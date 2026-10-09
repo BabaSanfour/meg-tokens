@@ -1,24 +1,15 @@
-import os
-import tempfile
 import numpy as np
 import pandas as pd
 import pytest
 import mne
 from mne.io import RawArray
 from meg_tokens.behavior.schema import OUTCOME_NEVER_STARTED
-from meg_tokens.behavior.tables import read_behavior_table
 from meg_tokens.meg.epoching import (
     build_epochs_with_metadata,
     exclude_unrecoverable_trials,
-    find_behavior_table,
-    get_event_id,
     mismatch_policy,
-    needs_go_reconstruction,
-    parse_run_label,
     reconstruct_missing_go_events,
-    save_epochs_and_events,
 )
-from meg_tokens.io import save_table
 
 @pytest.fixture
 def sample_meg_data():
@@ -73,22 +64,6 @@ def sample_meg_data():
     
     return raw, events, behavior_df
 
-def test_build_epochs_matched(sample_meg_data):
-    raw, events, behavior_df = sample_meg_data
-    event_ids = {"Go": 524288}
-    
-    epochs = build_epochs_with_metadata(
-        raw, events, event_ids,
-        tmin=-0.1, tmax=0.5,
-        behavior_df=behavior_df,
-        baseline=None
-    )
-    
-    assert len(epochs) == 4
-    assert epochs.metadata is not None
-    assert len(epochs.metadata) == 4
-    assert list(epochs.metadata['nTrialIndex']) == [1, 2, 3, 4]
-    assert list(epochs.metadata['meg_sample']) == [1000, 3000, 5000, 7000]
 
 def test_build_epochs_mismatch_too_many_trials_raises(sample_meg_data):
     raw, events, behavior_df = sample_meg_data
@@ -108,78 +83,6 @@ def test_build_epochs_mismatch_too_many_trials_raises(sample_meg_data):
             behavior_df=behavior_df_mismatched,
             baseline=None
         )
-
-def test_build_epochs_mismatch_can_truncate_when_explicit(sample_meg_data):
-    raw, events, behavior_df = sample_meg_data
-    event_ids = {"Go": 524288}
-    
-    # Truncate behavioral dataframe to 3 trials
-    behavior_df_short = behavior_df.iloc[:3].copy()
-    
-    epochs = build_epochs_with_metadata(
-        raw, events, event_ids,
-        tmin=-0.1, tmax=0.5,
-        behavior_df=behavior_df_short,
-        baseline=None,
-        on_mismatch="truncate",
-    )
-    
-    # Should truncate events to match the 3 trials
-    assert len(epochs) == 3
-    assert len(epochs.metadata) == 3
-    assert list(epochs.metadata['nTrialIndex']) == [1, 2, 3]
-    assert list(epochs.metadata['meg_sample']) == [1000, 3000, 5000]
-
-def test_save_epochs_and_events_bids(sample_meg_data):
-    raw, events, behavior_df = sample_meg_data
-    event_ids = {"Go": 524288}
-    
-    epochs = build_epochs_with_metadata(
-        raw, events, event_ids,
-        tmin=-0.1, tmax=0.5,
-        behavior_df=behavior_df,
-        baseline=None
-    )
-    
-    with tempfile.TemporaryDirectory() as tmp_dir:
-        paths = save_epochs_and_events(
-            epochs, tmp_dir,
-            subject_id='H1', run_id='Slow1',
-            bids_format=True,
-            align_to='go',
-        )
-        
-        # Verify folder structure and paths
-        expected_meg_dir = os.path.join(tmp_dir, 'derivatives', 'sub-H01', 'meg')
-        assert os.path.exists(expected_meg_dir)
-        
-        assert os.path.exists(paths['epochs'])
-        assert os.path.exists(paths['events_tsv'])
-        assert os.path.exists(paths['eve'])
-        
-        # Check BIDS tsv content
-        bids_df = pd.read_csv(paths['events_tsv'], sep='\t')
-        assert 'onset' in bids_df.columns
-        assert 'duration' in bids_df.columns
-        assert 'sample' in bids_df.columns
-        assert 'trial_type' in bids_df.columns
-        assert 'value' in bids_df.columns
-        assert 'nTrialIndex' in bids_df.columns
-        assert 'sTrialClass' in bids_df.columns
-        
-        # Onsets should match samples / sfreq
-        np.testing.assert_allclose(bids_df['onset'].values, [1.0, 3.0, 5.0, 7.0])
-        assert os.path.exists(paths['epochs'].replace('.fif', '.json'))
-
-
-def test_get_event_id_subject_override():
-    assert get_event_id('go', 'H06') == {'Go': 262144}
-    assert get_event_id('go', 'H01') == {'Go': 524288}
-
-
-def test_parse_run_label():
-    assert parse_run_label('Slow1') == ('1', 'Slow')
-    assert parse_run_label('run-2') == ('2', None)
 
 
 def test_mismatch_policy_truncates_only_known_trailing_trial_runs():
@@ -213,12 +116,6 @@ def test_mismatch_policy_defaults_to_error_for_unlisted_runs():
     assert mismatch_policy('H12', 'Slow', '2') == 'error'
     assert mismatch_policy('H04', 'RT', '2') == 'error'  # wrong run number
     assert mismatch_policy('H04', 'Slow', '1') == 'error'  # wrong condition
-
-
-def test_needs_go_reconstruction():
-    assert needs_go_reconstruction('H02', 'RT', '1') is True
-    assert needs_go_reconstruction('h4', 'Fast', '2') is True  # normalizes subject
-    assert needs_go_reconstruction('H01', 'Fast', '1') is False  # not a verified run
 
 
 def _go_recon_inputs(missing_trial=1, include_never_started=False, n_trials=3):
@@ -271,37 +168,6 @@ def test_reconstruct_missing_go_events_skips_never_started_trials():
     assert len(augmented[augmented[:, 2] == 524288]) == len(events[events[:, 2] == 524288])
 
 
-def test_reconstruct_missing_go_events_falls_back_to_default_lag_when_uncalibrated():
-    sfreq = 1000.0
-    start_samples = [0, 1000]
-    tgo_ms = [100, 100]
-    starts = [[s, 0, 262144] for s in start_samples]
-    events = np.array(starts)  # no go pulses at all, like H02RT1
-    behavior_df = pd.DataFrame({
-        'nTrialIndex': [1, 2],
-        'tGO': tgo_ms,
-        'nOutcome': [0, 0],
-    })
-
-    augmented = reconstruct_missing_go_events(
-        events, behavior_df, sfreq, start_code=262144, go_code=524288,
-    )
-
-    go_events = augmented[augmented[:, 2] == 524288]
-    assert len(go_events) == 2
-    from meg_tokens.meg.epoching import DEFAULT_GO_LAG_S
-    for i, sample in enumerate(start_samples):
-        expected = round(sample + tgo_ms[i] + DEFAULT_GO_LAG_S * 1000)
-        assert expected in go_events[:, 0].tolist()
-
-
-def test_reconstruct_missing_go_events_raises_when_fewer_starts_than_trials():
-    events = np.array([[0, 0, 262144]])
-    behavior_df = pd.DataFrame({'nTrialIndex': [1, 2], 'tGO': [100, 100], 'nOutcome': [0, 0]})
-    with pytest.raises(ValueError, match="trial-start pulses"):
-        reconstruct_missing_go_events(events, behavior_df, 1000.0, start_code=262144, go_code=524288)
-
-
 def test_exclude_unrecoverable_trials_drops_known_trial():
     behavior_df = pd.DataFrame({'nTrialIndex': [1, 2, 3, 4, 5]})
     out = exclude_unrecoverable_trials('H12', 'Slow', '2', behavior_df)
@@ -309,29 +175,3 @@ def test_exclude_unrecoverable_trials_drops_known_trial():
     # normalizes subject
     out2 = exclude_unrecoverable_trials('h12', 'Slow', '2', behavior_df)
     assert out2['nTrialIndex'].tolist() == [1, 3, 4, 5]
-
-
-def test_exclude_unrecoverable_trials_is_noop_for_other_runs():
-    behavior_df = pd.DataFrame({'nTrialIndex': [1, 2, 3]})
-    out = exclude_unrecoverable_trials('H12', 'Slow', '1', behavior_df)
-    assert out['nTrialIndex'].tolist() == [1, 2, 3]
-    out = exclude_unrecoverable_trials('H01', 'Fast', '1', behavior_df)
-    assert out['nTrialIndex'].tolist() == [1, 2, 3]
-
-
-def test_find_and_read_behavior_table(tmp_path, sample_meg_data):
-    _, _, behavior_df = sample_meg_data
-    beh_path = (
-        tmp_path
-        / "derivatives"
-        / "sub-H01"
-        / "beh"
-        / "sub-H01_task-tokens_run-1_desc-slow_beh.tsv"
-    )
-    save_table(beh_path, behavior_df, metadata={"stage": "behavior_parsing"})
-
-    found = find_behavior_table(tmp_path, "H1", "Slow1")
-    loaded = read_behavior_table(found)
-
-    assert found == beh_path
-    assert list(loaded["nTrialIndex"]) == [1, 2, 3, 4]

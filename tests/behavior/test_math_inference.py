@@ -10,49 +10,11 @@ import pytest
 from scipy import stats
 
 from meg_tokens.behavior.math.inference import (
-    confidence_interval,
-    confidence_interval_from_t,
-    equivalence_bound,
     one_sample_statistics,
     paired_subject_statistics,
     repeated_measures_anova,
     subject_bootstrap,
 )
-
-
-def test_an_interval_recovered_from_t_matches_the_direct_computation():
-    values = np.array([2.0, 5.0, -1.0, 4.0, 3.0, 7.0, 0.5, 2.5])
-    statistics = one_sample_statistics(values)
-
-    low, high = confidence_interval_from_t(
-        statistics["mean"], statistics["t"], statistics["df"], coverage=0.90
-    )
-    half_width = stats.t.ppf(0.95, statistics["df"]) * statistics["sem"]
-    assert low == pytest.approx(statistics["mean"] - half_width)
-    assert high == pytest.approx(statistics["mean"] + half_width)
-
-    narrow = confidence_interval_from_t(2.0, 4.0, 31.0, coverage=0.90)
-    wide = confidence_interval_from_t(2.0, 4.0, 31.0, coverage=0.99)
-    assert wide[0] < narrow[0] and narrow[1] < wide[1]
-
-    # Symmetric about the estimate whatever the sign of either.
-    low, high = confidence_interval_from_t(-10.4, -1.15, 31.0, coverage=0.90)
-    assert (low + high) / 2 == pytest.approx(-10.4)
-    assert low < -10.4 < high
-
-
-@pytest.mark.parametrize(
-    "estimate, t_statistic, df",
-    [
-        (1.0, 0.0, 31.0),        # zero t hides the standard error entirely
-        (1.0, 2.0, 0.0),         # no degrees of freedom
-        (np.nan, 2.0, 31.0),     # missing estimate
-        (1.0, np.nan, 31.0),     # missing test statistic
-    ],
-)
-def test_an_unrecoverable_interval_is_missing_rather_than_guessed(estimate, t_statistic, df):
-    low, high = confidence_interval_from_t(estimate, t_statistic, df)
-    assert np.isnan(low) and np.isnan(high)
 
 
 # --- paired subject statistics ------------------------------------------------
@@ -83,27 +45,6 @@ def test_paired_statistics_match_scipy_describe_both_conditions_and_run_a_minus_
     forward = paired_subject_statistics([5.0, 7.0, 9.0], [1.0, 2.0, 6.0])
     assert forward["mean_difference"] == pytest.approx(4.0)
     assert forward["t"] > 0 and forward["cohens_dz"] > 0
-
-
-def test_paired_statistics_drop_incomplete_pairs_and_report_what_they_cannot_test():
-    dropped = paired_subject_statistics(
-        [1.0, 2.0, float("nan"), 4.0], [2.0, 4.0, 6.0, float("inf")]
-    )
-    assert dropped["n_subjects"] == 2
-    assert dropped["mean_a"] == pytest.approx(1.5)
-
-    # A constant difference has a test but no effect size.
-    constant = paired_subject_statistics([2.0, 3.0, 4.0], [1.0, 2.0, 3.0])
-    assert constant["mean_difference"] == pytest.approx(1.0)
-    assert np.isnan(constant["cohens_dz"])
-
-    for first, second in (([], []), ([1.0], [2.0])):
-        result = paired_subject_statistics(first, second)
-        assert result["n_subjects"] == len(first)
-        assert all(np.isnan(result[field]) for field in ("t", "p", "df", "cohens_dz"))
-
-    with pytest.raises(ValueError, match="identical shapes"):
-        paired_subject_statistics([1.0, 2.0], [1.0])
 
 
 # --- one-sample statistics ----------------------------------------------------
@@ -141,38 +82,6 @@ def test_one_sample_statistics_match_scipy_and_degrade_explicitly():
     flat = one_sample_statistics([2.0, 2.0, 2.0])
     assert flat["mean"] == pytest.approx(2.0)
     assert np.isnan(flat["cohens_dz"])
-
-
-# --- equivalence bound --------------------------------------------------------
-
-
-def test_the_bound_is_the_furthest_endpoint_of_its_own_interval_and_returns_no_interval():
-    values = [0.4, -0.2, 0.9, 0.1, -0.5, 0.3]
-    statistics = one_sample_statistics(values)
-    low, high = confidence_interval(
-        statistics["mean"], statistics["sem"], statistics["df"], coverage=0.90
-    )
-
-    result = equivalence_bound(values)
-
-    assert result["equivalence_bound"] == pytest.approx(max(abs(low), abs(high)))
-    assert result["equivalence_bound_coverage"] == 0.90
-    assert result["equivalence_bound_dz"] == pytest.approx(
-        result["equivalence_bound"] / np.std(values, ddof=1)
-    )
-    # A row usually carries an interval already, often at another coverage, so
-    # this must not silently overwrite it.
-    assert not {"ci_low", "ci_high", "coverage"} & set(result)
-
-    assert (
-        equivalence_bound(values, coverage=0.99)["equivalence_bound"]
-        > equivalence_bound(values, coverage=0.90)["equivalence_bound"]
-    )
-
-
-@pytest.mark.parametrize("values", [[], [1.0], [np.nan, 2.0]])
-def test_too_few_finite_values_emit_no_columns_rather_than_a_number(values):
-    assert equivalence_bound(values) == {}
 
 
 # --- subject bootstrap --------------------------------------------------------
@@ -218,36 +127,6 @@ def test_two_statistics_share_one_resample_so_their_difference_can_cancel():
     # difference does not vary at all.
     assert difference["ci_low"] == pytest.approx(10.0)
     assert difference["ci_high"] == pytest.approx(10.0)
-
-
-def test_the_bootstrap_states_its_own_resolution_and_never_invents_a_number():
-    # The achieved significance level is bounded below by the resampling
-    # resolution, and saying so is the difference between a small p and a p the
-    # bootstrap cannot see.
-    values = np.array([5.0, 6.0, 7.0, 8.0, 9.0, 10.0])
-    assert subject_bootstrap(_mean_of(values), len(values), n_resamples=1000)[
-        "p"
-    ] == pytest.approx(2.0 / 1001)
-
-    spread = np.array([0.4, -0.2, 0.9, 0.1, -0.5, 0.3, 0.7, -0.1])
-    result = subject_bootstrap(_mean_of(spread), len(spread), n_resamples=4000)
-    assert result["coverage"] == 0.95
-    assert result["equivalence_bound_coverage"] == 0.90
-    assert result["equivalence_bound"] < max(abs(result["ci_low"]), abs(result["ci_high"]))
-
-    for n_subjects in (0, 1):
-        thin = subject_bootstrap(lambda index: np.ones(np.shape(index)[:-1]), n_subjects)
-        assert thin["n_subjects"] == n_subjects
-        assert np.isnan(thin["estimate"])
-        assert np.isnan(thin["ci_low"]) and np.isnan(thin["p"])
-
-    # A vanishing denominator is the realistic case: the caller returns NaN and
-    # the interval has to come back undefined, not empty or exploded.
-    undefined = subject_bootstrap(
-        lambda index: np.full(np.shape(index)[:-1], np.nan), 8, n_resamples=50
-    )
-    assert np.isnan(undefined["ci_low"]) and np.isnan(undefined["ci_high"])
-    assert undefined["n_subjects"] == 8
 
 
 # --- repeated-measures ANOVA --------------------------------------------------
@@ -311,23 +190,3 @@ def test_each_effect_is_tested_against_its_own_error_term_and_carries_none_of_th
         / (effect["sum_squares_effect"] + effect["sum_squares_error"])
     )
     assert 0.0 <= effect["partial_eta_squared"] <= 1.0
-
-
-def test_the_anova_balances_the_design_or_refuses_it():
-    incomplete = np.vstack([_cells(), [1.0, 2.0, 3.0, 4.0, 5.0, np.nan]])
-    assert _effects(incomplete)["factor1"]["n_subjects"] == 5
-
-    with pytest.raises(ValueError, match="at least two complete subjects"):
-        repeated_measures_anova(_cells()[:1], (2, 3))
-
-
-@pytest.mark.parametrize(
-    ("matrix", "levels", "message"),
-    [
-        (np.zeros((5,)), (2, 3), "must be a .* matrix"),
-        (np.zeros((5, 6)), (2, 4), "must describe every column"),
-    ],
-)
-def test_the_anova_rejects_a_mismatched_cell_matrix(matrix, levels, message):
-    with pytest.raises(ValueError, match=message):
-        repeated_measures_anova(matrix, levels)

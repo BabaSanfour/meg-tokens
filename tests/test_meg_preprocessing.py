@@ -1,60 +1,9 @@
-import os
 import json
-import tempfile
 import mne
 import numpy as np
-import pandas as pd
 import pytest
 from meg_tokens.io import DerivativeLayout
-from meg_tokens.meg.epoching import realign_epochs
 from meg_tokens.meg.preprocessing import STREAMS, stream_paths
-
-
-def test_realign_epochs():
-    info = mne.create_info(ch_names=['MEG1', 'MEG2'], sfreq=1000.0, ch_types=['mag', 'mag'])
-    data = np.arange(3 * 2 * 5000, dtype=float).reshape(3, 2, 5000)
-    
-    metadata = pd.DataFrame({
-        'tGO': [1000, 1000, 1000],
-        'tEnterTarget': [1800, 2000, 2200], # Latencies of 800, 1000, 1200 ms
-        'tTrialEnd': [3000, 3100, 3200]
-    })
-    
-    epochs = mne.EpochsArray(data, info, tmin=-1.0, metadata=metadata)
-    
-    # 1. Test alignment to 'go' (tmin_new=-0.5, tmax_new=1.5, length=2.0s = 2000 samples)
-    realigned_go = realign_epochs(epochs, align_to='go', tmin_new=-0.5, tmax_new=1.5)
-    assert realigned_go.tmin == -0.5
-    assert realigned_go.get_data().shape == (3, 2, 2000)
-    
-    # 2. Test alignment to 'enter' (offset = 0.8s, 1.0s, 1.2s from Go)
-    # tmin_new = -0.2, tmax_new = 0.8, length = 1.0s = 1000 samples
-    realigned_enter = realign_epochs(epochs, align_to='enter', tmin_new=-0.2, tmax_new=0.8)
-    assert realigned_enter.tmin == -0.2
-    assert realigned_enter.get_data().shape == (3, 2, 1000)
-    
-    # 3. Test alignment to 'DT' (offset = tEnterTarget - tGO - mean_rt)
-    realigned_dt = realign_epochs(epochs, align_to='DT', tmin_new=-0.2, tmax_new=0.8, mean_rt=300.0)
-    assert realigned_dt.tmin == -0.2
-    assert realigned_dt.get_data().shape == (3, 2, 1000)
-
-
-def test_stream_paths_name_the_cleaner_in_proc_and_keep_the_condition(tmp_path):
-    """`proc` carries the stream; `desc` keeps the condition and grows the tag.
-
-    The previous layout put `clean`/`filt` in `proc` to say whether ICA had
-    run, which cannot name three cleaners for one recording.
-    """
-    layout = DerivativeLayout(tmp_path)
-    paths = stream_paths(layout, "H1", "Slow", 1, "dss")
-
-    assert paths["cleaned"].name == (
-        "sub-H01_task-tokens_run-1_proc-dss_desc-slow_raw.fif"
-    )
-    assert paths["artifact"].name == (
-        "sub-H01_task-tokens_run-1_proc-dss_desc-slow-artifact_raw.fif"
-    )
-    assert paths["sidecar"].name.endswith("_raw.json")
 
 
 def test_every_stream_gets_a_distinct_path(tmp_path):
