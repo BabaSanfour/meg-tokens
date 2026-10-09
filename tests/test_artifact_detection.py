@@ -7,7 +7,7 @@ import pytest
 
 mne = pytest.importorskip("mne")
 
-from meg_tokens.meg.artifact_detection import enrichment_db, robust_scale
+from scripts.qc.artifact_detection import enrichment_db, robust_scale
 
 SFREQ = 600.0
 

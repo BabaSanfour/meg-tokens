@@ -21,7 +21,6 @@ from mne.preprocessing import (
 from scipy.signal import find_peaks
 
 from meg_tokens.io import sidecar_path
-from meg_tokens.meg.artifact_detection import robust_scale
 
 LINE_FREQ = 60.0
 LINE_HARMONICS = 2
@@ -35,7 +34,8 @@ HEOG_CHANNEL = "EEG058"
 ECG_CHANNEL = "EEG059"
 REFERENCE_CHANNELS = (VEOG_CHANNEL, HEOG_CHANNEL, ECG_CHANNEL)
 
-# 20x and 0.002x the cohort noise floor, 6.243e-14 T (``robust_scale``).
+# 20x and 0.002x the cohort noise floor, 6.243e-14 T
+# (``robust_scale`` in ``scripts/qc/artifact_detection.py``).
 AMPLITUDE_PEAK_T = 1.2485926067065662e-12
 AMPLITUDE_FLAT_T = 1.2485926067065662e-16
 MUSCLE_Z = 7.0

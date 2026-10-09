@@ -28,11 +28,11 @@ import mne
 import numpy as np
 from mne.time_frequency import psd_array_welch
 
+from meg_tokens.meg.preprocessing import MUSCLE_BAND
+
 CHUNK_SECONDS = 30.0
-MUSCLE_BAND = (110.0, 140.0)
 
 __all__ = [
-    "MUSCLE_BAND",
     "band_power",
     "enrichment_db",
     "matched_clean_spans",
