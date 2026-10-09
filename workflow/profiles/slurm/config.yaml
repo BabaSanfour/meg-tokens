@@ -2,17 +2,13 @@ jobs: 64
 latency-wait: 120
 printshellcmds: true
 rerun-incomplete: true
-cluster: >-
-  sbatch
-  --parsable
-  --account={resources.slurm_account}
-  --cpus-per-task={threads}
-  --mem={resources.mem_mb}M
-  --time={resources.runtime}
+# Snakemake >= 8 submits through snakemake-executor-plugin-slurm: threads,
+# mem_mb and runtime become --cpus-per-task, --mem and --time on their own.
+executor: slurm
 default-resources:
-  - mem_mb=8000
-  - runtime=240
-  - slurm_account=YOUR_ACCOUNT
+  slurm_account: "YOUR_ACCOUNT"
+  mem_mb: 8000
+  runtime: 240
 set-resources:
   preprocess:
     mem_mb: 32000

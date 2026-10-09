@@ -2,16 +2,12 @@
 
 from __future__ import annotations
 
+import tomllib
 from dataclasses import dataclass, fields
 from pathlib import Path
 from typing import Any, Mapping, Optional
 
 from .entities import normalize_subject_id
-
-try:
-    import tomllib
-except ModuleNotFoundError:  # pragma: no cover - Python 3.10 compatibility
-    import tomli as tomllib
 
 
 def _optional_path(value: object, *, base_dir: Path) -> Optional[Path]:

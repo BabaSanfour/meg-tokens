@@ -80,10 +80,14 @@ Checkout `~/meg-tokens`, data root `/scratch/hamza97/meg-tokens`. The venv is a
 deleted `/project/.../meg-tokens-venv`:
 
 ```bash
-module load StdEnv/2023 python/3.10.13
+module load StdEnv/2023 python/3.13
 python -m venv .venv
 ./.venv/bin/pip install -e '.[modeling,dev]'
 ```
+
+Python 3.11 is the floor (`mne-denoise` 0.0.3 requires it) and 3.13 is what
+the desktop runs; add `workflow` to the extras to get Snakemake 9 and its Slurm
+executor plugin.
 
 Two traps worth stating plainly:
 

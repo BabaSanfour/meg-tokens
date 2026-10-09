@@ -7,7 +7,7 @@ name = "meg-tokens"
 version = "0.2.0"
 description = "Library for analyzing brain dynamics and behavior during the Tokens decision-making task."
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 authors = [
     { name = "Karim" }
 ]
@@ -23,9 +23,9 @@ dependencies = [
     "pandas>=1.3.0",
     "scipy>=1.7.0",
     "statsmodels>=0.14.6",
-    "mne>=1.0.0",
+    "mne>=1.13.2",
     "mne-bids>=0.12.0",
-    "mne-denoise @ git+https://github.com/mne-tools/mne-denoise@main",
+    "mne-denoise[mne]==0.0.3",
     "nibabel>=3.2.0",
     "matplotlib>=3.4.0",
     "seaborn>=0.11.0",
@@ -33,8 +33,7 @@ dependencies = [
     "scikit-learn>=1.0.0",
     "mne-connectivity>=0.5.0",
     "specparam>=2.0.0rc0",
-    "xarray>=2023.1.0",
-    "tomli>=2.0.0; python_version<'3.11'"
+    "xarray>=2023.1.0"
 ]
 
 [project.scripts]
@@ -48,8 +47,8 @@ dev = [
     "ipykernel>=6.0.0"
 ]
 workflow = [
-    "snakemake>=7.32.0,<8.0.0",
-    "pulp>=2.7.0,<2.8.0",
+    "snakemake>=9.27.0",
+    "snakemake-executor-plugin-slurm>=2.8.0",
 ]
 modeling = [
     "pyddm>=0.9.0",
@@ -62,3 +61,11 @@ include = ["meg_tokens*"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 norecursedirs = ["archive", ".venv"]
+# npTDMS 1.12.1 (latest) still sets `buffer.dtype = ...` in base_segment.py,
+# which NumPy 2.5 deprecates: its fix for this (#366) missed `fromfile()`, now
+# https://github.com/adamreeve/npTDMS/issues/371. This silences that one
+# message from that one module and nothing else -- drop it once a release
+# closes #371. Our own warnings stay visible.
+filterwarnings = [
+    "ignore:Setting the dtype on a NumPy array has been deprecated:DeprecationWarning:nptdms.base_segment",
+]
