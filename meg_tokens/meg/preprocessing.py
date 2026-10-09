@@ -1,22 +1,8 @@
-"""Preprocessing: one shared trunk, three cleaners, three outputs per recording.
-
-The specification is ``docs/meg.md``. The shape is::
+"""Preprocessing: one shared trunk, then DSS and ICA, each persisted with the
+artifact it removed. Specification and rationale: ``docs/meg.md``.
 
     read + compensate - ZapLine - bandpass - bad channels - bad segments (1)
-                                                                  |
-                              +---------------+-----------------+-+
-                            DSS             ICA               SSP
-                              +---------------+-----------------+-+
-                                                                  |
-                                  bad segments (2) - resample - persist
-
-The trunk is built once and shared, so the streams differ only in the cleaner.
-Computing bad channels or segments per stream would make them differ in two
-ways at once and the comparison would not mean anything.
-
-Each stream returns its cleaned recording *and* the artifact it removed, so
-the question "what did each method decide was artifact?" can be asked directly
-rather than inferred from three cleaned outputs.
+        -> DSS | ICA -> bad segments (2) - resample - persist
 """
 
 from __future__ import annotations
@@ -30,8 +16,6 @@ from mne.preprocessing import (
     ICA,
     annotate_amplitude,
     annotate_muscle_zscore,
-    compute_proj_ecg,
-    compute_proj_eog,
     find_bad_channels_lof,
     find_ecg_events,
 )
@@ -52,47 +36,24 @@ HEOG_CHANNEL = "EEG058"
 ECG_CHANNEL = "EEG059"
 REFERENCE_CHANNELS = (VEOG_CHANNEL, HEOG_CHANNEL, ECG_CHANNEL)
 
-# 20x and 0.002x a pooled cohort noise floor of 6.242963033532831e-14 T,
-# measured with meg_tokens.meg.artifact_detection.robust_scale.
-B4_PEAK_T = 1.2485926067065662e-12
-B4_FLAT_T = 1.2485926067065662e-16
+# 20x and 0.002x the cohort noise floor, 6.243e-14 T (``robust_scale``).
+AMPLITUDE_PEAK_T = 1.2485926067065662e-12
+AMPLITUDE_FLAT_T = 1.2485926067065662e-16
 MUSCLE_Z = 7.0
 
-# ``find_eog_events`` sets its threshold from the segment's extremes, so a few
-# large excursions raise it until ordinary blinks fall beneath: 59 blinks/min
-# over 60 s of H01 against 1.5/min over the same recording's full 315 s, where
-# the cohort median is 16.9/min. This rule is stable in length.
+# Ocular events: band-limited excursions past a multiple of the channel's MAD.
 OCULAR_BAND = (0.5, 7.0)
 OCULAR_SCALE_MULTIPLE = 3.0
 OCULAR_MIN_SEPARATION = 0.4
 
-# Windows for the event-locked DSS biases.
+# DSS: event-locked windows, the muscle band, and the eigenvalue truncation --
+# the one selection setting that bounds how many dimensions a stage removes.
 QRS_WINDOW = (-0.1, 0.2)
 BLINK_WINDOW = (-0.2, 0.5)
 MUSCLE_BAND = (110.0, 140.0)
-
-# How many dimensions a DSS stage is allowed to take out. ``n_components``
-# truncates the eigenvalue spectrum *before* selection sees it
-# (``eigenvalues_biased[:n_components]``), so it decides which components look
-# like outliers rather than only capping the count -- and it is the only one of
-# these that bounds removal at all. On H01's cardiac stage, 40 selects 10
-# components at -0.15 dB alpha and ``None`` selects 263 at -10.76 dB.
-#
-# ``DSS_MAX_PROP_REMOVE`` and ``DSS_MIN_SELECT`` do nothing here. Both are
-# applied only in ``DSS._process_segment``, which runs when ``adaptive=True``;
-# the non-adaptive path sets ``n_selected_`` straight from ``auto_select()``
-# and consults neither. Measured: a cap of 3 of 60 channels leaves 30
-# components selected. They are passed anyway because they are the library's
-# API and would take effect in adaptive mode, but nothing here is protected by
-# them, and a fix upstream would change results silently -- which is what
-# ``test_dss_selection_caps_are_inert_outside_adaptive_mode`` is for.
 DSS_N_COMPONENTS = 40
-DSS_SELECTION_THRESHOLD = 3.0
-DSS_KNEE_MIN_RATIO = 3.0
-DSS_MIN_SELECT = 0
-DSS_MAX_PROP_REMOVE = 0.3
 
-STREAMS = ("dss", "ica", "ssp")
+STREAMS = ("dss", "ica")
 
 __all__ = [
     "STREAMS",
@@ -102,7 +63,6 @@ __all__ = [
     "build_trunk",
     "clean_dss",
     "clean_ica",
-    "clean_ssp",
     "finish",
     "dss_subtract",
     "ocular_events",
@@ -267,7 +227,7 @@ def build_trunk(raw: mne.io.BaseRaw, source_grade: int) -> tuple[mne.io.BaseRaw,
     )
 
     amplitude, amplitude_bads = annotate_amplitude(
-        raw, peak={"mag": B4_PEAK_T}, flat={"mag": B4_FLAT_T},
+        raw, peak={"mag": AMPLITUDE_PEAK_T}, flat={"mag": AMPLITUDE_FLAT_T},
         bad_percent=5, min_duration=0.005, picks=picks, verbose=False,
     )
     muscle, _ = annotate_muscle_zscore(
@@ -299,7 +259,7 @@ def build_trunk(raw: mne.io.BaseRaw, source_grade: int) -> tuple[mne.io.BaseRaw,
 def _artifact_of(before: mne.io.BaseRaw, cleaned: mne.io.BaseRaw) -> mne.io.BaseRaw:
     """What a stream removed, as a recording in its own right.
 
-    Defined as the residual rather than reconstructed per method, so the three
+    Defined as the residual rather than reconstructed per method, so the
     streams' artifact estimates are the same quantity and can be compared.
     """
     artifact = before.copy()
@@ -351,27 +311,18 @@ def dss_subtract(
     bias,
     *,
     n_components: int | None = DSS_N_COMPONENTS,
-    selection_threshold: float = DSS_SELECTION_THRESHOLD,
-    knee_min_ratio: float = DSS_KNEE_MIN_RATIO,
-    min_select: int = DSS_MIN_SELECT,
-    max_prop_remove: float = DSS_MAX_PROP_REMOVE,
+    **selection,
 ) -> tuple[mne.io.BaseRaw, int]:
     """Fit DSS on the magnetometers and subtract the selected components.
 
-    ``component_action="subtract"`` is not the default -- DSS defaults to
-    "extract", which returns only the artifact.
-
-    The selection parameters are arguments rather than literals so a search can
-    vary them against the production path instead of a copy of it. Their
-    defaults are the production values.
+    ``selection`` passes further DSS selection settings through (the parameter
+    search varies them); production passes none and takes the library's.
     """
     from mne_denoise.dss import DSS
 
     model = DSS(
         bias=bias, n_components=n_components, n_select="auto",
-        selection_threshold=selection_threshold, knee_min_ratio=knee_min_ratio,
-        min_select=min_select, component_action="subtract",
-        max_prop_remove=max_prop_remove,
+        component_action="subtract", **selection,
     )
     cleaned = raw.copy()
     picks = mne.pick_types(cleaned.info, meg=True, ref_meg=False, eeg=False, exclude=[])
@@ -426,30 +377,7 @@ def clean_dss(raw: mne.io.BaseRaw, events: dict[str, np.ndarray]) -> StreamResul
     )
 
 
-def clean_ssp(raw: mne.io.BaseRaw, events: dict[str, np.ndarray]) -> StreamResult:
-    """Signal-space projection against the ECG and both EOG channels.
-
-    Non-adaptive by construction: it removes its dimensions whether or not the
-    artifact is present in a given recording. ``compute_proj_eog`` takes one
-    channel, so it is run per EOG channel rather than on the vertical alone.
-    """
-    projectors = compute_proj_ecg(
-        raw, ch_name=ECG_CHANNEL, n_grad=0, n_mag=2, no_proj=True, verbose=False
-    )[0]
-    for channel in (VEOG_CHANNEL, HEOG_CHANNEL):
-        projectors += compute_proj_eog(
-            raw, ch_name=channel, n_grad=0, n_mag=2, no_proj=True, verbose=False
-        )[0]
-
-    cleaned = raw.copy().add_proj(projectors, verbose=False).apply_proj(verbose=False)
-    return StreamResult(
-        stream="ssp", cleaned=cleaned, artifact=_artifact_of(raw, cleaned),
-        n_dimensions_removed=len(projectors),
-        detail={"projectors": [p["desc"] for p in projectors]},
-    )
-
-
-CLEANERS = {"dss": clean_dss, "ica": clean_ica, "ssp": clean_ssp}
+CLEANERS = {"dss": clean_dss, "ica": clean_ica}
 
 
 def finish(raw: mne.io.BaseRaw) -> tuple[mne.io.BaseRaw, dict]:
@@ -490,10 +418,9 @@ def stream_paths(
 ) -> dict[str, Path]:
     """Where one stream's three outputs live, via the layout that owns the contract.
 
-    The ``proc`` entity carries the stream. It previously encoded whether ICA
-    had run (``proc-clean`` / ``proc-filt``), which cannot name three cleaners
-    for one recording. ``desc`` keeps the condition and grows the artifact tag
-    onto it, per the hyphen-joined tag list in ``docs/data_contract.md``.
+    The ``proc`` entity carries the stream. ``desc`` keeps the condition and
+    grows the artifact tag onto it, per the hyphen-joined tag list in
+    ``docs/data_contract.md``.
     """
     cleaned = layout.preprocessed_raw(
         subject=subject, run=str(run), condition=condition, processing=stream

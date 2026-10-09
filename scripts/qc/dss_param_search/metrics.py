@@ -137,7 +137,7 @@ def score_cleaning(
 ) -> dict[str, float]:
     """The full battery for one cleaner, on both scoring windows.
 
-    Applied identically to the DSS chain, to ICA and to SSP. The whole point of
+    Applied identically to the DSS chain and to ICA. The whole point of
     a shared battery is that no arm is scored on terms of its own -- B5's
     verdict rested on absolute limits only the challenger had to clear.
     """

@@ -65,7 +65,7 @@ preprocessing:
   high_pass: 0.5
   low_pass: 150.0
   # Cleaners to write, and which one the downstream stages consume.
-  streams: [dss, ica, ssp]
+  streams: [dss, ica]
   stream: ica
 
 statistics:

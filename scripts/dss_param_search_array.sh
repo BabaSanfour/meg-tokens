@@ -6,7 +6,7 @@
 #       <bids_root> <output_root> [python] [mode]
 #
 # `mode` is `grid` (the DSS parameter grid, the default), `streams` (the
-# three-cleaner comparison) or `both` off one trunk. It is an argument rather
+# DSS-versus-ICA comparison) or `both` off one trunk. It is an argument rather
 # than a default because a run that silently produced the wrong one would look
 # exactly like a run that worked.
 #

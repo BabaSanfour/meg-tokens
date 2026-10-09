@@ -223,8 +223,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     preprocess.add_argument("--condition")
     preprocess.add_argument("--streams", dest="streams", nargs="+",
-                            choices=("dss", "ica", "ssp"),
-                            help="cleaners to run; default all three")
+                            choices=("dss", "ica"),
+                            help="cleaners to run; default both")
 
     epoch = meg_commands.add_parser(
         "epoch",

@@ -1,8 +1,8 @@
-"""The three production cleaners, scored against one trunk on one battery.
+"""The production cleaners, scored against one trunk on one battery.
 
-This is the comparison B5 decided without ever making: the DSS chain, ICA and
-SSP each run on the same shared trunk, from the same detected events, and
-scored by the same battery. No arm is measured on terms of its own.
+This is the comparison B5 decided without ever making: the DSS chain and ICA
+each run on the same shared trunk, from the same detected events, and scored
+by the same battery. No arm is measured on terms of its own.
 
 It answers a different question from the parameter grid beside it. The grid
 asks which settings a DSS stage should use; this asks whether the DSS stream is
@@ -28,7 +28,7 @@ from scripts.qc.dss_param_search.metrics import score_cleaning
 
 #: In the order they are cheapest to run, so a truncated task still carries the
 #: incumbent. ICA is the incumbent and must never be the arm that got dropped.
-STREAMS = ("ica", "dss", "ssp")
+STREAMS = ("ica", "dss")
 
 
 def reference_signals(trunk: mne.io.BaseRaw) -> dict[str, np.ndarray]:

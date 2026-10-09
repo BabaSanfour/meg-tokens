@@ -7,7 +7,7 @@ Analysis library for decision-making dynamics on the **Tokens Task** with MEG. `
 *   **`meg_tokens/`**: package.
     *   `core/`: subject/run identifiers, project config, workflow result models.
     *   `behavior/`: TDMS parsing, behavioral metrics.
-    *   `meg/`: raw staging, coregistration, three-stream preprocessing (DSS/ICA/SSP), epoching, source localization.
+    *   `meg/`: raw staging, coregistration, two-stream preprocessing (DSS and ICA), epoching, source localization.
     *   `features/`: ERP, power, spectral, Hilbert, PAC, connectivity estimators.
     *   `analysis/`: statistics, decoding, PCA, dPCA estimators.
     *   `workflows/`: filesystem-aware processing/analysis stages.
@@ -39,7 +39,7 @@ Module map, in pipeline order. Stage numbers live only under [Running the Pipeli
 | **Behavioral Metrics Extraction** | [`features.py`](meg_tokens/behavior/features.py) and [`performance.py`](meg_tokens/behavior/analyses/performance.py) | Computes choice RTs, accuracy, difficulty levels, and behavioral summaries. |
 | **Behavioral Characterization Analyses** | [`behavior_characterization.py`](meg_tokens/workflows/behavior_characterization.py) and [`behavior/analyses/`](meg_tokens/behavior/analyses) | Runs the full analysis battery described in `docs/behavior.md` over the trial-feature table: distributions, design/session effects, evidence, criterion decline, individual differences, and more. |
 | **Behavioral Reporting** | [`behavior.py`](meg_tokens/reports/behavior.py) | Renders performance diagnostics and RT distributions. |
-| **MEG Preprocessing** | [`preprocessing.py`](meg_tokens/meg/preprocessing.py) | One shared trunk per recording (compensation, ZapLine, band-pass, bad channels and segments), then three cleaners -- DSS, ICA, SSP -- each persisted with its artifact estimate. |
+| **MEG Preprocessing** | [`preprocessing.py`](meg_tokens/meg/preprocessing.py) | One shared trunk per recording (compensation, ZapLine, band-pass, bad channels and segments), then two cleaners -- DSS and ICA -- each persisted with its artifact estimate. |
 | **Epoch Extraction & Event Alignment** | [`epoching.py`](meg_tokens/meg/epoching.py) | Segments MEG data into trial epochs aligned to triggers and behavior. |
 | **Neural Source Localization** | [`sources.py`](meg_tokens/meg/sources.py) | Computes noise covariance, BEM models, sets up source spaces, and applies minimum-norm inverses. |
 | **Source-Space Time-Frequency Power** | [`time_frequency.py`](meg_tokens/features/time_frequency.py) | Extracts band power from source estimates using modern MNE calls. |
@@ -229,9 +229,9 @@ meg-tokens --config tokens.toml behavior qc
 
 ### Stage 3: MEG Preprocessing
 Builds one shared trunk per staged CTF recording (compensation, ZapLine,
-0.5–150 Hz, bad channels and segments), then cleans it with DSS, ICA and SSP
+0.5–150 Hz, bad channels and segments), then cleans it with DSS and with ICA
 and writes one `proc-<stream>` derivative per cleaner. The specification is
-`docs/meg.md`. Defaults to every staged subject and all three
+`docs/meg.md`. Defaults to every staged subject and both
 streams (`--streams` narrows):
 ```bash
 meg-tokens --config tokens.toml meg preprocess

@@ -38,7 +38,7 @@ RUN_BY_ENTITY = {
 BAND_BY_ENTITY = {band.replace("_", "-"): band for band in POWER_BANDS}
 # Preprocessing writes one derivative per cleaner, so the DAG fans out three ways per
 # recording and every downstream rule has to say which stream it consumes.
-STREAMS = tuple(PREPROCESSING.get("streams", ("dss", "ica", "ssp")))
+STREAMS = tuple(PREPROCESSING.get("streams", ("dss", "ica")))
 STREAM = PREPROCESSING.get("stream", "ica")
 if STREAM not in STREAMS:
     raise ValueError(

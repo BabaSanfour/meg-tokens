@@ -26,10 +26,10 @@ anatomies; that flag follows them into every source-level result. Committed as
 `4a91e44` and `e11e727`.
 
 **Preprocessing — implemented.** `meg_tokens/meg/preprocessing.py` follows
-the specification below. It has not yet run on real data as a pipeline stage;
-its DSS parameter search and three-cleaner comparison
-(`scripts/dss_param_search_array.sh`) were readied for the 319-recording array
-on `fir`.
+the specification below. It has not yet run on real data as a pipeline stage.
+Its DSS parameter search and the DSS-versus-ICA comparison
+(`scripts/dss_param_search_array.sh`) have both run on all 319 recordings on
+`fir`; their results feed the open decisions below.
 
 **Epoching and source reconstruction — not started.** Zero preprocessed raws, zero epochs, zero
 source estimates, zero features.
@@ -58,7 +58,7 @@ Thiery, Rainville, Cisek, Jerbi (2022),
 | Resample | 600 Hz, before ICA | 600 Hz, **last** |
 | Bad channels | visual, spectral | automated: broadband spectral outlier + LOF |
 | Bad segments | visual | automated: amplitude + muscle z-score, two passes |
-| Artifact removal | 20-component ICA, projector `I − ΦΦ⁺` on unfiltered raw | three parallel streams: DSS chain, ICA, SSP |
+| Artifact removal | 20-component ICA, projector `I − ΦΦ⁺` on unfiltered raw | two parallel streams: DSS chain, ICA |
 | EOG/ECG | 2 bipolar EOG + 1 ECG | `EEG057` vEOG, `EEG058` hEOG, `EEG059` ECG |
 | Epoch locks | token jump, button press, feedback, decision time | `go`, `enter`, `feedback`, `decision` |
 | Epoch windows | −500/+1000 token; −1500/+2000 press/fb/DT | per-lock, matching |
@@ -124,7 +124,7 @@ per-subject and the correction per-session.
 
 ### Preprocessing · `implemented, not yet run as a pipeline stage`
 
-Three cleaners run on one shared trunk, so the streams differ **only** in the
+Two cleaners run on one shared trunk, so the streams differ **only** in the
 cleaner. Each stream persists its own cleaned recording and its own artifact
 estimate: three MEG files per run per stream output.
 
@@ -146,9 +146,8 @@ differ in two ways at once and the comparison uninterpretable.
 
 | stream | method |
 |---|---|
-| **DSS** | `dss_cycle_qrs` → `dss_cycle_blink` → `dss_bandpass_muscle`. DSS with `CycleAverageBias` locked to R peaks (−0.1/+0.2 s) then blinks (−0.2/+0.5 s), then `BandpassBias(110, 140)`. `n_components=40`, `n_select="auto"`, `component_action="subtract"`, `max_prop_remove=0.3` |
+| **DSS** | `dss_cycle_qrs` → `dss_cycle_blink` → `dss_bandpass_muscle`. DSS with `CycleAverageBias` locked to R peaks (−0.1/+0.2 s) then blinks (−0.2/+0.5 s), then `BandpassBias(110, 140)`. `n_components=40`, `n_select="auto"`, `component_action="subtract"`; every other selection setting at the library default |
 | **ICA** | 20 components on the filtered copy; EOG from `EEG057` **and** `EEG058`, ECG from `EEG059`; `ica.apply` to the filtered copy. Missing reference channels raise |
-| **SSP** | `compute_proj_ecg` on `EEG059`; `compute_proj_eog` run per EOG channel and concatenated; `n_mag=2` per artifact — 4 dimensions of 270 |
 
 **Shared tail, per stream.**
 
@@ -164,7 +163,7 @@ harmonics onto real signal.
 **Sidecar, per run per stream:** components or stages removed, bad channels
 with their scores, annotated segments and seconds retained, source
 compensation grade and whether it was raised, and the **rank** after cleaning —
-all three cleaners remove spatial dimensions and the inverse operator must be told.
+both cleaners remove spatial dimensions and the inverse operator must be told.
 
 **Artifact events.** Blink and saccade events come from excursions in the
 0.5–7 Hz band of `EEG057` / `EEG058`, thresholded at 3.0× the channel's median
@@ -177,8 +176,8 @@ is not usable: its threshold is set from the segment's extremes, so it reports
 **Open.**
 
 - **Which stream is canonical** for epoching and source reconstruction, or
-  whether all three carry through. Nothing downstream can be written until this
-  is settled; the three-cleaner comparison (`--mode streams`) is what should
+  whether both carry through. Nothing downstream can be written until this
+  is settled; the DSS-versus-ICA comparison (`--mode streams`) is what should
   settle it.
 - **Muscle z-threshold.** `annotate_muscle_zscore` at z=6/7/8 annotates
   2.15–2.63% of a recording at the median and scores 8.1–8.6 dB enrichment —
@@ -186,8 +185,6 @@ is not usable: its threshold is set from the segment's extremes, so it reports
   budget, which is a different question from whether the detector works. The
   paper excludes jaw-clenching segments deliberately, so ~2.4% may be the
   correct amount; derive the coverage limit from that intent, not a round number.
-- **SSP `n_mag`.** MNE's default is 2 per artifact — 4 dimensions of 270. Not a
-  measured choice.
 - **Preprocessing / autoreject boundary** — see Epoching.
 
 ### Epoching · `todo`
@@ -221,7 +218,7 @@ Every entry must be defensible in a methods section.
 | Resample position | before ICA | last | Resampling before the low-pass aliases; before ZapLine it folds harmonics onto signal. |
 | Bad channels | visual inspection of power spectra | automated spectral outlier + LOF | 526 of 527 raw `.ds` carry an empty `BadChannels` file. The original selection left no record and is not reproducible. |
 | Bad segments | visual inspection | automated amplitude + muscle z-score, two passes | Same: 328 empty `bad.segments` files. The second pass implements the paper's own stated target — residual artifact "not captured by any component". |
-| Artifact removal | one ICA pass; projector `I − ΦΦ⁺` on unfiltered raw | three parallel streams, all persisted | The explicit projector gained only 1–3.5 percentage points over `ica.apply` on the same components while adding >0.25 dB distortion on three of four subjects. Running three cleaners and keeping every artifact estimate makes the choice measurable rather than assumed. |
+| Artifact removal | one ICA pass; projector `I − ΦΦ⁺` on unfiltered raw | two parallel streams, both persisted | The explicit projector gained only 1–3.5 percentage points over `ica.apply` on the same components while adding >0.25 dB distortion on three of four subjects. Running two cleaners and keeping every artifact estimate makes the choice measurable rather than assumed. |
 | EOG channels | 2 bipolar EOG | both `EEG057` and `EEG058` | The paper describes two EOG channels; its code used only one. `EEG058` is a real horizontal EOG, so saccade artifact was invisible to component selection. |
 | Coregistration | manual fiducials + ICP, visually verified | landmark fit + two-pass ICP, one fit per subject composed to each session | Reproducible rather than hand-placed, and it corrects between-session head-frame drift a single manual fit would absorb as error. |
 | MRI landmarks | picked by hand | by hand for 24 of 30; estimated from `fsaverage` for H22, H27, H29, H30, H31, H32 | No picked set was ever saved for those six. Recorded per subject rather than left silent. |

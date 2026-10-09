@@ -34,26 +34,22 @@ def test_every_stage_grid_contains_its_production_configuration():
 def test_production_row_reproduces_the_cleaner_defaults():
     """If these drift apart the search optimises something nothing runs.
 
-    `dss_subtract`'s defaults are the production values, so a production row is
-    the row that passes no selection overrides at all.
+    Production sets ``n_components`` and leaves every other selection setting
+    to mne-denoise, so a production row is the library default plus that one.
     """
-    defaults = {
-        "n_components": preprocessing.DSS_N_COMPONENTS,
-        "selection_threshold": preprocessing.DSS_SELECTION_THRESHOLD,
-        "knee_min_ratio": preprocessing.DSS_KNEE_MIN_RATIO,
-        "min_select": preprocessing.DSS_MIN_SELECT,
-        "max_prop_remove": preprocessing.DSS_MAX_PROP_REMOVE,
-    }
     import inspect
 
     signature = inspect.signature(preprocessing.dss_subtract)
-    for name, value in defaults.items():
-        assert signature.parameters[name].default == value
+    assert signature.parameters["n_components"].default == preprocessing.DSS_N_COMPONENTS
 
     for stage in grid.STAGES:
         production = grid.production_config(stage)
         for name, value in production.selection_params.items():
-            assert defaults[name] == value, (stage, name)
+            expected = (
+                preprocessing.DSS_N_COMPONENTS if name == "n_components"
+                else grid.LIBRARY_DEFAULTS[name]
+            )
+            assert value == expected, (stage, name)
     assert grid.PRODUCTION["qrs"]["window"] == preprocessing.QRS_WINDOW
     assert grid.PRODUCTION["blink"]["window"] == preprocessing.BLINK_WINDOW
     assert grid.PRODUCTION["blink"]["scale_multiple"] == preprocessing.OCULAR_SCALE_MULTIPLE

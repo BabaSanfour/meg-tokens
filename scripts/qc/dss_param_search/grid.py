@@ -6,17 +6,18 @@ reference row rather than a field of candidates with nothing to beat.
 
 from __future__ import annotations
 
+import inspect
 import itertools
 import random
 from dataclasses import dataclass, field
 from typing import Any
 
+from mne_denoise.dss import DSS
+
 from meg_tokens.meg.meg_bids import raw_meg_sessions, staged_subjects
 from meg_tokens.meg.preprocessing import (
     BLINK_WINDOW,
-    DSS_KNEE_MIN_RATIO,
     DSS_N_COMPONENTS,
-    DSS_SELECTION_THRESHOLD,
     MUSCLE_BAND,
     OCULAR_SCALE_MULTIPLE,
     QRS_WINDOW,
@@ -53,6 +54,13 @@ BIAS_AXES: dict[str, dict[str, tuple]] = {
     },
 }
 
+#: Production passes no selection setting besides ``n_components``, so its
+#: values for the others are mne-denoise's own defaults.
+LIBRARY_DEFAULTS = {
+    name: parameter.default
+    for name, parameter in inspect.signature(DSS.__init__).parameters.items()
+}
+
 #: The selection-side axes. These change *how many* dimensions come out.
 #:
 #: ``n_components`` truncates the eigenvalue spectrum before selection, so 40
@@ -66,7 +74,7 @@ BIAS_AXES: dict[str, dict[str, tuple]] = {
 SELECTION_AXES: dict[str, dict[str, tuple]] = {
     "qrs": {
         "n_components": (DSS_N_COMPONENTS, None),
-        "selection_threshold": (2.0, DSS_SELECTION_THRESHOLD),
+        "selection_threshold": (2.0, LIBRARY_DEFAULTS["selection_threshold"]),
     },
     "blink": {
         "n_components": (DSS_N_COMPONENTS, None),
@@ -77,7 +85,7 @@ SELECTION_AXES: dict[str, dict[str, tuple]] = {
     # stage's zero is the band finding nothing, not the knee gate refusing to
     # fire, which is what this axis was added to test.
     "muscle": {
-        "knee_min_ratio": (DSS_KNEE_MIN_RATIO,),
+        "knee_min_ratio": (LIBRARY_DEFAULTS["knee_min_ratio"],),
     },
 }
 
@@ -87,7 +95,7 @@ PRODUCTION: dict[str, dict[str, Any]] = {
     "qrs": {
         "window": QRS_WINDOW,
         "n_components": DSS_N_COMPONENTS,
-        "selection_threshold": DSS_SELECTION_THRESHOLD,
+        "selection_threshold": LIBRARY_DEFAULTS["selection_threshold"],
     },
     "blink": {
         "window": BLINK_WINDOW,
@@ -97,7 +105,7 @@ PRODUCTION: dict[str, dict[str, Any]] = {
     "muscle": {
         "freq_band": MUSCLE_BAND,
         "order": 4,
-        "knee_min_ratio": DSS_KNEE_MIN_RATIO,
+        "knee_min_ratio": LIBRARY_DEFAULTS["knee_min_ratio"],
     },
 }
 

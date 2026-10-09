@@ -55,10 +55,10 @@ path = derivative_path(
 
 ## Preprocessing derivatives
 
-Three cleaned recordings per staged run, one per cleaner, on a shared trunk.
-`proc` names the cleaner (`dss`, `ica`, `ssp`); `desc` keeps the condition and
+Two cleaned recordings per staged run, one per cleaner, on a shared trunk.
+`proc` names the cleaner (`dss`, `ica`); `desc` keeps the condition and
 grows the `artifact` tag onto it. The artifact file is the residual — what that
-cleaner removed — so the three estimates are the same quantity.
+cleaner removed — so the two estimates are the same quantity.
 
 ```
 derivatives/sub-H01/meg/sub-H01_task-tokens_run-1_proc-dss_desc-fast_raw.fif
@@ -66,7 +66,7 @@ derivatives/sub-H01/meg/sub-H01_task-tokens_run-1_proc-dss_desc-fast-artifact_ra
 derivatives/sub-H01/meg/sub-H01_task-tokens_run-1_proc-dss_desc-fast_raw.json
 ```
 
-Sidecar carries `stream`, `rank` and `n_dimensions_removed` (all three cleaners
+Sidecar carries `stream`, `rank` and `n_dimensions_removed` (both cleaners
 reduce rank and the inverse operator needs it), `compensation_grade_source` and
 `compensation_applied`, the bad channels per detector, annotated seconds before
 and after cleaning, and the per-cleaner detail.

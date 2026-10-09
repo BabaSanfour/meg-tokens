@@ -14,7 +14,7 @@ class PreprocessingConfig:
     """Preprocessing settings. ``streams`` names the cleaners to run per recording.
 
     The band and every cleaner parameter are fixed by the specification in
-    ``meg/preprocessing.py`` rather than settable here: the three streams are
+    ``meg/preprocessing.py`` rather than settable here: the streams are
     only comparable across recordings if no run was cleaned differently.
     """
 
@@ -83,7 +83,7 @@ class EpochingConfig:
         alignment = self.alignment.lower()
         if alignment not in {"go", "enter", "feedback"}:
             raise ValueError(f"Unknown alignment event: {self.alignment}")
-        if self.stream not in ("dss", "ica", "ssp"):
+        if self.stream not in ("dss", "ica"):
             raise ValueError(f"Unknown stream: {self.stream}")
         if self.tmax <= self.tmin:
             raise ValueError("tmax must be greater than tmin")

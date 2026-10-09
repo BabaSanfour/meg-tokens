@@ -136,7 +136,7 @@ def search_recording(
 ) -> dict:
     """Every configuration for every requested stage, on one recording.
 
-    ``mode`` selects the grid, the three-cleaner comparison, or both. They
+    ``mode`` selects the grid, the cleaner comparison, or both. They
     share the trunk, which is the expensive part, so asking for both costs one
     trunk rather than two.
     """
@@ -276,7 +276,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--stages", nargs="+", default=list(grid_module.STAGES),
                         choices=list(grid_module.STAGES))
     parser.add_argument("--mode", default="grid", choices=("grid", "streams", "both"),
-                        help="the DSS parameter grid, the three-cleaner comparison, "
+                        help="the DSS parameter grid, the cleaner comparison, "
                              "or both off one trunk")
     return parser
 
