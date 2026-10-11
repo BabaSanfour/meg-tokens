@@ -34,8 +34,7 @@ HEOG_CHANNEL = "EEG058"
 ECG_CHANNEL = "EEG059"
 REFERENCE_CHANNELS = (VEOG_CHANNEL, HEOG_CHANNEL, ECG_CHANNEL)
 
-# 20x and 0.002x the cohort noise floor, 6.243e-14 T
-# (``robust_scale`` in ``scripts/qc/artifact_detection.py``).
+# 20x and 0.002x the cohort noise floor, 6.243e-14 T.
 AMPLITUDE_PEAK_T = 1.2485926067065662e-12
 AMPLITUDE_FLAT_T = 1.2485926067065662e-16
 MUSCLE_Z = 7.0
@@ -104,9 +103,7 @@ def read_staged_raw(path: str | Path, *, preload: bool = True) -> tuple[mne.io.B
     return raw, source_grade
 
 
-def _ocular_excursions(
-    raw: mne.io.BaseRaw, channel: str, scale_multiple: float
-) -> tuple[np.ndarray, np.ndarray]:
+def _ocular_excursions(raw: mne.io.BaseRaw, channel: str) -> tuple[np.ndarray, np.ndarray]:
     """Where a reference channel leaves its resting level, and which way."""
     band = (
         raw.copy()
@@ -120,27 +117,22 @@ def _ocular_excursions(
         raise ValueError(f"{channel} has no variation to threshold against")
     peaks, _ = find_peaks(
         np.abs(centred),
-        height=scale_multiple * scale,
+        height=OCULAR_SCALE_MULTIPLE * scale,
         distance=max(int(round(OCULAR_MIN_SEPARATION * raw.info["sfreq"])), 1),
     )
     peaks = np.asarray(peaks, dtype=int)
     return peaks, centred[peaks]
 
 
-def ocular_events(
-    raw: mne.io.BaseRaw,
-    channel: str,
-    *,
-    scale_multiple: float = OCULAR_SCALE_MULTIPLE,
-) -> np.ndarray:
+def ocular_events(raw: mne.io.BaseRaw, channel: str) -> np.ndarray:
     """Blink or saccade excursions, data-relative.
 
     Thresholded on the channel's own median absolute deviation, which does not
-    move when the recording contains a few large excursions. ``scale_multiple``
-    trades event count against purity and is the axis a parameter search moves;
-    the default is the value validated against the cohort blink rate.
+    move when the recording contains a few large excursions. The multiple
+    trades event count against purity; it is the value validated against the
+    cohort blink rate.
     """
-    return _ocular_excursions(raw, channel, scale_multiple)[0]
+    return _ocular_excursions(raw, channel)[0]
 
 
 def artifact_events(raw: mne.io.BaseRaw) -> dict[str, np.ndarray]:
@@ -156,7 +148,7 @@ def artifact_events(raw: mne.io.BaseRaw) -> dict[str, np.ndarray]:
     if missing:
         raise ValueError(f"reference channels absent from the recording: {missing}")
     ecg = find_ecg_events(raw, ch_name=ECG_CHANNEL, verbose=False)[0][:, 0]
-    saccades, deflection = _ocular_excursions(raw, HEOG_CHANNEL, OCULAR_SCALE_MULTIPLE)
+    saccades, deflection = _ocular_excursions(raw, HEOG_CHANNEL)
     return {
         "ecg": np.asarray(ecg, dtype=int) - raw.first_samp,
         "blink": ocular_events(raw, VEOG_CHANNEL),
@@ -287,23 +279,13 @@ def clean_ica(raw: mne.io.BaseRaw, events: dict[str, np.ndarray]) -> tuple[mne.i
     )
 
 
-def dss_subtract(
-    raw: mne.io.BaseRaw,
-    bias,
-    *,
-    n_components: int | None = DSS_N_COMPONENTS,
-    **selection,
-) -> tuple[mne.io.BaseRaw, int]:
-    """Fit DSS on the magnetometers and subtract the selected components.
-
-    ``selection`` passes further DSS selection settings through (the parameter
-    search varies them); production passes none and takes the library's.
-    """
+def dss_subtract(raw: mne.io.BaseRaw, bias) -> tuple[mne.io.BaseRaw, int]:
+    """Fit DSS on the magnetometers and subtract the selected components."""
     from mne_denoise.dss import DSS
 
     model = DSS(
-        bias=bias, n_components=n_components, n_select="auto",
-        component_action="subtract", **selection,
+        bias=bias, n_components=DSS_N_COMPONENTS, n_select="auto",
+        component_action="subtract",
     )
     cleaned = raw.copy()
     picks = mne.pick_types(cleaned.info, meg=True, ref_meg=False, eeg=False, exclude=[])

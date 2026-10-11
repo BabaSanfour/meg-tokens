@@ -27,9 +27,6 @@ anatomies; that flag follows them into every source-level result. Committed as
 
 **Preprocessing — implemented.** `meg_tokens/meg/preprocessing.py` follows
 the specification below. It has not yet run on real data as a pipeline stage.
-Its DSS parameter search and the DSS-versus-ICA comparison
-(`scripts/dss_param_search_array.sh`) have both run on all 319 recordings on
-`fir`; their results feed the open decisions below.
 
 **Epoching and source reconstruction — not started.** Zero preprocessed raws, zero epochs, zero
 source estimates, zero features.
