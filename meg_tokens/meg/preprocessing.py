@@ -2,7 +2,7 @@
 artifact it removed. Specification and rationale: ``docs/meg.md``.
 
     read + compensate - ZapLine - bandpass - bad channels - bad segments (1)
-        -> DSS | ICA -> bad segments (2) - resample - persist
+        -> DSS | ICA -> ASR (muscle) - bad segments (2) - resample - persist
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ from mne.preprocessing import (
     find_bad_channels_lof,
     find_ecg_events,
 )
-from scipy.signal import find_peaks
+from scipy.signal import butter, find_peaks, lfilter
 
 from meg_tokens.io import sidecar_path
 
@@ -39,18 +39,30 @@ REFERENCE_CHANNELS = (VEOG_CHANNEL, HEOG_CHANNEL, ECG_CHANNEL)
 AMPLITUDE_PEAK_T = 1.2485926067065662e-12
 AMPLITUDE_FLAT_T = 1.2485926067065662e-16
 MUSCLE_Z = 7.0
+MUSCLE_BAND = (110.0, 140.0)
 
 # Ocular events: band-limited excursions past a multiple of the channel's MAD.
 OCULAR_BAND = (0.5, 7.0)
 OCULAR_SCALE_MULTIPLE = 3.0
 OCULAR_MIN_SEPARATION = 0.4
 
-# DSS: event-locked windows, the muscle band, and the eigenvalue truncation --
-# the one selection setting that bounds how many dimensions a stage removes.
+# DSS: event-locked windows and the eigenvalue truncation -- the one selection
+# setting that bounds how many dimensions a stage removes.
 QRS_WINDOW = (-0.1, 0.2)
 BLINK_WINDOW = (-0.2, 0.5)
-MUSCLE_BAND = (110.0, 140.0)
+SACCADE_WINDOW = (-0.1, 0.4)
 DSS_N_COMPONENTS = 40
+DSS_MIN_EVENTS = 10
+
+# ASR, the muscle step both streams share. Its statistics -- calibration and
+# the per-window decision to reconstruct -- see only the data above the
+# high-pass, so what triggers it is muscle rather than the alpha and evoked
+# power that dominate the broadband recording.
+ASR_STATISTICS_HIGH_PASS = 80.0
+ASR_STATISTICS_FILTER_ORDER = 4
+ASR_CUTOFF = 20.0
+ASR_WINDOW = 0.5
+ASR_MAX_DIMS = 0.25
 
 STREAMS = ("dss", "ica")
 
@@ -64,6 +76,7 @@ __all__ = [
     "dss_subtract",
     "ocular_events",
     "read_staged_raw",
+    "remove_muscle",
     "run_stream",
     "save_stream",
     "stream_paths",
@@ -91,19 +104,10 @@ def read_staged_raw(path: str | Path, *, preload: bool = True) -> tuple[mne.io.B
     return raw, source_grade
 
 
-def ocular_events(
-    raw: mne.io.BaseRaw,
-    channel: str,
-    *,
-    scale_multiple: float = OCULAR_SCALE_MULTIPLE,
-) -> np.ndarray:
-    """Blink or saccade excursions, data-relative.
-
-    Thresholded on the channel's own median absolute deviation, which does not
-    move when the recording contains a few large excursions. ``scale_multiple``
-    trades event count against purity and is the axis a parameter search moves;
-    the default is the value validated against the cohort blink rate.
-    """
+def _ocular_excursions(
+    raw: mne.io.BaseRaw, channel: str, scale_multiple: float
+) -> tuple[np.ndarray, np.ndarray]:
+    """Where a reference channel leaves its resting level, and which way."""
     band = (
         raw.copy()
         .pick([channel])
@@ -119,11 +123,31 @@ def ocular_events(
         height=scale_multiple * scale,
         distance=max(int(round(OCULAR_MIN_SEPARATION * raw.info["sfreq"])), 1),
     )
-    return np.asarray(peaks, dtype=int)
+    peaks = np.asarray(peaks, dtype=int)
+    return peaks, centred[peaks]
+
+
+def ocular_events(
+    raw: mne.io.BaseRaw,
+    channel: str,
+    *,
+    scale_multiple: float = OCULAR_SCALE_MULTIPLE,
+) -> np.ndarray:
+    """Blink or saccade excursions, data-relative.
+
+    Thresholded on the channel's own median absolute deviation, which does not
+    move when the recording contains a few large excursions. ``scale_multiple``
+    trades event count against purity and is the axis a parameter search moves;
+    the default is the value validated against the cohort blink rate.
+    """
+    return _ocular_excursions(raw, channel, scale_multiple)[0]
 
 
 def artifact_events(raw: mne.io.BaseRaw) -> dict[str, np.ndarray]:
     """R peaks, blinks and saccades, all data-relative.
+
+    Saccades are split by the sign of the horizontal EOG deflection: the two
+    directions have opposite field patterns, and averaged together they cancel.
 
     A missing reference channel raises rather than yielding an empty list: a
     stream scored against no events would report a perfect, meaningless result.
@@ -132,10 +156,12 @@ def artifact_events(raw: mne.io.BaseRaw) -> dict[str, np.ndarray]:
     if missing:
         raise ValueError(f"reference channels absent from the recording: {missing}")
     ecg = find_ecg_events(raw, ch_name=ECG_CHANNEL, verbose=False)[0][:, 0]
+    saccades, deflection = _ocular_excursions(raw, HEOG_CHANNEL, OCULAR_SCALE_MULTIPLE)
     return {
         "ecg": np.asarray(ecg, dtype=int) - raw.first_samp,
         "blink": ocular_events(raw, VEOG_CHANNEL),
-        "saccade": ocular_events(raw, HEOG_CHANNEL),
+        "saccade_positive": saccades[deflection > 0],
+        "saccade_negative": saccades[deflection < 0],
     }
 
 
@@ -297,20 +323,36 @@ def dss_subtract(
 
 
 def clean_dss(raw: mne.io.BaseRaw, events: dict[str, np.ndarray]) -> tuple[mne.io.BaseRaw, int, dict]:
-    """Cardiac, then ocular, then muscle -- each a DSS bias pointed at one artifact."""
-    from mne_denoise.dss.denoisers import BandpassBias, CycleAverageBias
+    """Cardiac, blinks, then saccades in each direction -- each a DSS bias
+    locked to one artifact's events.
+
+    Too few heartbeats or blinks to average means the reference channel or its
+    detector failed, and raises. Too few saccades in one direction is a short
+    recording in which the subject rarely looked that way: the stage is left
+    out and the sidecar shows the direction's events with no components.
+    """
+    from mne_denoise.dss.denoisers import CycleAverageBias
 
     sfreq = float(raw.info["sfreq"])
     current, removed, detail = raw, 0, {}
 
-    for label, key, window in (("qrs", "ecg", QRS_WINDOW), ("blink", "blink", BLINK_WINDOW)):
+    for label, key, window, required in (
+        ("qrs", "ecg", QRS_WINDOW, True),
+        ("blink", "blink", BLINK_WINDOW, True),
+        ("saccade_positive", "saccade_positive", SACCADE_WINDOW, False),
+        ("saccade_negative", "saccade_negative", SACCADE_WINDOW, False),
+    ):
         first = int(round(window[0] * sfreq))
         last = int(round(window[1] * sfreq))
         samples = np.asarray(events[key], dtype=int)
         # CycleAverageBias requires a complete window for every event.
         samples = samples[(samples + first >= 0) & (samples + last <= raw.n_times)]
-        if samples.size < 10:
-            raise ValueError(f"{key} has {samples.size} usable events, too few to average")
+        detail[f"{label}_events"] = int(samples.size)
+        if samples.size < DSS_MIN_EVENTS:
+            if required:
+                raise ValueError(f"{key} has {samples.size} usable events, too few to average")
+            detail[f"{label}_components"] = 0
+            continue
         current, n = dss_subtract(
             current,
             CycleAverageBias(
@@ -320,11 +362,6 @@ def clean_dss(raw: mne.io.BaseRaw, events: dict[str, np.ndarray]) -> tuple[mne.i
         )
         removed += n
         detail[f"{label}_components"] = n
-        detail[f"{label}_events"] = int(samples.size)
-
-    current, n = dss_subtract(current, BandpassBias(freq_band=MUSCLE_BAND, sfreq=sfreq))
-    removed += n
-    detail["muscle_components"] = n
 
     return current, removed, detail
 
@@ -332,11 +369,46 @@ def clean_dss(raw: mne.io.BaseRaw, events: dict[str, np.ndarray]) -> tuple[mne.i
 CLEANERS = {"dss": clean_dss, "ica": clean_ica}
 
 
+def remove_muscle(raw: mne.io.BaseRaw) -> tuple[mne.io.BaseRaw, dict]:
+    """ASR on the magnetometers, in place -- the same step after either cleaner.
+
+    Calibrated on the recording itself and run on the arrays, annotated spans
+    included: the muscle segments are the ones it is here for. The statistics
+    filter is set on the state by hand because the library offers no high-pass
+    at this frequency; calibration sees the filtered data, reconstruction acts
+    on the unfiltered recording.
+    """
+    from mne_denoise.asr import calibrate_asr, process_asr
+
+    sfreq = float(raw.info["sfreq"])
+    picks = mne.pick_types(raw.info, meg=True, ref_meg=False, eeg=False, exclude=[])
+    data = raw.get_data(picks=picks)
+    b, a = butter(
+        ASR_STATISTICS_FILTER_ORDER, ASR_STATISTICS_HIGH_PASS, btype="highpass", fs=sfreq
+    )
+    state, _ = calibrate_asr(
+        lfilter(b, a, data, axis=1), sfreq,
+        cutoff=ASR_CUTOFF, window_length=ASR_WINDOW, filter_kind="none",
+    )
+    state.filter_b, state.filter_a = b, a
+    state.filter_zi = np.zeros((len(picks), ASR_STATISTICS_FILTER_ORDER))
+    cleaned, diagnostics = process_asr(
+        data, sfreq, state, window_length=ASR_WINDOW, max_dims=ASR_MAX_DIMS,
+    )
+    raw._data[picks] = cleaned
+    return raw, {
+        "reconstructed_fraction": float(diagnostics["fraction_reconstructed_samples"]),
+        "max_components": int(diagnostics["max_components_reconstructed"]),
+    }
+
+
 def finish(raw: mne.io.BaseRaw) -> tuple[mne.io.BaseRaw, dict]:
     """Bad segments pass 2, then resample -- last, after the low-pass.
 
     The second annotation pass is the paper's own stated purpose: residual
     artifact "not captured by any component". Only a post-clean pass can see it.
+    The trunk's muscle annotations stay on the recording through ASR, so what
+    it reconstructed can still be excluded downstream.
     Resampling before the low-pass aliases, and before ZapLine it folds the
     higher harmonics onto real signal.
     """
@@ -356,17 +428,19 @@ def finish(raw: mne.io.BaseRaw) -> tuple[mne.io.BaseRaw, dict]:
 def run_stream(
     trunk: mne.io.BaseRaw, events: dict[str, np.ndarray], stream: str
 ) -> tuple[mne.io.BaseRaw, mne.io.BaseRaw, dict]:
-    """One cleaner, then the shared tail: the cleaned recording, what the
-    cleaner removed, and the stream's sidecar fields."""
+    """One cleaner, then the shared muscle step and tail: the cleaned
+    recording, what the stream removed, and the stream's sidecar fields."""
     if stream not in CLEANERS:
         raise ValueError(f"unknown stream {stream!r}; expected one of {sorted(CLEANERS)}")
     cleaned, n_removed, detail = CLEANERS[stream](trunk, events)
+    cleaned, muscle = remove_muscle(cleaned)
     artifact = _artifact_of(trunk, cleaned)
     cleaned, tail = finish(cleaned)
     artifact.resample(RESAMPLE_HZ, verbose=False)
     return cleaned, artifact, {
         "stream": stream,
         "n_dimensions_removed": n_removed,
+        **{f"muscle_{key}": value for key, value in muscle.items()},
         **{f"tail_{key}": value for key, value in tail.items()},
         **{f"detail_{key}": value for key, value in detail.items()},
     }
@@ -425,6 +499,7 @@ def save_stream(
         **trunk_record,
         **stream_record,
         # The inverse operator needs the rank; both cleaners remove dimensions.
+        # ASR does not count: it reconstructs within windows, not a fixed subspace.
         "rank": trunk_record["n_meg_channels"] - stream_record["n_dimensions_removed"],
     }
     with paths["sidecar"].open("w", encoding="utf-8") as handle:

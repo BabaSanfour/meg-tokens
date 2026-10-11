@@ -58,7 +58,7 @@ Thiery, Rainville, Cisek, Jerbi (2022),
 | Resample | 600 Hz, before ICA | 600 Hz, **last** |
 | Bad channels | visual, spectral | automated: broadband spectral outlier + LOF |
 | Bad segments | visual | automated: amplitude + muscle z-score, two passes |
-| Artifact removal | 20-component ICA, projector `I − ΦΦ⁺` on unfiltered raw | two parallel streams: DSS chain, ICA |
+| Artifact removal | 20-component ICA, projector `I − ΦΦ⁺` on unfiltered raw | two parallel streams, DSS chain and ICA, each followed by the same ASR muscle step |
 | EOG/ECG | 2 bipolar EOG + 1 ECG | `EEG057` vEOG, `EEG058` hEOG, `EEG059` ECG |
 | Epoch locks | token jump, button press, feedback, decision time | `go`, `enter`, `feedback`, `decision` |
 | Epoch windows | −500/+1000 token; −1500/+2000 press/fb/DT | per-lock, matching |
@@ -124,9 +124,11 @@ per-subject and the correction per-session.
 
 ### Preprocessing · `implemented, not yet run as a pipeline stage`
 
-Two cleaners run on one shared trunk, so the streams differ **only** in the
-cleaner. Each stream persists its own cleaned recording and its own artifact
-estimate: three MEG files per run per stream output.
+Two cleaners run on one shared trunk and are followed by one shared muscle
+step, so the streams differ **only** in the cleaner. Both streams are run on
+every recording and both carry through; they are compared on results, not
+chosen between in advance. Each stream persists its own cleaned recording and
+its own artifact estimate: three MEG files per run per stream output.
 
 **Shared trunk.**
 
@@ -146,28 +148,43 @@ differ in two ways at once and the comparison uninterpretable.
 
 | stream | method |
 |---|---|
-| **DSS** | `dss_cycle_qrs` → `dss_cycle_blink` → `dss_bandpass_muscle`. DSS with `CycleAverageBias` locked to R peaks (−0.1/+0.2 s) then blinks (−0.2/+0.5 s), then `BandpassBias(110, 140)`. `n_components=40`, `n_select="auto"`, `component_action="subtract"`; every other selection setting at the library default |
+| **DSS** | `dss_cycle_qrs` → `dss_cycle_blink` → `dss_cycle_saccade_positive` → `dss_cycle_saccade_negative`. DSS with `CycleAverageBias` locked to R peaks (−0.1/+0.2 s), then blinks (−0.2/+0.5 s), then saccades of each direction in turn (−0.1/+0.4 s). A saccade direction with fewer than 10 usable events gets no stage. `n_components=40`, `n_select="auto"`, `component_action="subtract"`; every other selection setting at the library default |
 | **ICA** | 20 components on the filtered copy; EOG from `EEG057` **and** `EEG058`, ECG from `EEG059`; `ica.apply` to the filtered copy. Missing reference channels raise |
 
 **Shared tail, per stream.**
 
 | # | step |
 |---|---|
-| 5 | bad segments, pass 2 — residual muscle and saccade the cleaner missed |
-| 6 | resample to 600 Hz — **last**, after the low-pass |
-| 7 | persist: cleaned raw, artifact estimate, sidecar |
+| 5 | muscle — ASR on the magnetometers: cutoff 20, 0.5 s windows, `max_dims=0.25`, statistics high-passed at 80 Hz (4th-order Butterworth), calibrated on the recording itself |
+| 6 | bad segments, pass 2 — residual muscle the stream missed |
+| 7 | resample to 600 Hz — **last**, after the low-pass |
+| 8 | persist: cleaned raw, artifact estimate, sidecar |
+
+ASR's statistics — calibration and the per-window decision to reconstruct —
+see only the data above 80 Hz, so muscle triggers it and alpha and evoked
+power do not; the reconstruction itself acts on the unfiltered recording. It
+runs on the arrays, annotated spans included: the library's MNE interface
+pastes annotated samples back uncleaned, and those are the muscle segments.
+The trunk's `BAD_muscle` annotations stay on the recording after ASR, so the
+spans it reconstructed can still be excluded downstream. The artifact estimate
+is the trunk minus the stream's output, so it holds what the cleaner and ASR
+removed together.
 
 Resampling earlier aliases; resampling before ZapLine folds the higher
 harmonics onto real signal.
 
-**Sidecar, per run per stream:** components or stages removed, bad channels
-with their scores, annotated segments and seconds retained, source
-compensation grade and whether it was raised, and the **rank** after cleaning —
-both cleaners remove spatial dimensions and the inverse operator must be told.
+**Sidecar, per run per stream:** components or stages removed, the fraction
+of samples ASR reconstructed, bad channels with their scores, annotated
+segments and seconds retained, source compensation grade and whether it was
+raised, and the **rank** after cleaning — both cleaners remove spatial
+dimensions and the inverse operator must be told. ASR does not enter the rank:
+it reconstructs within windows rather than removing a fixed subspace.
 
 **Artifact events.** Blink and saccade events come from excursions in the
 0.5–7 Hz band of `EEG057` / `EEG058`, thresholded at 3.0× the channel's median
-absolute deviation with 0.4 s minimum separation. `mne.preprocessing.find_eog_events`
+absolute deviation with 0.4 s minimum separation. Saccades are split by the
+sign of the `EEG058` deflection: the two directions have opposite field
+patterns and cancel in a common average. `mne.preprocessing.find_eog_events`
 is not usable: its threshold is set from the segment's extremes, so it reports
 59 blinks/min over 60 s of H01 and 1.5/min over the same recording's full
 315 s, against a cohort median of 16.9/min. R peaks come from
@@ -175,10 +192,6 @@ is not usable: its threshold is set from the segment's extremes, so it reports
 
 **Open.**
 
-- **Which stream is canonical** for epoching and source reconstruction, or
-  whether both carry through. Nothing downstream can be written until this
-  is settled; the DSS-versus-ICA comparison (`--mode streams`) is what should
-  settle it.
 - **Muscle z-threshold.** `annotate_muscle_zscore` at z=6/7/8 annotates
   2.15–2.63% of a recording at the median and scores 8.1–8.6 dB enrichment —
   all three *find muscle*. They were previously rejected on a 1% coverage
@@ -219,6 +232,8 @@ Every entry must be defensible in a methods section.
 | Bad channels | visual inspection of power spectra | automated spectral outlier + LOF | 526 of 527 raw `.ds` carry an empty `BadChannels` file. The original selection left no record and is not reproducible. |
 | Bad segments | visual inspection | automated amplitude + muscle z-score, two passes | Same: 328 empty `bad.segments` files. The second pass implements the paper's own stated target — residual artifact "not captured by any component". |
 | Artifact removal | one ICA pass; projector `I − ΦΦ⁺` on unfiltered raw | two parallel streams, both persisted | The explicit projector gained only 1–3.5 percentage points over `ica.apply` on the same components while adding >0.25 dB distortion on three of four subjects. Running two cleaners and keeping every artifact estimate makes the choice measurable rather than assumed. |
+| Saccades | not addressed separately | DSS stage per saccade direction, events from `EEG058` | Removal at saccade onset rose from 20% to 35% across all 319 recordings, and from 35/23% to 58/48% per direction; better in 32 of 32 subjects. A direction with fewer than 10 saccades — 20 of 638, in 16 recordings, 14 of them RT runs — gets no stage: built from that few, a stage gained a median 4.9 points at onsets for 0.21 dB of alpha, about a quarter of the return at 10–14 events (17 points for 0.33 dB across both directions). |
+| Muscle | excluded by visual inspection | ASR, statistics high-passed at 80 Hz, cutoff 20, after either cleaner; annotations kept | On all 319 recordings it removes 2.1 dB (after DSS) and 4.3 dB (after ICA) of 110–140 Hz power inside the annotated muscle segments, with no change in high-gamma, gamma or alpha power in clean time and evoked responses preserved in 30 of 32 subjects under both cleaners. A DSS muscle stage removed 0 components on the median recording; ICA muscle components removed nothing in muscle segments and stripped gamma elsewhere; cutoff 10 costs high gamma after ICA. |
 | EOG channels | 2 bipolar EOG | both `EEG057` and `EEG058` | The paper describes two EOG channels; its code used only one. `EEG058` is a real horizontal EOG, so saccade artifact was invisible to component selection. |
 | Coregistration | manual fiducials + ICP, visually verified | landmark fit + two-pass ICP, one fit per subject composed to each session | Reproducible rather than hand-placed, and it corrects between-session head-frame drift a single manual fit would absorb as error. |
 | MRI landmarks | picked by hand | by hand for 24 of 30; estimated from `fsaverage` for H22, H27, H29, H30, H31, H32 | No picked set was ever saved for those six. Recorded per subject rather than left silent. |
