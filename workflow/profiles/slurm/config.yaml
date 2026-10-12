@@ -1,4 +1,4 @@
-jobs: 64
+jobs: 320
 latency-wait: 120
 printshellcmds: true
 rerun-incomplete: true
