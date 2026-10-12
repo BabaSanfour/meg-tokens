@@ -10,9 +10,12 @@ default-resources:
   mem_mb: 8000
   runtime: 240
 set-resources:
+  # One core: the stage is single-threaded. The executor always names a
+  # partition, and the cluster default (by-node) refuses a one-core job.
   preprocess:
-    mem_mb: 32000
-    runtime: 1440
+    slurm_partition: cpubase_bycore_b1
+    mem_mb: 16000
+    runtime: 180
   epochs:
     mem_mb: 64000
     runtime: 1440
