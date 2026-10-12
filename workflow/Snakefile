@@ -36,7 +36,7 @@ RUN_BY_ENTITY = {
     for condition, run in RUN_CELLS
 }
 BAND_BY_ENTITY = {band.replace("_", "-"): band for band in POWER_BANDS}
-# Preprocessing writes one derivative per cleaner, so the DAG fans out three ways per
+# Preprocessing writes one derivative per cleaner, so the DAG fans out two ways per
 # recording and every downstream rule has to say which stream it consumes.
 STREAMS = tuple(PREPROCESSING.get("streams", ("dss", "ica")))
 STREAM = PREPROCESSING.get("stream", "ica")
@@ -294,8 +294,6 @@ rule preprocess:
         run=lambda wildcards: run_for_entities(
             wildcards.condition, wildcards.run_number
         ),
-        high_pass=PREPROCESSING.get("high_pass", 0.5),
-        low_pass=PREPROCESSING.get("low_pass", 150.0),
         streams=" ".join(STREAMS),
     shell:
         """
@@ -303,8 +301,6 @@ rule preprocess:
           --subjects {wildcards.subject:q} \
           --run {params.run:q} \
           --condition {wildcards.condition:q} \
-          --high-pass {params.high_pass} \
-          --low-pass {params.low_pass} \
           --streams {params.streams}
         """
 
