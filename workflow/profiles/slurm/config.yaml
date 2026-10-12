@@ -6,7 +6,7 @@ rerun-incomplete: true
 # mem_mb and runtime become --cpus-per-task, --mem and --time on their own.
 executor: slurm
 default-resources:
-  slurm_account: "YOUR_ACCOUNT"
+  slurm_account: "rrg-kjerbi_cpu"
   mem_mb: 8000
   runtime: 240
 set-resources:
