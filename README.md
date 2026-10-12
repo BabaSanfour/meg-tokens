@@ -287,6 +287,9 @@ snakemake --snakefile workflow/Snakefile \
 
 # Submit jobs through the Snakemake Slurm executor.
 ./cluster/submit_workflow.sh workflow/config.yaml
+
+# Preprocess every staged recording, RT included, without the later stages.
+./cluster/submit_workflow.sh workflow/config.yaml preprocess_all
 ```
 
 Shared covariance, BEM, and source-space models are separate subject-level

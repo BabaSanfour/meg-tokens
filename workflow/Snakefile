@@ -4,7 +4,7 @@ from pathlib import Path
 
 from meg_tokens.core import parse_run_label
 from meg_tokens.io import DerivativeLayout
-from meg_tokens.meg.meg_bids import raw_meg_path
+from meg_tokens.meg.meg_bids import raw_meg_path, raw_meg_sessions
 from meg_tokens.workflows.decomposition import pca_derivative_path
 
 
@@ -183,6 +183,21 @@ def power_array(subject, run, band):
     )
 
 
+# Every staged recording, RT included: preprocessing covers the whole cohort,
+# while the targets below follow the two conditions of the group contrast.
+PREPROCESS_TARGETS = [
+    str(
+        LAYOUT.preprocessed_raw(
+            subject=subject,
+            run=spec.run,
+            condition=spec.condition,
+            processing=stream,
+        )
+    )
+    for subject in SUBJECTS
+    for spec, _ in raw_meg_sessions(BIDS_ROOT, subject)
+    for stream in STREAMS
+]
 ERP_TARGETS = [
     erp_array(subject, run)
     for subject in SUBJECTS
@@ -261,6 +276,11 @@ rule all:
         STATS_REPORT_TARGET,
 
 
+rule preprocess_all:
+    input:
+        PREPROCESS_TARGETS,
+
+
 rule behavior:
     output:
         str(STATE / "behavior" / "sub-{subject}.done")
@@ -291,15 +311,12 @@ rule preprocess:
         # they could disagree about bad channels and segments.
         expand(CLEAN_PATTERN, stream=STREAMS, allow_missing=True)
     params:
-        run=lambda wildcards: run_for_entities(
-            wildcards.condition, wildcards.run_number
-        ),
         streams=" ".join(STREAMS),
     shell:
         """
         meg-tokens --config {PROJECT_CONFIG:q} meg preprocess \
           --subjects {wildcards.subject:q} \
-          --run {params.run:q} \
+          --run {wildcards.run_number:q} \
           --condition {wildcards.condition:q} \
           --streams {params.streams}
         """
