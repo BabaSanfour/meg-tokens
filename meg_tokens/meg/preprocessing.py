@@ -1,7 +1,8 @@
 """Preprocessing: one shared trunk, then DSS and ICA, each persisted with the
 artifact it removed. Specification and rationale: ``docs/meg.md``.
 
-    read + compensate - ZapLine - bandpass - bad channels - bad segments (1)
+    read + compensate - flux jumps - ZapLine - bandpass - bad channels
+        - bad segments (1)
         -> DSS | ICA -> ASR (muscle) - bad segments (2) - resample - persist
 """
 
@@ -33,6 +34,19 @@ VEOG_CHANNEL = "EEG057"
 HEOG_CHANNEL = "EEG058"
 ECG_CHANNEL = "EEG059"
 REFERENCE_CHANNELS = (VEOG_CHANNEL, HEOG_CHANNEL, ECG_CHANNEL)
+
+# Flux jumps: a SQUID re-locks one flux quantum away, a step of about 360 pT
+# that the acquisition filter spreads over some 10 ms. Across the 319 raw
+# recordings the smallest is 345 pT and no other step exceeds 19 pT. A jump
+# also steps other channels by up to 19 pT at the same instant, where ordinary
+# data stays under 2 pT on the same statistic.
+JUMP_STEP_T = 1e-10
+JUMP_COUPLED_T = 3e-12
+JUMP_STATISTIC_WINDOW = 0.01
+JUMP_STATISTIC_GAP = 1 / 600
+JUMP_EDGE = 0.025
+JUMP_LEVEL_WINDOW = 0.05
+JUMP_PAD = 0.5
 
 # 20x and 0.002x the cohort noise floor, 6.243e-14 T.
 AMPLITUDE_PEAK_T = 1.2485926067065662e-12
@@ -76,6 +90,7 @@ __all__ = [
     "ocular_events",
     "read_staged_raw",
     "remove_muscle",
+    "repair_flux_jumps",
     "run_stream",
     "save_stream",
     "stream_paths",
@@ -157,6 +172,79 @@ def artifact_events(raw: mne.io.BaseRaw) -> dict[str, np.ndarray]:
     }
 
 
+def _step_statistic(data: np.ndarray, window: int, gap: int) -> np.ndarray:
+    """At every sample, the mean just after it minus the mean just before."""
+    total = np.concatenate(
+        [np.zeros((data.shape[0], 1)), np.cumsum(data, axis=1)], axis=1
+    )
+    at = np.arange(gap + window, data.shape[1] - gap - window)
+    statistic = np.zeros_like(data)
+    statistic[:, at] = (
+        total[:, at + gap + window] - total[:, at + gap]
+        - total[:, at - gap] + total[:, at - gap - window]
+    ) / window
+    return statistic
+
+
+def repair_flux_jumps(raw: mne.io.BaseRaw) -> tuple[mne.Annotations, list[dict]]:
+    """Take flux jumps out of the unfiltered recording, in place.
+
+    A jump is a step, so the high-pass would turn it into seconds of ringing
+    two hundred times the size of the signal, on every stage downstream. Here
+    the step is still a step: the level after it is brought back to the level
+    before, on every channel that moved, and the edge itself is bridged with a
+    straight line. Returns an annotation around each jump -- the bridged edge
+    is not data -- and what was repaired.
+    """
+    sfreq = float(raw.info["sfreq"])
+    picks = mne.pick_types(raw.info, meg=True, ref_meg=False, eeg=False, exclude=[])
+    data = raw._data[picks]
+    statistic = _step_statistic(
+        data,
+        int(round(JUMP_STATISTIC_WINDOW * sfreq)),
+        int(round(JUMP_STATISTIC_GAP * sfreq)),
+    )
+    edge = int(round(JUMP_EDGE * sfreq))
+    level = int(round(JUMP_LEVEL_WINDOW * sfreq))
+
+    largest = np.abs(statistic).max(axis=0)
+    above = np.flatnonzero(largest > JUMP_STEP_T)
+    # One step keeps the statistic above the level for as long as its windows
+    # straddle it, so samples closer together than the edge are one jump.
+    runs = np.split(above, np.flatnonzero(np.diff(above) > edge) + 1) if len(above) else []
+    jumps = []
+    for run in runs:
+        at = int(run[largest[run].argmax()])
+        moved = np.flatnonzero(
+            np.abs(statistic[:, at - 2 : at + 3]).max(axis=1) > JUMP_COUPLED_T
+        )
+        start, stop = max(at - edge, 1), min(at + edge, data.shape[1] - 1)
+        steps = {}
+        for channel in moved:
+            trace = data[channel]
+            step = np.median(trace[stop : stop + level]) - np.median(
+                trace[max(start - level, 0) : start]
+            )
+            trace[stop:] -= step
+            trace[start:stop] = np.linspace(
+                trace[start - 1], trace[stop], stop - start + 2
+            )[1:-1]
+            steps[raw.ch_names[picks[channel]]] = float(step)
+        jumps.append({"time": at / sfreq, "steps": steps})
+    raw._data[picks] = data
+
+    onsets = np.array([max(jump["time"] - JUMP_PAD, 0.0) for jump in jumps])
+    if raw.annotations.orig_time is not None:
+        onsets = onsets + raw.first_time
+    return (
+        mne.Annotations(
+            onsets, [2 * JUMP_PAD] * len(jumps), ["BAD_jump"] * len(jumps),
+            orig_time=raw.annotations.orig_time,
+        ),
+        jumps,
+    )
+
+
 def spectral_outlier_channels(
     raw: mne.io.BaseRaw, picks: np.ndarray, *, z_threshold: float = 4.0
 ) -> tuple[list[str], dict[str, float]]:
@@ -182,9 +270,12 @@ def spectral_outlier_channels(
 
 
 def build_trunk(raw: mne.io.BaseRaw, source_grade: int) -> tuple[mne.io.BaseRaw, dict]:
-    """ZapLine, bandpass, bad channels, bad segments -- once, shared by every stream.
+    """Flux jumps, ZapLine, bandpass, bad channels, bad segments -- once, shared
+    by every stream.
 
-    ZapLine runs on the unfiltered recording, while the harmonics still exist.
+    Jumps are repaired first, while each is still a step and nothing has
+    spread it. ZapLine runs on the unfiltered recording, while the harmonics
+    still exist.
     Bad channels are recorded and scored but not dropped: the decision is left
     to a later stage that can see the cohort distribution. Returns the trunk and
     what it found, keyed as the sidecar records it.
@@ -192,6 +283,7 @@ def build_trunk(raw: mne.io.BaseRaw, source_grade: int) -> tuple[mne.io.BaseRaw,
     from mne_denoise.zapline import ZapLine
 
     picks = mne.pick_types(raw.info, meg=True, ref_meg=False, eeg=False, exclude=[])
+    jump_annotations, jumps = repair_flux_jumps(raw)
     raw = ZapLine(
         sfreq=raw.info["sfreq"], line_freq=LINE_FREQ, n_harmonics=LINE_HARMONICS
     ).fit_transform(raw)
@@ -209,7 +301,7 @@ def build_trunk(raw: mne.io.BaseRaw, source_grade: int) -> tuple[mne.io.BaseRaw,
         raw, threshold=MUSCLE_Z, ch_type="mag", min_length_good=0.1,
         filter_freq=MUSCLE_BAND, n_jobs=1, verbose=False,
     )
-    annotations = amplitude + muscle
+    annotations = jump_annotations + amplitude + muscle
     raw.set_annotations(raw.annotations + annotations)
 
     spectral_bads, scores = spectral_outlier_channels(raw, picks)
@@ -227,6 +319,7 @@ def build_trunk(raw: mne.io.BaseRaw, source_grade: int) -> tuple[mne.io.BaseRaw,
         "bad_channels_spectral": sorted(spectral_bads),
         "bad_channels_lof": sorted(lof_bads),
         "channel_scores": scores,
+        "flux_jumps": jumps,
         "trunk_annotated_seconds": float(np.sum(annotations.duration)),
         "trunk_annotations": int(len(annotations)),
     }

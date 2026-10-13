@@ -132,12 +132,18 @@ its own artifact estimate: three MEG files per run per stream output.
 | # | step | parameters |
 |---|---|---|
 | 0 | read staged CTF; raise compensation to grade 3 if lower | 1200 Hz |
-| 1 | ZapLine on the **unfiltered** raw | `line_freq=60`, `n_harmonics=2`, fixed |
-| 2 | bandpass | 0.5–150 Hz, `firwin` |
-| 3 | bad channels — record and score, do not auto-drop | broadband spectral outlier over 1–150 Hz; `find_bad_channels_lof` |
-| 4 | bad segments, pass 1 — excluded from cleaner *fitting* | `annotate_amplitude` peak `1.2485926067065662e-12 T`, flat `1.2485926067065662e-16 T`; `annotate_muscle_zscore` at 110–140 Hz |
+| 1 | flux jumps — restore the level on every channel the jump moved, bridge the edge, annotate `BAD_jump` | step over 100 pT between 10 ms means; moved channels over 3 pT; 25 ms bridged either side; ±0.5 s annotated |
+| 2 | ZapLine on the **unfiltered** raw | `line_freq=60`, `n_harmonics=2`, fixed |
+| 3 | bandpass | 0.5–150 Hz, `firwin` |
+| 4 | bad channels — record and score, do not auto-drop | broadband spectral outlier over 1–150 Hz; `find_bad_channels_lof` |
+| 5 | bad segments, pass 1 — excluded from cleaner *fitting* | `annotate_amplitude` peak `1.2485926067065662e-12 T`, flat `1.2485926067065662e-16 T`; `annotate_muscle_zscore` at 110–140 Hz |
 
-ZapLine precedes the filter so the harmonics still exist. The trunk must stay
+Flux jumps come first because a jump is a step only until something filters
+it: the 0.5 Hz high-pass turns a 360 pT step into about six seconds of ringing
+that no cleaner removes. Twelve of the 319 recordings hold one jump each, on
+1 to 22 channels at once; each is one flux quantum (345–375 pT) or two. No
+other step in the cohort's raw data exceeds 19 pT, so the level sits in an
+empty decade. ZapLine precedes the filter so the harmonics still exist. The trunk must stay
 shared: computing bad channels or segments per stream would make the streams
 differ in two ways at once and the comparison uninterpretable.
 
@@ -152,10 +158,10 @@ differ in two ways at once and the comparison uninterpretable.
 
 | # | step |
 |---|---|
-| 5 | muscle — ASR on the magnetometers: cutoff 20, 0.5 s windows, `max_dims=0.25`, statistics high-passed at 80 Hz (4th-order Butterworth), calibrated on the recording itself |
-| 6 | bad segments, pass 2 — residual muscle the stream missed |
-| 7 | resample to 600 Hz — **last**, after the low-pass |
-| 8 | persist: cleaned raw, artifact estimate, sidecar |
+| 6 | muscle — ASR on the magnetometers: cutoff 20, 0.5 s windows, `max_dims=0.25`, statistics high-passed at 80 Hz (4th-order Butterworth), calibrated on the recording itself |
+| 7 | bad segments, pass 2 — residual muscle the stream missed |
+| 8 | resample to 600 Hz — **last**, after the low-pass |
+| 9 | persist: cleaned raw, artifact estimate, sidecar |
 
 ASR's statistics — calibration and the per-window decision to reconstruct —
 see only the data above 80 Hz, so muscle triggers it and alpha and evoked
@@ -171,9 +177,9 @@ Resampling earlier aliases; resampling before ZapLine folds the higher
 harmonics onto real signal.
 
 **Sidecar, per run per stream:** components or stages removed, the fraction
-of samples ASR reconstructed, bad channels with their scores, annotated
-segments and seconds retained, source compensation grade and whether it was
-raised, and the **rank** after cleaning — both cleaners remove spatial
+of samples ASR reconstructed, flux jumps repaired, bad channels with their
+scores, annotated segments and seconds retained, source compensation grade
+and whether it was raised, and the **rank** after cleaning — both cleaners remove spatial
 dimensions and the inverse operator must be told. ASR does not enter the rank:
 it reconstructs within windows rather than removing a fixed subspace.
 

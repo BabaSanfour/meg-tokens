@@ -6,6 +6,7 @@ from meg_tokens.meg.preprocessing import (
     REFERENCE_CHANNELS,
     STREAMS,
     artifact_events,
+    repair_flux_jumps,
     stream_paths,
 )
 
@@ -52,3 +53,35 @@ def test_saccades_are_split_by_the_direction_of_the_deflection():
     assert len(events["saccade_negative"]) == len(leftward)
     assert _found(events["saccade_positive"], rightward)
     assert _found(events["saccade_negative"], leftward)
+
+
+def test_a_flux_jump_is_repaired_and_a_large_slow_swing_is_left_alone():
+    """Only a step is a jump: the level is restored on every channel it moved."""
+    sfreq, seconds = 1200.0, 20
+    times = np.arange(int(sfreq * seconds)) / sfreq
+    rng = np.random.default_rng(0)
+    clean = 1e-13 * rng.standard_normal((3, len(times)))
+    clean[2] += _bumps(times, [12.0], 0.3, [4e-11])
+
+    after = times >= 8.0
+    stepped = clean.copy()
+    stepped[0, after] += 3.6e-10
+    stepped[1, after] -= 8e-12
+    raw = mne.io.RawArray(
+        stepped.copy(), mne.create_info(["MLT11", "MLT12", "MRT41"], sfreq, "mag"),
+        verbose=False,
+    )
+    annotations, jumps = repair_flux_jumps(raw)
+
+    assert len(jumps) == 1
+    assert abs(jumps[0]["time"] - 8.0) < 0.005
+    assert set(jumps[0]["steps"]) == {"MLT11", "MLT12"}
+    assert abs(jumps[0]["steps"]["MLT11"] - 3.6e-10) < 1e-12
+    assert list(annotations.description) == ["BAD_jump"]
+    assert annotations.onset[0] < 8.0 < annotations.onset[0] + annotations.duration[0]
+
+    repaired = raw.get_data()
+    outside = np.abs(times - 8.0) > 0.03
+    assert np.abs(repaired[:2, outside] - clean[:2, outside]).max() < 1e-12
+    assert np.abs(repaired[:2, ~outside]).max() < 1e-12
+    assert np.array_equal(repaired[2], stepped[2])
