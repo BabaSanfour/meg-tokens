@@ -214,6 +214,19 @@ differs by 0.4 dB at the median and 1.4 dB in one recording in ten, and 5.5%
 of fits stop without converging. The sidecar records
 `tonic_muscle_converged`.
 
+In the cohort run the stages do what the test predicted. The DSS stage
+removes 2 components at the median from a recording of the 23 and 7 from one
+of the nine, the ICA stage 1 and 5; 19% (DSS) and 38% (ICA) of the 23's
+recordings lose none, and none of the nine's. The component count equals the
+test's in 89% (DSS) and 82% (ICA) of recordings. Rim over the median sensor
+at 65–100 Hz after cleaning: DSS stream 1.5 dB in the nine against −0.5 dB in
+the 23, ICA stream 2.1 dB against 0.4 dB. The ICA stream starts higher (8.7
+dB in the nine against 7.1 dB after the DSS cleaner), so its stage removes
+more and still ends further from the 23. H02 stays highest in both streams
+(4.7 and 4.1 dB), with H18 in the DSS stream (4.5 dB). The count does not
+differ between Fast and Slow (3.9 and 3.8 DSS, 2.4 and 2.4 ICA). 12 of the
+319 ICA fits did not converge, 3 each in H08 and H29.
+
 Resampling earlier aliases; resampling before ZapLine folds the higher
 harmonics onto real signal.
 
