@@ -5,6 +5,7 @@ from pathlib import Path
 from meg_tokens.core import parse_run_label
 from meg_tokens.io import DerivativeLayout
 from meg_tokens.meg.meg_bids import raw_meg_path, raw_meg_sessions
+from meg_tokens.behavior.analyses.sequential_sampling import ROBUSTNESS_CONFIGURATIONS
 from meg_tokens.workflows.decomposition import pca_derivative_path
 
 
@@ -244,15 +245,28 @@ PCA_TARGET = str(
         extension=".npy",
     )
 )
-BEHAVIOR_REPORT_TARGET = str(
-    LAYOUT.path(
-        subject="group",
-        datatype="fig",
-        description="fast-vs-slow",
-        suffix="behavior",
-        extension=".png",
+# The behavioral stages each write many tables or figures, named inside the
+# package. The DAG tracks them by one marker per job under the workflow state.
+SSM = config.get("ssm", {})
+SSM_FIT_STARTS = SSM.get("fit_starts", 3)
+SSM_FOLDS = SSM.get("folds", 3)
+SSM_ROBUSTNESS_STARTS = SSM.get("robustness_starts", 1)
+SSM_EXCLUSION_STARTS = SSM.get("exclusion_starts", 2)
+SSM_EXCLUSION_RULE = "complete_token_log_alignment"
+SSM_RECOVERY_REPETITIONS = SSM.get("recovery_repetitions", 12)
+BEHAVIOR_STATE = STATE / "behavior"
+SSM_STATE = STATE / "ssm"
+SSM_AGGREGATES = [
+    str(SSM_STATE / f"{name}.done")
+    for name in (
+        "aggregate",
+        "evaluate-aggregate",
+        "robustness-aggregate",
+        "exclusion-robustness-aggregate",
+        "recovery-aggregate",
     )
-)
+]
+BEHAVIOR_REPORT_TARGET = str(BEHAVIOR_STATE / "report.done")
 STATS_REPORT_TARGET = str(
     LAYOUT.group_stats(
         conditions=CONDITIONS,
@@ -283,13 +297,170 @@ rule preprocess_all:
 
 rule behavior:
     output:
-        str(STATE / "behavior" / "sub-{subject}.done")
+        str(BEHAVIOR_STATE / "sub-{subject}.done")
     shell:
         """
         meg-tokens --config {PROJECT_CONFIG:q} behavior ingest \
           --subjects {wildcards.subject:q}
         mkdir -p $(dirname {output:q})
         touch {output:q}
+        """
+
+
+rule behavior_analyze:
+    input:
+        expand(str(BEHAVIOR_STATE / "sub-{subject}.done"), subject=SUBJECTS)
+    output:
+        touch(str(BEHAVIOR_STATE / "analyze.done"))
+    shell:
+        "meg-tokens --config {PROJECT_CONFIG:q} behavior analyze"
+
+
+rule behavior_characterization:
+    input:
+        rules.behavior_analyze.output
+    output:
+        touch(str(BEHAVIOR_STATE / "characterization.done"))
+    shell:
+        "meg-tokens --config {PROJECT_CONFIG:q} behavior characterization"
+
+
+rule ssm_fit:
+    input:
+        rules.behavior_analyze.output
+    output:
+        touch(str(SSM_STATE / "fit" / "sub-{subject}.done"))
+    threads: 8
+    shell:
+        """
+        meg-tokens --config {PROJECT_CONFIG:q} behavior ssm-fit \
+          --subjects {wildcards.subject:q} \
+          --n-starts {SSM_FIT_STARTS} \
+          --n-jobs {threads}
+        """
+
+
+rule ssm_aggregate:
+    input:
+        expand(str(SSM_STATE / "fit" / "sub-{subject}.done"), subject=SUBJECTS)
+    output:
+        touch(str(SSM_STATE / "aggregate.done"))
+    shell:
+        "meg-tokens --config {PROJECT_CONFIG:q} behavior ssm-aggregate"
+
+
+rule ssm_evaluate:
+    input:
+        rules.ssm_aggregate.output
+    output:
+        touch(str(SSM_STATE / "evaluate" / "sub-{subject}.done"))
+    shell:
+        """
+        meg-tokens --config {PROJECT_CONFIG:q} behavior ssm-evaluate \
+          --subjects {wildcards.subject:q} \
+          --folds {SSM_FOLDS} --n-starts 1 --recovery-repetitions 0
+        """
+
+
+rule ssm_evaluate_aggregate:
+    input:
+        expand(str(SSM_STATE / "evaluate" / "sub-{subject}.done"), subject=SUBJECTS)
+    output:
+        touch(str(SSM_STATE / "evaluate-aggregate.done"))
+    shell:
+        """
+        meg-tokens --config {PROJECT_CONFIG:q} behavior ssm-evaluate-aggregate \
+          --folds {SSM_FOLDS}
+        """
+
+
+rule ssm_robustness:
+    input:
+        rules.ssm_aggregate.output
+    output:
+        touch(str(SSM_STATE / "robustness" / "sub-{subject}_{configuration}.done"))
+    wildcard_constraints:
+        subject="[A-Za-z0-9]+",
+    threads: 8
+    shell:
+        """
+        meg-tokens --config {PROJECT_CONFIG:q} behavior ssm-robustness \
+          --subjects {wildcards.subject:q} \
+          --configuration {wildcards.configuration:q} \
+          --n-starts {SSM_ROBUSTNESS_STARTS} \
+          --n-jobs {threads}
+        """
+
+
+rule ssm_robustness_aggregate:
+    input:
+        expand(
+            str(SSM_STATE / "robustness" / "sub-{subject}_{configuration}.done"),
+            subject=SUBJECTS,
+            configuration=ROBUSTNESS_CONFIGURATIONS,
+        )
+    output:
+        touch(str(SSM_STATE / "robustness-aggregate.done"))
+    shell:
+        "meg-tokens --config {PROJECT_CONFIG:q} behavior ssm-robustness-aggregate"
+
+
+rule ssm_exclusion_robustness:
+    input:
+        rules.ssm_aggregate.output
+    output:
+        touch(str(SSM_STATE / "exclusion-robustness" / "sub-{subject}.done"))
+    threads: 8
+    shell:
+        """
+        meg-tokens --config {PROJECT_CONFIG:q} behavior ssm-exclusion-robustness \
+          --subjects {wildcards.subject:q} \
+          --rule {SSM_EXCLUSION_RULE} \
+          --n-starts {SSM_EXCLUSION_STARTS} \
+          --n-jobs {threads}
+        """
+
+
+rule ssm_exclusion_robustness_aggregate:
+    input:
+        expand(
+            str(SSM_STATE / "exclusion-robustness" / "sub-{subject}.done"),
+            subject=SUBJECTS,
+        )
+    output:
+        touch(str(SSM_STATE / "exclusion-robustness-aggregate.done"))
+    shell:
+        "meg-tokens --config {PROJECT_CONFIG:q} behavior ssm-exclusion-robustness-aggregate"
+
+
+rule ssm_recovery:
+    input:
+        # the truth region is drawn from the pooled fits
+        rules.ssm_aggregate.output
+    output:
+        touch(str(SSM_STATE / "recovery" / "rep-{repetition}.done"))
+    threads: 8
+    shell:
+        """
+        meg-tokens --config {PROJECT_CONFIG:q} behavior ssm-recovery \
+          --repetitions {SSM_RECOVERY_REPETITIONS} \
+          --repetition-index {wildcards.repetition} \
+          --n-starts {SSM_FIT_STARTS}
+        """
+
+
+rule ssm_recovery_aggregate:
+    input:
+        expand(
+            str(SSM_STATE / "recovery" / "rep-{repetition}.done"),
+            repetition=range(SSM_RECOVERY_REPETITIONS),
+        )
+    output:
+        touch(str(SSM_STATE / "recovery-aggregate.done"))
+    shell:
+        """
+        meg-tokens --config {PROJECT_CONFIG:q} behavior ssm-recovery-aggregate \
+          --repetitions {SSM_RECOVERY_REPETITIONS}
         """
 
 
@@ -499,19 +670,12 @@ rule pca:
 
 rule behavior_report:
     input:
-        expand(
-            str(STATE / "behavior" / "sub-{subject}.done"),
-            subject=SUBJECTS,
-        )
+        rules.behavior_characterization.output,
+        SSM_AGGREGATES,
     output:
-        BEHAVIOR_REPORT_TARGET
-    params:
-        subjects=" ".join(SUBJECTS)
+        touch(BEHAVIOR_REPORT_TARGET)
     shell:
-        """
-        meg-tokens --config {PROJECT_CONFIG:q} report behavior \
-          --subjects {params.subjects}
-        """
+        "meg-tokens --config {PROJECT_CONFIG:q} report behavior --figures all"
 
 
 rule statistics_report:

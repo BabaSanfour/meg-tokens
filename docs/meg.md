@@ -149,6 +149,12 @@ empty decade. ZapLine precedes the filter so the harmonics still exist. The trun
 shared: computing bad channels or segments per stream would make the streams
 differ in two ways at once and the comparison uninterpretable.
 
+The muscle pass uses z = 7. At z = 6, 7 and 8 it annotates 2.15–2.63% of a
+recording at the median, and what it annotates is 8.1–8.6 dB richer in
+110–140 Hz power than the rest, so all three find muscle. The paper excluded
+jaw-clenching segments by eye; about 2.4% of a recording is taken as that
+amount.
+
 **Streams.**
 
 | stream | method |
@@ -306,12 +312,6 @@ field after it.
 
 **Open.**
 
-- **Muscle z-threshold.** `annotate_muscle_zscore` at z=6/7/8 annotates
-  2.15–2.63% of a recording at the median and scores 8.1–8.6 dB enrichment —
-  all three *find muscle*. They were previously rejected on a 1% coverage
-  budget, which is a different question from whether the detector works. The
-  paper excludes jaw-clenching segments deliberately, so ~2.4% may be the
-  correct amount; derive the coverage limit from that intent, not a round number.
 - **Preprocessing / autoreject boundary** — see Epoching.
 - **Evoked response on the occipital rim.** The tonic muscle stages shrink it
   in the nine people with tonic muscle (see Streams); noise or signal is

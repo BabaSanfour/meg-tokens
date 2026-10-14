@@ -16,6 +16,57 @@ set-resources:
     slurm_partition: cpubase_bycore_b1
     mem_mb: 16000
     runtime: 180
+  # The behavioral stages mirror what their Slurm scripts asked for. b1 takes
+  # jobs up to 3 h, b2 up to 12 h.
+  behavior:
+    slurm_partition: cpubase_bycore_b1
+    runtime: 60
+  behavior_analyze:
+    slurm_partition: cpubase_bycore_b1
+    mem_mb: 16000
+    runtime: 60
+  behavior_characterization:
+    slurm_partition: cpubase_bycore_b1
+    mem_mb: 16000
+    runtime: 60
+  behavior_report:
+    slurm_partition: cpubase_bycore_b1
+    mem_mb: 16000
+    runtime: 60
+  ssm_fit:
+    slurm_partition: cpubase_bycore_b2
+    mem_mb: 16000
+    runtime: 480
+  ssm_aggregate:
+    slurm_partition: cpubase_bycore_b1
+    runtime: 60
+  ssm_evaluate:
+    slurm_partition: cpubase_bycore_b2
+    runtime: 720
+  ssm_evaluate_aggregate:
+    slurm_partition: cpubase_bycore_b1
+    runtime: 60
+  ssm_robustness:
+    slurm_partition: cpubase_bycore_b2
+    mem_mb: 16000
+    runtime: 480
+  ssm_robustness_aggregate:
+    slurm_partition: cpubase_bycore_b1
+    runtime: 60
+  ssm_exclusion_robustness:
+    slurm_partition: cpubase_bycore_b2
+    mem_mb: 24000
+    runtime: 720
+  ssm_exclusion_robustness_aggregate:
+    slurm_partition: cpubase_bycore_b1
+    runtime: 60
+  ssm_recovery:
+    slurm_partition: cpubase_bycore_b2
+    mem_mb: 24000
+    runtime: 720
+  ssm_recovery_aggregate:
+    slurm_partition: cpubase_bycore_b1
+    runtime: 60
   epochs:
     mem_mb: 64000
     runtime: 1440
