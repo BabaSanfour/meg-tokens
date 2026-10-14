@@ -119,7 +119,7 @@ correction. The head frame and the digitizer frame disagree by 2–8 mm and a
 subject's head frame drifts between its own sessions, which is why the fit is
 per-subject and the correction per-session.
 
-### Preprocessing · `implemented, not yet run as a pipeline stage`
+### Preprocessing · `run on the cohort`
 
 Two cleaners run on one shared trunk and are followed by one shared muscle
 step, so the streams differ **only** in the cleaner. Both streams are run on
@@ -193,6 +193,62 @@ is not usable: its threshold is set from the segment's extremes, so it reports
 315 s, against a cohort median of 16.9/min. R peaks come from
 `find_ecg_events` on `EEG059`, which is stable to within 1.1% across lengths.
 
+**Cohort check.** Both streams were run and measured on all 319 recordings.
+Band-power and event-locked figures are from the run before the flux-jump
+repair; the 307 recordings without a jump came out identical in every sidecar
+field after it.
+
+- *Rank.* DSS removes 20 dimensions at the median (rank about 250), ICA 3
+  components (rank about 267).
+- *Cardiac and ocular.* After DSS the event-locked averages for heartbeat,
+  blinks and saccades sit at the level of averages locked to random events.
+  ICA leaves the cardiac average 6.3 dB above that level at the median, more
+  than 6 dB in 174 recordings, and selects no cardiac component in four of
+  H16's. 28 saccade stages removed nothing, 20 of them for lack of events.
+- *Spectrum, in unannotated time away from blinks and saccades.* DSS takes
+  1.3 dB off alpha and adds 0.9 dB above 80 Hz (positive in 308 recordings);
+  the gain is there before ASR. ICA takes 0.35 dB off alpha and 0.3 dB above
+  80 Hz. Neither change differs between Fast and Slow within subjects (DSS
+  above 80 Hz: -0.06 dB, 95% interval about +/-0.20), so neither biases the
+  contrast, but the DSS change varies more between recordings (spread of
+  Fast minus Slow 0.56 dB against 0.15 for ICA above 80 Hz, 0.36 against 0.07
+  in alpha): DSS-stream power is the noisier of the two.
+- *Muscle segments.* ASR lowers 110-140 Hz power inside annotated muscle by
+  2.8 dB after DSS and 4.5 dB after ICA.
+- *Flux jumps.* Twelve recordings, one jump each: H04 Fast 3, H06 Fast 4, H10
+  Slow 2, H13 Fast 4, H19 Fast 3, H21 Slow 3, H22 RT 2, H23 Fast 2, H24 RT 2,
+  H25 Slow 3, H27 Slow 4, H30 Fast 2. With the repair the jumped channels peak
+  at 1-4 pT after either cleaner, from as much as 190 pT without it.
+- *Bad channels.* The detectors flagged 270 channels in 72 recordings and none
+  is a faulty sensor, so nothing is interpolated or dropped. 90 flags were the
+  flux jumps. 119 were ocular field on the anterior temporal sensors
+  (`MRT41`, `MLT31`, `MRT32` and neighbours), which both cleaners remove. 34
+  were neck muscle. The rest were large slow deflections shared with the
+  neighbouring sensors. Flagged channels correlate with their neighbours like
+  any other (0.93 against 0.94), no channel is flat, and only 16 of 142
+  subject-channel pairs recur in half the subject's runs. Fitting DSS on the
+  unflagged channels only changes nothing on them. A power measure pooled
+  over channels is dominated by any channel carrying a jump or a burst;
+  measure per channel.
+- *Neck muscle.* A plateau from about 20 to 100 Hz on the occipital rim
+  (`MZO02`, `MZO03`, `MLO41`, `MLO51`, `MRO51` and neighbours), fading with
+  distance and present through the whole recording. The same sensors sit
+  within 2 dB of the array in the same-day empty-room recording of all 31
+  subjects that have one, so it is the subject. Rim over the subject's median
+  sensor, 40-100 Hz: H02 15.5 dB, H04 13.0, H16 11.0, H18 8.8, H21 8.5, H24
+  8.0, H29 7.3, H03 7.0, H01 6.5. ASR is calibrated on the recording itself,
+  so tonic muscle counts as its baseline and is barely reduced. A limit on
+  results above about 20 Hz at the back of the head for these nine.
+- *H10.* From its fourth recording on, bursts of 20-50 pT at 0.5-3 Hz on
+  `MRT41`, `MRT51`, `MRT52`, `MRT42`. Elsewhere in the cohort the slow field
+  at the helmet edge follows the EOG channels (64% explained at the median,
+  7% by the head-position coils); in H10 the coils explain about 55% and the
+  EOG about 5%. Something magnetic near the right temple moves with the head.
+  Neither cleaner removes it. On the raw data about 14% of 3 s windows exceed
+  4 pT peak to peak, 33-41% in Fast 3, Fast 4 and Slow 4.
+- *Unexplained.* `MZF02` correlates with its neighbours at about 0.65 in 13
+  subjects, with normal power.
+
 **Open.**
 
 - **Muscle z-threshold.** `annotate_muscle_zscore` at z=6/7/8 annotates
@@ -202,6 +258,11 @@ is not usable: its threshold is set from the segment's extremes, so it reports
   paper excludes jaw-clenching segments deliberately, so ~2.4% may be the
   correct amount; derive the coverage limit from that intent, not a round number.
 - **Preprocessing / autoreject boundary** — see Epoching.
+- **Tonic neck muscle.** Not addressed by ASR (see Cohort check). A DSS stage
+  biased to 20-140 Hz power is the candidate if high-frequency results at the
+  back of the head are wanted; untested.
+- **H10.** No subject-specific cleaning so far: count its surviving epochs
+  after rejection and decide on exclusion from that.
 
 ### Epoching · `todo`
 
