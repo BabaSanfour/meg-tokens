@@ -1,38 +1,64 @@
-"""Event alignment, epoch construction, and epoch derivative persistence."""
+"""Trial-locked epochs from the cleaned recordings, with behavioral metadata.
 
-import os
+The go cue is the one event matched to the behavioral log trial by trial, so
+it anchors every lock: the others sit at a behavioral offset from it (button
+press at ``rawRT``, feedback at ``tTrialEnd - tGO``, decision at ``dt_ms``,
+the press minus the subject's hand-specific motor baseline). Epochs are cut
+from the continuous recording with a margin on both sides of the analysis
+window, so band-pass and Hilbert edges fall outside it; an epoch is dropped
+when its analysis window, not its margin, touches a ``BAD`` annotation or
+leaves the recording. Near the ends of a recording the margin is shorter, and
+zero beyond the last recorded sample.
+"""
+
+from __future__ import annotations
+
 import json
+from collections import Counter
+from pathlib import Path
+import mne
 import numpy as np
 import pandas as pd
-import mne
-from pathlib import Path
-from typing import Optional, Tuple
+from mne_bids import BIDSPath
+from mne_bids.read import events_file_to_annotation_kwargs
 
 from meg_tokens.behavior.schema import OUTCOME_NEVER_STARTED
 from meg_tokens.behavior.trials import started_trials
-from meg_tokens.core import normalize_subject_id, parse_run_label
-from meg_tokens.io import DerivativeLayout, ensure_dir, save_table, sidecar_path
+from meg_tokens.core import normalize_subject_id
+from meg_tokens.io import sidecar_path
 
 
-DEFAULT_EVENT_IDS = {
-    'go': {'Go': 524288},
-    'start': {'Start': 262144},
-    'enter': {'Enter': 1048576},
-    'feedback': {'Feedback': 2097152},
+# Analysis windows in seconds, the paper's: -500/+1000 ms around the first
+# token jump, -1500/+2000 ms around press, feedback and decision.
+WINDOWS = {
+    "go": (-0.5, 1.0),
+    "enter": (-1.5, 2.0),
+    "feedback": (-1.5, 2.0),
+    "decision": (-1.5, 2.0),
 }
+PADDING = 1.0
 
-SUBJECT_EVENT_OVERRIDES = {
-    'H06': {
-        'go': {'Go': 262144},
-        'start': {'Start': 524288},
-    }
-}
+# The RT blocks measure the motor baseline that decision time subtracts; their
+# trials are not analysed, so they are not epoched.
+EPOCH_CONDITIONS = ("Fast", "Slow")
 
-# The three lookups below normalize, unlike the rest of the pipeline, because
-# a miss here is silent: an unmatched key means a known-bad run is quietly
-# treated as ordinary rather than raising. Path builders can trust the CLI's
-# canonical labels because a wrong one fails loudly; a known-issues table
-# cannot.
+# Stage 1 timing columns carried next to the trial features.
+TIMING_COLUMNS = ["tGO", "tEnterTarget", "tTrialEnd"]
+
+
+# The three lookups below normalize the subject, unlike the rest of the
+# pipeline, because a miss here is silent: an unmatched key means a known-bad
+# run is quietly treated as ordinary rather than raising.
+
+# Runs whose MEG and behavioral trial sequences agree throughout and differ
+# only at the trailing boundary: extra MEG trial-start pulses with no logged
+# trial (H03RT1, +1) or logged trials MEG never captured (H06Slow2, -12).
+# Each was verified two ways: one alignment offset separating from the next
+# best by 100-1000x at sub-ms error (``raw_staging.fingerprint_candidates``),
+# and trial-start to go-cue latency matching tGO to 1.6-4.25 ms. Truncating
+# the longer side is safe because the discrepancy sits only at the end.
+# H12Slow2 has irregularities at both ends and is handled by
+# KNOWN_UNRECOVERABLE_TRIALS instead. Evidence in docs/meg.md.
 KNOWN_TRAILING_TRIAL_MISMATCHES = {
     ('H01', 'Fast', '2'), ('H01', 'Fast', '3'), ('H01', 'Fast', '4'), ('H01', 'RT', '1'), ('H01', 'RT', '2'), ('H01', 'Slow', '3'),
     ('H01', 'Slow', '4'), ('H03', 'RT', '1'), ('H03', 'RT', '2'), ('H03', 'Slow', '4'), ('H04', 'RT', '1'),
@@ -56,543 +82,205 @@ KNOWN_TRAILING_TRIAL_MISMATCHES = {
     ('H32', 'RT', '2'),
 }
 
-
-def mismatch_policy(subject: str, condition: Optional[str], run: str) -> str:
-    """Return the on_mismatch policy for synchronize_events_and_behavior.
-
-    Defaults to "error" for every run except the confirmed-safe ones in
-    KNOWN_TRAILING_TRIAL_MISMATCHES, which resolve to "truncate".
-
-    Those 114 runs all show the same structural pattern at their trailing
-    boundary: after excluding OUTCOME_NEVER_STARTED trials, the recording's
-    trial-start pulses align with TDMS's own trial sequence for their entire
-    length except at the very end, where either MEG has one or more extra
-    trial-start pulses with no behavioral log entry (a trial that was
-    triggered but never got written -- e.g. H03RT1, delta +1) or TDMS logged
-    trials MEG never captured a matching start pulse for (e.g. H06Slow2,
-    delta -12). Every one of these 114 runs was individually verified two
-    independent ways: (1) an exhaustive per-subject scan (every .ds file for
-    that subject, not just the nearest-timestamp guess) finds one alignment
-    offset that separates from the next-best by 100-1000x, at sub-ms mean
-    error -- that scan is now
-    ``meg_tokens.meg.raw_staging.fingerprint_candidates``, which Stage 0 uses
-    to identify recordings in the first place; (2) the
-    trial-start->go-cue latency on the aligned (non-boundary)
-    portion matches TDMS tGO to within 1.6-4.25ms across all of them, zero
-    exceptions -- confirming the alignment is correct, not coincidental.
-    Full per-run evidence is in docs/meg.md. `truncate`
-    (drop the extra tail from whichever side is longer) is safe for all of
-    them because the discrepancy is confirmed to sit only at the trailing
-    boundary, never scattered through the run and never at the front.
-
-    One run, H12Slow2, has irregularities at *both* ends and is deliberately
-    excluded here pending manual review, not auto-truncated. Runs needing a
-    reconstructed go-cue rather than a trimmed trial -- H02RT1 (its entire
-    go channel is missing; the same trailing-start-pulse surplus is present
-    but reconstruction handles it directly, so it is intentionally *not*
-    listed here) and 20 others with a single interior dropout -- are handled
-    separately by KNOWN_GO_RECONSTRUCTION_RUNS / reconstruct_missing_go_events.
-    """
-    key = (normalize_subject_id(subject), condition, str(run))
-    return "truncate" if key in KNOWN_TRAILING_TRIAL_MISMATCHES else "error"
-
-
-# Trials with no MEG event at all -- no trial-start pulse, let alone a
-# go-cue -- despite being a real, completed trial in TDMS. Distinct from
-# OUTCOME_NEVER_STARTED (which is about the behavioral log, not the MEG
-# recording) and from KNOWN_TRAILING_TRIAL_MISMATCHES (a single boundary
-# discrepancy, fixable by truncation): these trials sit in the *middle* of
-# an otherwise-recoverable run, unrecoverable because the MEG recording
-# itself doesn't cover them. Currently just H12Slow2 trial 2: the recording
-# started about 3 trials after TDMS logging began that file, missing
-# trials 1-3 entirely; trials 1 and 3 are already excluded as
-# OUTCOME_NEVER_STARTED, leaving trial 2 -- a real, normal trial -- as the
-# only one needing this explicit exclusion. Verified: after dropping it, the
-# remaining 57 trials match MEG's 57 go events exactly, no truncation
-# needed (the run's other artifact, one trailing extra trial-start pulse
-# with no go-cue, is already invisible to go-alignment since it's never a
-# candidate "Go" event). See docs/meg.md.
+# Real trials with no MEG event at all, in the middle of an otherwise
+# recoverable run. H12Slow2 trial 2: the recording started about three trials
+# after the behavioral log; trials 1 and 3 are never-started, trial 2 is real.
+# Without it the remaining 57 trials match MEG's 57 go events exactly.
 KNOWN_UNRECOVERABLE_TRIALS = {
     ('H12', 'Slow', '2'): {2},
 }
 
-
-def exclude_unrecoverable_trials(
-    subject: str, condition: Optional[str], run: str, behavior_df: pd.DataFrame
-) -> pd.DataFrame:
-    """Drop trials in KNOWN_UNRECOVERABLE_TRIALS for this run, if any.
-
-    Call before mismatch_policy/synchronize_events_and_behavior so the
-    trial-count comparison reflects what MEG can actually cover.
-    """
-    key = (normalize_subject_id(subject), condition, str(run))
-    trial_indices = KNOWN_UNRECOVERABLE_TRIALS.get(key)
-    if not trial_indices:
-        return behavior_df
-    return behavior_df.loc[~behavior_df['nTrialIndex'].isin(trial_indices)]
-
-
-# Runs where one or more trials have a real trial-start pulse but no go-cue
-# pulse in the raw MEG recording -- a genuine trigger dropout. H02RT1 is the
-# extreme case (its entire go channel is missing, all ~39 trials); in the
-# other 20 the dropout is a single trial, and in every one of those checked
-# it is the run's *final* trial: the recording stopped between that trial's
-# start pulse and its go cue. Verified per-run: trial-start pulses align with
-# TDMS's nInitialTime sequence at sub-ms precision across the whole run, and
-# for the trials that *do* have a go-cue, its latency after trial-start
-# matches TDMS tGO to ~2-4ms (measured at 3.20 +/- 1.19ms over 2230 real
-# trials) -- the same calibration reconstruct_missing_go_events uses to fill
-# the gap. Reproduce with scripts/qc/meg_trial_pulse_qc.py; see also
-# docs/meg.md.
-#
-# on_mismatch="truncate" would also "fix" a final-trial dropout, by dropping
-# that trial. Reconstruction is preferred because it keeps it: the trial's
-# start pulse, tGO and behavioral record are all intact, so there is no
-# reason to discard real data over a missing trigger edge.
+# Runs that lose their final trial's go cue: the recording stopped between
+# that trial's start pulse and its go cue. Trial starts align with the
+# behavioral log at sub-ms precision across these runs, and real go cues follow
+# start + tGO by 3.20 +/- 1.19 ms over 2230 trials; each run's own mean lag
+# places the missing one. Reproduce with scripts/qc/meg_trial_pulse_qc.py.
 KNOWN_GO_RECONSTRUCTION_RUNS = {
-    ('H01', 'Slow', '1'), ('H02', 'RT', '1'), ('H04', 'Fast', '2'), ('H05', 'Fast', '4'), ('H06', 'Fast', '2'), ('H06', 'Slow', '4'),
+    ('H01', 'Slow', '1'), ('H04', 'Fast', '2'), ('H05', 'Fast', '4'), ('H06', 'Fast', '2'), ('H06', 'Slow', '4'),
     ('H07', 'Slow', '2'), ('H07', 'Slow', '4'), ('H08', 'Fast', '2'), ('H08', 'Slow', '1'), ('H10', 'Fast', '1'), ('H10', 'Slow', '3'),
     ('H10', 'Slow', '4'), ('H14', 'Fast', '3'), ('H17', 'Fast', '4'), ('H21', 'Fast', '2'), ('H24', 'Fast', '1'), ('H26', 'Slow', '1'),
     ('H27', 'Fast', '3'), ('H28', 'Slow', '4'), ('H32', 'Fast', '3'),
 }
 
-DEFAULT_GO_LAG_S = 0.004  # hardware trigger lag; see reconstruct_missing_go_events
+
+def _key(subject: str, condition: str, run) -> tuple[str, str, str]:
+    return normalize_subject_id(subject), condition, str(run)
 
 
-def needs_go_reconstruction(subject: str, condition: Optional[str], run: str) -> bool:
-    """Whether this run is a confirmed candidate for reconstruct_missing_go_events."""
-    key = (normalize_subject_id(subject), condition, str(run))
-    return key in KNOWN_GO_RECONSTRUCTION_RUNS
+def read_triggers(bids_root: str | Path, subject: str, condition: str, run, *, task: str = "tokens") -> dict[str, np.ndarray]:
+    """Trigger onsets in seconds from the first sample, by name, from the raw BIDS ``events.tsv``.
 
-
-def reconstruct_missing_go_events(
-    events: np.ndarray,
-    behavior_df: pd.DataFrame,
-    sfreq: float,
-    start_code: int,
-    go_code: int,
-    tolerance_s: float = 0.5,
-) -> np.ndarray:
-    """Synthesize go-cue events for trials with a trial-start pulse but no
-    matching go-cue pulse in `events`.
-
-    `behavior_df` must be the *full*, unfiltered trial sequence in
-    nTrialIndex order, including OUTCOME_NEVER_STARTED rows -- trial i
-    (0-indexed) is paired positionally with the i-th trial-start pulse, so
-    every trial (whether or not it has its own go-cue) must stay in its
-    original position to keep that correspondence correct for every trial
-    after it. OUTCOME_NEVER_STARTED trials never get a synthetic go-cue
-    (they structurally have none by design, confirmed on all 229 real
-    occurrences -- see docs/meg.md) but their trial-start
-    pulse still counts for positional indexing. This positional pairing is
-    valid for the runs this is meant for, where trial-start pulses have
-    already been confirmed (see KNOWN_GO_RECONSTRUCTION_RUNS) to align with
-    TDMS's trial sequence from the first trial onward, with any
-    extra/unlogged pulses only trailing past the last real trial (so they
-    fall outside range(n_trials) and are never touched here). Raises if
-    there are fewer trial-start pulses than behavior rows, since that means
-    this precondition doesn't hold.
-
-    The go-cue lag (go pulse time - (trial-start time + tGO)) is calibrated
-    from this run's own trials that do have a real go-cue -- a small, highly
-    consistent hardware delay (~2-4ms across every subject checked; see
-    docs/meg.md). Falls back to DEFAULT_GO_LAG_S only when a
-    run has zero real go-cues to calibrate from (H02RT1).
+    Staging writes that file from the trigger channel with each subject's own
+    codes (H06 swaps Start and Go), so the names here are already resolved.
     """
-    starts = np.sort(events[events[:, 2] == start_code][:, 0])
-    go_times = events[events[:, 2] == go_code][:, 0] / sfreq
+    path = BIDSPath(
+        root=Path(bids_root), subject=subject, task=task, acquisition=condition.lower(),
+        run=str(run), datatype="meg", suffix="events", extension=".tsv",
+    )
+    events = events_file_to_annotation_kwargs(path.fpath, verbose=False)
+    onsets, names = events["onset"], np.asarray(events["description"])
+    return {name: np.sort(onsets[names == name]) for name in np.unique(names)}
 
-    n_trials = len(behavior_df)
+
+def reconstruct_missing_go(
+    starts: np.ndarray, gos: np.ndarray, behavior: pd.DataFrame, tolerance_s: float = 0.5,
+) -> np.ndarray:
+    """Place a go cue at ``start + tGO + lag`` for every started trial without one.
+
+    ``behavior`` is the full trial sequence in nTrialIndex order, never-started
+    rows included: trial i is paired with the i-th trial-start pulse, so every
+    row has to keep its position. Never-started trials get no go cue. The lag is
+    the mean over this run's real go cues.
+    """
+    n_trials = len(behavior)
     if len(starts) < n_trials:
         raise ValueError(
-            f"Only {len(starts)} trial-start pulses for {n_trials} behavior "
-            "rows -- cannot reconstruct go events without a start pulse to "
-            "anchor each trial."
+            f"Only {len(starts)} trial-start pulses for {n_trials} behavior rows: "
+            "no start pulse to anchor each trial."
         )
-
-    tgo_s = behavior_df['tGO'].to_numpy(dtype=float) / 1000.0
-    never_started = (behavior_df['nOutcome'] == OUTCOME_NEVER_STARTED).to_numpy()
-    start_times = starts[:n_trials] / sfreq
-    expected_go_times = start_times + tgo_s
+    tgo = behavior["tGO"].to_numpy(dtype=float) / 1000.0
+    never_started = (behavior["nOutcome"] == OUTCOME_NEVER_STARTED).to_numpy()
+    expected = starts[:n_trials] + tgo
 
     matched = np.full(n_trials, np.nan)
-    for i in range(n_trials):
-        if never_started[i]:
-            continue
-        window = go_times[
-            (go_times > start_times[i]) & (go_times < start_times[i] + tgo_s[i] + tolerance_s)
-        ]
-        if len(window) > 0:
-            matched[i] = window[np.argmin(np.abs(window - expected_go_times[i]))]
-
-    have_go = ~np.isnan(matched)
-    calibrated_lags = matched[have_go] - expected_go_times[have_go]
-    lag_s = float(calibrated_lags.mean()) if len(calibrated_lags) > 0 else DEFAULT_GO_LAG_S
-
-    missing = np.where(~have_go & ~never_started)[0]
-    if len(missing) == 0:
-        return events
-
-    synthetic_samples = np.round((expected_go_times[missing] + lag_s) * sfreq).astype(int)
-    synthetic = np.column_stack([
-        synthetic_samples,
-        np.zeros(len(missing), dtype=events.dtype),
-        np.full(len(missing), go_code, dtype=events.dtype),
-    ])
-    augmented = np.vstack([events, synthetic.astype(events.dtype)])
-    return augmented[augmented[:, 0].argsort()]
+    for i in np.flatnonzero(~never_started):
+        window = gos[(gos > starts[i]) & (gos < expected[i] + tolerance_s)]
+        if len(window):
+            matched[i] = window[np.argmin(np.abs(window - expected[i]))]
+    have = ~np.isnan(matched)
+    if not have.any():
+        raise ValueError("no real go cue to calibrate the lag from")
+    lag = float(np.mean(matched[have] - expected[have]))
+    missing = ~have & ~never_started
+    return np.sort(np.concatenate([gos, expected[missing] + lag]))
 
 
-def get_event_id(align_to: str, subject_id: Optional[str] = None) -> dict:
-    """Return event IDs, including known subject-specific legacy overrides."""
-    key = align_to.lower()
-    if key not in DEFAULT_EVENT_IDS:
-        raise ValueError(f"Unknown alignment event: {align_to}")
-    if subject_id is not None:
-        subject = subject_id
-        override = SUBJECT_EVENT_OVERRIDES.get(subject, {}).get(key)
-        if override is not None:
-            return override.copy()
-    return DEFAULT_EVENT_IDS[key].copy()
+def align_go(
+    triggers: dict[str, np.ndarray], behavior: pd.DataFrame, subject: str, condition: str, run,
+) -> tuple[np.ndarray, pd.DataFrame, dict]:
+    """Pair go-cue onsets with the started trials of one run's behavioral table.
 
-
-def find_behavior_table(
-    behavior_root: str,
-    subject_id: str,
-    run_id: str,
-    condition: Optional[str] = None,
-) -> Path:
-    """Find a Stage 1 behavior TSV derivative for a subject/run."""
-    return DerivativeLayout(behavior_root).find_behavior(
-        subject=subject_id,
-        run=run_id,
-        condition=condition,
-    )
-
-
-def synchronize_events_and_behavior(
-    events: np.ndarray,
-    event_ids: dict,
-    behavior_df: pd.DataFrame,
-    on_mismatch: str = "error",
-) -> Tuple[np.ndarray, pd.DataFrame]:
-    """Synchronize matching MEG events with behavior rows.
-
-    Trials with nOutcome == OUTCOME_NEVER_STARTED never received a go cue --
-    tGO == 0, no tokens shown, nChoiceMade == 0 -- so they structurally have
-    no MEG event to align to. They are excluded from the count/alignment
-    here (not dropped from the Stage 1 behavior TSV itself), otherwise every
-    run containing one would show a spurious trial-count mismatch. Confirmed
-    on all 229 occurrences in the real dataset; see docs/meg.md.
+    Returns the onsets, the matching trials and what the known-issue tables
+    changed. A count mismatch outside KNOWN_TRAILING_TRIAL_MISMATCHES raises.
     """
-    matching_codes = list(event_ids.values())
-    matched_events = events[np.isin(events[:, 2], matching_codes)]
+    key = _key(subject, condition, run)
+    gos = triggers.get("Go", np.array([]))
+    n_real = len(gos)
+    if key in KNOWN_GO_RECONSTRUCTION_RUNS:
+        gos = reconstruct_missing_go(triggers["Start"], gos, behavior)
+    n_reconstructed = len(gos) - n_real
+    unrecoverable = KNOWN_UNRECOVERABLE_TRIALS.get(key, set())
+    trials = started_trials(behavior.loc[~behavior["nTrialIndex"].isin(unrecoverable)])
+    trials = trials.reset_index(drop=True)
 
-    behavior_df = started_trials(behavior_df)
-
-    n_events = len(matched_events)
-    n_trials = len(behavior_df)
-    if n_events == 0:
-        raise ValueError(f"No MEG events matched event IDs: {event_ids}")
-
-    if n_events != n_trials:
-        message = f"Trial count mismatch: MEG events={n_events}, behavior rows={n_trials}"
-        if on_mismatch == "error":
-            raise ValueError(message)
-        if on_mismatch == "truncate":
-            n_keep = min(n_events, n_trials)
-            matched_events = matched_events[:n_keep]
-            behavior_df = behavior_df.iloc[:n_keep].copy()
-        else:
-            raise ValueError("on_mismatch must be 'error' or 'truncate'")
-
-    metadata_df = behavior_df.copy().reset_index(drop=True)
-    final_events = matched_events[:len(metadata_df)]
-    metadata_df['meg_sample'] = final_events[:, 0]
-    metadata_df['meg_trigger_value'] = final_events[:, 2]
-    return final_events, metadata_df
-
-def build_epochs_with_metadata(
-    raw: mne.io.Raw,
-    events: np.ndarray,
-    event_ids: dict,
-    tmin: float,
-    tmax: float,
-    behavior_df: pd.DataFrame,
-    picks: np.ndarray = None,
-    baseline: tuple = None,
-    reject: dict = None,
-    preload: bool = True,
-    on_mismatch: str = "error",
-) -> mne.Epochs:
-    """
-    Builds an MNE Epochs object with behavioral dataframe attached as metadata.
-    Handles alignment and shape mismatch between events and behavioral trials.
-    
-    Args:
-        raw: Filtered mne.io.Raw object.
-        events: Events array returned by mne.find_events().
-        event_ids: Event IDs dictionary (e.g. {"Go": 524288}).
-        tmin: Start time before event in seconds.
-        tmax: End time after event in seconds.
-        behavior_df: Pandas DataFrame containing behavioral log trials.
-        picks: Channel selection indices.
-        baseline: Baseline correction time interval (e.g. (None, 0)).
-        reject: Rejection thresholds (e.g. dict(mag=5e-12)).
-        preload: If True, load data into memory.
-        
-    Returns:
-        mne.Epochs object with synced metadata.
-    """
-    final_events, metadata_df = synchronize_events_and_behavior(events, event_ids, behavior_df, on_mismatch=on_mismatch)
-    
-    # Build Epochs
-    epochs = mne.Epochs(
-        raw,
-        final_events,
-        event_id=event_ids,
-        tmin=tmin,
-        tmax=tmax,
-        picks=picks,
-        baseline=baseline,
-        reject=reject,
-        preload=preload,
-        metadata=metadata_df,
-        reject_by_annotation=False
-    )
-    
-    return epochs
-
-def save_epochs_and_events(
-    epochs: mne.Epochs,
-    output_dir: str,
-    subject_id: str,
-    run_id: str,
-    bids_format: bool = True,
-    condition: Optional[str] = None,
-    align_to: str = "go",
-) -> dict:
-    """
-    Saves Epochs and event files. Supports standard MNE files and BIDS-compliant tsv formats.
-    
-    Args:
-        epochs: mne.Epochs object (with metadata attached).
-        output_dir: Directory where files should be written.
-        subject_id: Subject label (e.g. 'H1', 'H32').
-        run_id: Run or condition label (e.g. 'Slow1', 'RT2').
-        bids_format: If True, uses BIDS-compliant directory structure and filenames.
-        
-    Returns:
-        Dict containing saved file paths.
-    """
-    if bids_format:
-        subject = subject_id
-        run, inferred_condition = parse_run_label(run_id)
-        condition = condition or inferred_condition
-        layout = DerivativeLayout(output_dir)
-        epochs_path = layout.epochs(
-            subject=subject,
-            run=run,
-            condition=condition,
-            alignment=align_to,
-            suffix="epo",
-            extension=".fif",
-        )
-        events_tsv_path = layout.epochs(
-            subject=subject,
-            run=run,
-            condition=condition,
-            alignment=align_to,
-            suffix="events",
-            extension=".tsv",
-        )
-        eve_path = layout.epochs(
-            subject=subject,
-            run=run,
-            condition=condition,
-            alignment=align_to,
-            suffix="eve",
-            extension=".eve",
-        )
-        ensure_dir(epochs_path.parent)
-        
-        # Save MNE epochs file
-        epochs.save(str(epochs_path), overwrite=True)
-        
-        # Save standard MNE .eve file
-        mne.write_events(str(eve_path), epochs.events, overwrite=True)
-        
-        # Save BIDS events.tsv file
-        # Columns: onset, duration, trial_type, value, plus all behavioral metadata columns
-        sfreq = epochs.info['sfreq']
-        events_data = epochs.events
-        
-        event_name_by_value = {value: name for name, value in epochs.event_id.items()}
-        bids_events = pd.DataFrame({
-            'onset': events_data[:, 0] / sfreq,
-            'duration': np.zeros(len(events_data)),
-            'sample': events_data[:, 0],
-            'trial_type': [event_name_by_value.get(value, str(value)) for value in events_data[:, 2]],
-            'value': events_data[:, 2]
-        })
-        
-        # Merge behavior metadata if present
-        if epochs.metadata is not None:
-            # Drop columns that are already present or internal to meg
-            meta_clean = epochs.metadata.drop(columns=['meg_sample', 'meg_trigger_value'], errors='ignore')
-            # Reset index to align rows
-            meta_clean = meta_clean.reset_index(drop=True)
-            bids_events = pd.concat([bids_events, meta_clean], axis=1)
-            
-        save_table(
-            events_tsv_path,
-            bids_events,
-            metadata={
-                "stage": "epoching",
-                "subject": subject,
-                "condition": condition,
-                "run": run,
-                "alignment": align_to,
-                "tmin": epochs.tmin,
-                "tmax": epochs.tmax,
-                "sfreq": sfreq,
-            },
-        )
-
-        with sidecar_path(epochs_path).open("w", encoding="utf-8") as f:
-            json.dump(
-                {
-                    "schema_version": 1,
-                    "format": "mne-epochs-fif",
-                    "stage": "epoching",
-                    "subject": subject,
-                    "condition": condition,
-                    "run": run,
-                    "alignment": align_to,
-                    "n_epochs": len(epochs),
-                    "event_id": epochs.event_id,
-                },
-                f,
-                indent=2,
-                sort_keys=True,
+    n_go, n_trials = len(gos), len(trials)
+    if n_go == 0:
+        raise ValueError(f"{subject} {condition}{run}: no go cue")
+    if n_go != n_trials:
+        if key not in KNOWN_TRAILING_TRIAL_MISMATCHES:
+            raise ValueError(
+                f"{subject} {condition}{run}: {n_go} go cues for {n_trials} started trials"
             )
-            f.write("\n")
-        
-        return {
-            'epochs': str(epochs_path),
-            'events_tsv': str(events_tsv_path),
-            'eve': str(eve_path)
-        }
-    else:
-        # Standard format
-        os.makedirs(output_dir, exist_ok=True)
-        
-        base_name = f"{subject_id}_{run_id}"
-        epochs_path = os.path.join(output_dir, f"{base_name}-epo.fif")
-        eve_path = os.path.join(output_dir, f"{base_name}-eve.eve")
-        
-        # Save epochs
-        epochs.save(epochs_path, overwrite=True)
-        
-        # Save events
-        mne.write_events(eve_path, epochs.events, overwrite=True)
-        
-        return {
-            'epochs': epochs_path,
-            'eve': eve_path
-        }
+        n = min(n_go, n_trials)
+        gos, trials = gos[:n], trials.iloc[:n]
+    return gos, trials, {
+        "n_go_reconstructed": n_reconstructed,
+        "n_trials_unrecoverable": len(unrecoverable),
+        "n_truncated": abs(n_go - n_trials),
+    }
 
 
-def realign_epochs(
-    epochs: mne.Epochs,
-    align_to: str = 'go',
-    tmin_new: float = -1.0,
-    tmax_new: float = 4.0,
-    mean_rt: float = 0.0
-) -> mne.Epochs:
-    """
-    Re-aligns and slices epochs trial-by-trial relative to a behavioral trigger
-    stored in the epochs metadata ('tGO', 'tEnterTarget', or 'tTrialEnd').
-    
-    Args:
-        epochs: mne.Epochs object with metadata populated.
-        align_to: Event to align to ('go', 'enter', 'feedback', 'DT').
-        tmin_new: New start time in seconds relative to the alignment event.
-        tmax_new: New end time in seconds relative to the alignment event.
-        mean_rt: Mean reaction time in milliseconds (subtracted if aligning to 'DT').
-        
-    Returns:
-        A new mne.EpochsArray containing the re-aligned trials.
-    """
-    if epochs.metadata is None:
-        raise ValueError("Epochs object must have metadata populated for re-alignment.")
-        
-    sfreq = epochs.info['sfreq']
-    tmin = epochs.tmin # original tmin (negative)
-    
-    # Get original data shape: (n_epochs, n_channels, n_times)
-    data = epochs.get_data()
-    n_epochs, n_channels, _ = data.shape
-    
-    # Calculate target length in samples
-    n_samples_new = int(round((tmax_new - tmin_new) * sfreq))
-    realigned_data = np.zeros((n_epochs, n_channels, n_samples_new))
-    
-    metadata = epochs.metadata.copy()
-    
-    for i in range(n_epochs):
-        row = metadata.iloc[i]
-        
-        # Calculate alignment offset relative to original Go trigger (time 0 in epoch)
-        if align_to == 'go':
-            offset_ms = 0.0
-        elif align_to == 'enter':
-            # tEnterTarget and tGO are in ms in metadata
-            offset_ms = float(row['tEnterTarget'] - row['tGO'])
-        elif align_to == 'feedback':
-            offset_ms = float(row['tTrialEnd'] - row['tGO'])
-        elif align_to == 'DT':
-            # Align to Decision Time: shift target entry back by subject's mean RT
-            offset_ms = float(row['tEnterTarget'] - row['tGO']) - mean_rt
-        else:
-            raise ValueError(f"Unknown alignment event: {align_to}")
-            
-        # Convert offset to samples from the start of the epoch
-        # Start of epoch is at tmin seconds (which is negative)
-        offset_samples = int(round((offset_ms / 1000.0 - tmin) * sfreq))
-        
-        # Slice window around the offset
-        start_idx = offset_samples + int(round(tmin_new * sfreq))
-        end_idx = start_idx + n_samples_new
-        
-        # Guard bounds
-        if start_idx < 0 or end_idx > data.shape[2]:
-            # Pad with zeros if slice is out of bounds
-            trial_data = np.zeros((n_channels, n_samples_new))
-            
-            # Find overlap range
-            src_start = max(0, start_idx)
-            src_end = min(data.shape[2], end_idx)
-            
-            dest_start = src_start - start_idx
-            dest_end = dest_start + (src_end - src_start)
-            
-            trial_data[:, dest_start:dest_end] = data[i, :, src_start:src_end]
-        else:
-            trial_data = data[i, :, start_idx:end_idx]
-            
-        realigned_data[i] = trial_data
-        
-    # Build new Info and EpochsArray
-    info = epochs.info.copy()
-    
-    # Create EpochsArray
-    realigned_epochs = mne.EpochsArray(
-        realigned_data,
-        info=info,
-        tmin=tmin_new,
-        metadata=metadata,
-        verbose=False
+def trial_metadata(trials: pd.DataFrame, features: pd.DataFrame) -> pd.DataFrame:
+    """The trial features of these trials, in their order, with the Stage 1 timings."""
+    merged = trials[["nTrialIndex", *TIMING_COLUMNS]].merge(
+        features, on="nTrialIndex", how="left", validate="one_to_one", indicator=True,
     )
-    
-    return realigned_epochs
+    if (merged["_merge"] != "both").any():
+        missing = merged.loc[merged["_merge"] != "both", "nTrialIndex"].tolist()
+        raise ValueError(f"trials {missing} have no trial features")
+    return merged.drop(columns="_merge")
+
+
+def lock_offset(metadata: pd.DataFrame, lock: str) -> np.ndarray:
+    """Seconds from the go cue to the lock event; NaN where the trial has none."""
+    if lock == "go":
+        offset_ms = np.zeros(len(metadata))
+    elif lock == "enter":
+        offset_ms = metadata["rawRT"].to_numpy(dtype=float)
+    elif lock == "feedback":
+        offset_ms = (metadata["tTrialEnd"] - metadata["tGO"]).to_numpy(dtype=float)
+    elif lock == "decision":
+        offset_ms = metadata["dt_ms"].to_numpy(dtype=float)
+    else:
+        raise ValueError(f"unknown lock {lock!r}; expected one of {list(WINDOWS)}")
+    return offset_ms / 1000.0
+
+
+def epoch(raw: mne.io.BaseRaw, go: np.ndarray, metadata: pd.DataFrame, lock: str) -> mne.EpochsArray:
+    """Padded epochs around one lock, dropped where the analysis window touches a mark.
+
+    An epoch is dropped when its analysis window touches a mark or leaves the
+    recording. Its margin is kept as far as the recording reaches and zero
+    beyond; ``pad_before_s`` and ``pad_after_s`` give the recorded part, and
+    only that part may be filtered. The reference sensors are kept: the
+    recordings are at compensation grade 3, and the forward model needs them to
+    apply the same compensation.
+    """
+    offset = lock_offset(metadata, lock)
+    defined = np.isfinite(offset)
+    onset = go[defined] + offset[defined]
+    metadata = metadata.loc[defined].reset_index(drop=True).assign(go_onset_s=go[defined], lock_onset_s=onset)
+    sfreq = raw.info["sfreq"]
+    samples = raw.first_samp + np.round(onset * sfreq).astype(int)
+    events = np.column_stack([samples, np.zeros_like(samples), np.ones_like(samples)])
+    tmin, tmax = WINDOWS[lock]
+    kept = mne.Epochs(
+        raw, events, {lock: 1}, tmin=tmin, tmax=tmax, baseline=None, picks=["meg", "ref_meg"],
+        reject_by_annotation=True, metadata=metadata, preload=False, verbose=False,
+    ).drop_bad(verbose=False)
+
+    # MNE's sample grid for the padded window, as mne.Epochs would cut it.
+    start = int(round((tmin - PADDING) * sfreq))
+    n_times = int(round((tmax + PADDING) * sfreq)) + 1 - start
+    data = np.zeros((len(kept), len(kept.ch_names), n_times))
+    pad = np.empty((len(kept), 2))
+    for i, first in enumerate(kept.events[:, 0] - raw.first_samp + start):
+        lo, hi = max(first, 0), min(first + n_times, raw.n_times)
+        data[i, :, lo - first:hi - first] = raw.get_data(picks=kept.ch_names, start=lo, stop=hi)
+        pad[i] = PADDING - (lo - first) / sfreq, PADDING - (first + n_times - hi) / sfreq
+
+    epochs = mne.EpochsArray(
+        data, kept.info, kept.events, tmin=start / sfreq, event_id=kept.event_id, baseline=None,
+        metadata=kept.metadata.assign(pad_before_s=pad[:, 0], pad_after_s=pad[:, 1]),
+        selection=kept.selection, drop_log=kept.drop_log, raw_sfreq=sfreq, on_missing="ignore", verbose=False,
+    )
+    return epochs.set_annotations(kept.annotations)
+
+
+def save_epochs(epochs: mne.Epochs, path: Path, record: dict) -> Path:
+    """Write the epochs and a sidecar with the window and every dropped epoch's reason."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    epochs.save(path, overwrite=True, verbose=False)
+    lock = next(iter(epochs.event_id))
+    reasons = Counter(reason for log in epochs.drop_log for reason in log)
+    sidecar = {
+        **record,
+        "lock": lock,
+        "analysis_window_s": list(WINDOWS[lock]),
+        "padding_s": PADDING,
+        "sfreq": float(epochs.info["sfreq"]),
+        "n_events": len(epochs.drop_log),
+        "n_epochs": len(epochs),
+        "n_short_padding": int(((epochs.metadata["pad_before_s"] < PADDING) | (epochs.metadata["pad_after_s"] < PADDING)).sum()),
+        "dropped": dict(sorted(reasons.items())),
+    }
+    with sidecar_path(path).open("w", encoding="utf-8") as handle:
+        json.dump(sidecar, handle, indent=1, sort_keys=True)
+    return path
+
+
+__all__ = [
+    "WINDOWS", "PADDING", "EPOCH_CONDITIONS", "KNOWN_TRAILING_TRIAL_MISMATCHES", "KNOWN_UNRECOVERABLE_TRIALS",
+    "KNOWN_GO_RECONSTRUCTION_RUNS", "read_triggers", "reconstruct_missing_go", "align_go",
+    "trial_metadata", "lock_offset", "epoch", "save_epochs",
+]

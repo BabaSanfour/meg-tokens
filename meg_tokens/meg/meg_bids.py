@@ -30,7 +30,6 @@ if TYPE_CHECKING:
     from meg_tokens.io import DerivativeLayout
 
 from meg_tokens.core import RunSpec
-from meg_tokens.meg.epoching import DEFAULT_EVENT_IDS, get_event_id
 
 #: Every recording the Tokens protocol acquires per subject, in protocol order.
 RAW_MEG_RUNS = (
@@ -95,45 +94,14 @@ def staged_subjects(bids_root: str | Path) -> list[str]:
     )
 
 
-def preprocessed_meg_runs(
-    layout: "DerivativeLayout",
-    subject: str,
-    *,
-    stream: str,
-) -> list[tuple[RunSpec, Path]]:
-    """Every preprocessed run of one subject for one cleaner, in protocol order.
-
-    The derivative-side counterpart to :func:`raw_meg_sessions`, and it walks
-    the same :data:`RAW_MEG_RUNS` grid for the same reason: a run that failed
-    to preprocess is then a *named* absence rather than a shorter list nobody
-    notices. Globbing the derivative directory cannot tell those apart.
-
-    ``stream`` is required rather than defaulted. Preprocessing writes one
-    derivative per cleaner, and the three are alternatives rather than degrees
-    of the same thing, so there is no more-processed one to fall back to.
-    """
-    runs = []
-    for condition, run in RAW_MEG_RUNS:
-        path = layout.preprocessed_raw(
-            subject=subject,
-            run=str(run),
-            condition=condition,
-            processing=stream,
-        )
-        if path.is_file():
-            runs.append(
-                (RunSpec(subject=subject, run=str(run), condition=condition), path)
-            )
-    return runs
-
-
 def epoched_meg_runs(
     layout: "DerivativeLayout",
     subject: str,
     *,
     alignment: str,
+    stream: str,
 ) -> list[tuple[RunSpec, Path]]:
-    """Every epoched run of one subject for one alignment, in protocol order.
+    """Every epoched run of one subject for one alignment and stream, in protocol order.
 
     The third counterpart to :func:`raw_meg_sessions`, walking the same
     :data:`RAW_MEG_RUNS` grid, so the property holds all the way down the
@@ -147,6 +115,7 @@ def epoched_meg_runs(
             run=str(run),
             condition=condition,
             alignment=alignment,
+            stream=stream,
         )
         if path.is_file():
             runs.append(
@@ -222,26 +191,20 @@ def associated_emptyroom(
     return noise_path
 
 
-def _combined_event_id(subject: str) -> dict[str, int]:
-    """Every alignment's trigger code in one dict, for this one subject.
+# Trigger-channel codes; the 319 recordings carry these two and no others.
+# H06's Start and Go are swapped relative to every other subject, so a
+# subject-blind mapping would label every H06 go pulse Start in the written table.
+TRIGGER_CODES = {"Start": 262144, "Go": 524288}
+SUBJECT_TRIGGER_CODES = {"H06": {"Start": 524288, "Go": 262144}}
 
-    All four alignments are merged rather than passing whichever one a later
-    analysis happens to align to, because ``write_raw_bids`` requires a name
-    for *every* code appearing in ``events`` and refuses the write otherwise
-    -- and because ``*_events.tsv`` is a record of the acquisition, which
-    should not depend on any downstream epoching choice.
 
-    Built through ``get_event_id(..., subject)`` rather than read from
-    ``DEFAULT_EVENT_IDS`` directly so the raw layer's ``trial_type`` labels
-    agree with what ``meg_tokens.meg.epoching`` uses everywhere else: H06's
-    Start and Go codes are swapped relative to every other subject
-    (``SUBJECT_EVENT_OVERRIDES``), so a subject-blind mapping would silently
-    label every H06 Go pulse ``Start`` in the written table.
+def trigger_codes(subject: str) -> dict[str, int]:
+    """Every trigger's code for this subject.
+
+    Both at once: ``write_raw_bids`` refuses a code in ``events`` it has no
+    name for.
     """
-    event_id: dict = {}
-    for alignment in DEFAULT_EVENT_IDS:
-        event_id.update(get_event_id(alignment, subject))
-    return event_id
+    return {**TRIGGER_CODES, **SUBJECT_TRIGGER_CODES.get(subject, {})}
 
 
 def write_meg_bids(
@@ -266,12 +229,11 @@ def write_meg_bids(
     used, because every subject was acquired on a single date.
 
     ``*_events.tsv`` is derived from the real trigger channel
-    (``mne.find_events`` + ``meg_tokens.meg.epoching.get_event_id``), not
+    (``mne.find_events`` + :func:`trigger_codes`), not
     from the TDMS-derived behavior table -- an objective record of the MEG
     acquisition's own trigger pulses, complementary to (not a duplicate
     of) ``BIDS/sub-*/beh``. Passing ``event_id`` explicitly is what keeps
-    the ``trial_type`` labels consistent with this project's own codes; see
-    ``_combined_event_id``.
+    the ``trial_type`` labels consistent with this project's own codes.
 
     ``empty_room_bids_path`` must already exist under this same
     ``bids_root``: ``write_raw_bids`` stores it as a root-relative path in
@@ -298,13 +260,12 @@ def write_meg_bids(
     )
     raw = mne.io.read_raw_ctf(str(raw_path), preload=False, verbose=False)
     events = mne.find_events(raw, verbose=False)
-    # CTF's MarkerFile.mrk is read into raw.annotations automatically (a
-    # subset of the real trigger channel -- Start/Go only, not Enter/
-    # Feedback). write_raw_bids writes the *union* of `events` and
-    # raw.annotations, which double-counts the overlap; the STIM-channel
-    # `events` above is the complete, authoritative record (matching what
-    # meg_tokens.meg.epoching uses everywhere else), so drop the
-    # annotations per mne_bids' own documented fix for this. Without this
+    # CTF's MarkerFile.mrk is read into raw.annotations automatically (the
+    # same Start/Go pulses as the trigger channel). write_raw_bids writes the
+    # *union* of `events` and raw.annotations, which double-counts them; the
+    # trigger-channel `events` above is the authoritative record, and the one
+    # epoching reads back from `events.tsv`, so drop the annotations per
+    # mne_bids' own documented fix for this. Without this
     # line H02's acq-slow run-1 wrote each Start/Go pulse twice; with it the
     # table is the trigger channel exactly (111 rows, 56 Start / 55 Go, no
     # duplicated sample+trial_type) -- pinned in tests/test_meg_bids.py.
@@ -313,7 +274,7 @@ def write_meg_bids(
         raw,
         bids_path=bids_path,
         events=events,
-        event_id=_combined_event_id(subject),
+        event_id=trigger_codes(subject),
         empty_room=empty_room_bids_path,
         overwrite=overwrite,
         verbose=False,

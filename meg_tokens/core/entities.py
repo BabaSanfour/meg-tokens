@@ -6,6 +6,8 @@ import re
 from dataclasses import dataclass
 from typing import Optional, Tuple
 
+from meg_tokens.core.settings import EPOCH_LOCKS
+
 
 _SUBJECT_RE = re.compile(r"H0*([0-9]+)", re.IGNORECASE)
 _RUN_RE = re.compile(r"([A-Za-z]+)?0*([0-9]+)")
@@ -50,7 +52,7 @@ class RunSpec:
         if condition:
             condition = "RT" if condition.upper() == "RT" else condition.capitalize()
         alignment = self.alignment.lower() if self.alignment else None
-        if alignment not in {None, "go", "enter", "feedback"}:
+        if alignment not in (None, *EPOCH_LOCKS):
             raise ValueError(f"Unknown alignment event: {self.alignment}")
 
         object.__setattr__(self, "subject", subject)

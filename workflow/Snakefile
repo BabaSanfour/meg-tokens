@@ -4,6 +4,7 @@ from pathlib import Path
 
 from meg_tokens.core import parse_run_label
 from meg_tokens.io import DerivativeLayout
+from meg_tokens.meg.epoching import EPOCH_CONDITIONS
 from meg_tokens.meg.meg_bids import raw_meg_path, raw_meg_sessions
 from meg_tokens.behavior.analyses.sequential_sampling import ROBUSTNESS_CONFIGURATIONS
 from meg_tokens.workflows.decomposition import pca_derivative_path
@@ -493,28 +494,33 @@ rule preprocess:
         """
 
 
+EPOCHS_STATE = STATE / "epochs" / "sub-{subject}.done"
+
+
 rule epochs:
     input:
-        behavior=str(STATE / "behavior" / "sub-{subject}.done"),
+        trial_features=rules.behavior_analyze.output,
         raw=lambda wildcards: [
-            clean_raw(wildcards.subject, run)
-            for _, run in RUN_CELLS
+            str(LAYOUT.preprocessed_raw(
+                subject=wildcards.subject, run=spec.run, condition=spec.condition, processing=stream,
+            ))
+            for spec, _ in raw_meg_sessions(BIDS_ROOT, wildcards.subject)
+            if spec.condition in EPOCH_CONDITIONS
+            for stream in STREAMS
         ],
     output:
-        str(STATE / "epochs" / ("sub-{subject}_desc-" + ALIGNMENT + ".done"))
+        touch(str(EPOCHS_STATE))
     shell:
         """
         meg-tokens --config {PROJECT_CONFIG:q} meg epoch \
           --subjects {wildcards.subject:q} \
-          --alignment {ALIGNMENT:q}
-        mkdir -p $(dirname {output:q})
-        touch {output:q}
+          --streams {STREAMS}
         """
 
 
 rule source_models:
     input:
-        str(STATE / "epochs" / ("sub-{subject}_desc-" + ALIGNMENT + ".done"))
+        str(EPOCHS_STATE)
     output:
         cov=NOISE_COV_PATTERN,
         bem=BEM_PATTERN,
@@ -524,6 +530,7 @@ rule source_models:
         meg-tokens --config {PROJECT_CONFIG:q} meg source \
           --subjects {wildcards.subject:q} \
           --alignment {ALIGNMENT:q} \
+          --stream {STREAM:q} \
           --method {SOURCE_METHOD:q} \
           --spacing {SPACING:q} \
           --stages cov bem src
@@ -532,9 +539,7 @@ rule source_models:
 
 rule source_run:
     input:
-        epoch_state=str(
-            STATE / "epochs" / ("sub-{subject}_desc-" + ALIGNMENT + ".done")
-        ),
+        epoch_state=str(EPOCHS_STATE),
         models=rules.source_models.output,
     output:
         SOURCE_MANIFEST_PATTERN
@@ -549,6 +554,7 @@ rule source_run:
           --run {params.run:q} \
           --condition {wildcards.condition:q} \
           --alignment {ALIGNMENT:q} \
+          --stream {STREAM:q} \
           --method {SOURCE_METHOD:q} \
           --spacing {SPACING:q} \
           --stages fwd inv apply

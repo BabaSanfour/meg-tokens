@@ -24,6 +24,7 @@ from mne.preprocessing import (
 from scipy.signal import butter, find_peaks, lfilter, sosfiltfilt, welch
 from sklearn.exceptions import ConvergenceWarning
 
+from meg_tokens.core import STREAMS
 from meg_tokens.io import sidecar_path
 
 LINE_FREQ = 60.0
@@ -92,8 +93,6 @@ TONIC_DSS_N_CANDIDATES = 40
 TONIC_DSS_SLOPE = 0.0
 TONIC_ICA_N_COMPONENTS = 40
 TONIC_ICA_SLOPE = -0.5
-
-STREAMS = ("dss", "ica")
 
 __all__ = [
     "STREAMS",

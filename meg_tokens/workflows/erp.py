@@ -16,6 +16,7 @@ import numpy as np
 import pandas as pd
 
 from meg_tokens.core import (
+    EPOCH_LOCKS,
     ERPConfig,
     ProjectConfig,
     WorkflowResult,
@@ -24,7 +25,6 @@ from meg_tokens.core import (
 from meg_tokens.features.erp import align_and_pad_epochs, parcellate_source_estimates, select_source_feature_data
 from meg_tokens.io import DerivativeLayout, require_file, save_array, save_table
 from meg_tokens.behavior.tables import read_behavior_table
-from meg_tokens.meg.epoching import find_behavior_table
 from meg_tokens.meg.sources import source_derivative_path
 
 
@@ -246,7 +246,7 @@ def extract_parcellated_erp_from_manifest(
     condition = _single_manifest_value(manifest, "condition")
     align_to = str(_single_manifest_value(manifest, "alignment"))
     source_method = str(_single_manifest_value(manifest, "method"))
-    if align_to not in {"go", "enter", "feedback"}:
+    if align_to not in EPOCH_LOCKS:
         raise ValueError(f"Unsupported ERP alignment: {align_to}")
 
     sfreq = 1.0 / float(reference.tstep)
@@ -431,7 +431,7 @@ def run_erp_parcellation_pipeline(
             alignment=align_to,
             source_method=source_method,
         )
-        behavior = find_behavior_table(behavior_dir, subject, run, condition)
+        behavior = DerivativeLayout(behavior_dir).find_behavior(subject=subject, run=run, condition=condition)
         source_space = find_source_space_file(source_dir, subject, spacing) if spacing else None
         print(f"=== ERP parcellation for {subject}: {manifest} ===")
         outputs[subject] = extract_parcellated_erp_from_manifest(

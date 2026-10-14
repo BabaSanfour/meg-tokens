@@ -11,6 +11,8 @@ import mne
 
 from meg_tokens import __version__
 from meg_tokens.core import (
+    EPOCH_LOCKS,
+    STREAMS,
     ConnectivityConfig,
     DecodingConfig,
     DecompositionConfig,
@@ -223,7 +225,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     preprocess.add_argument("--condition")
     preprocess.add_argument("--streams", dest="streams", nargs="+",
-                            choices=("dss", "ica"),
+                            choices=STREAMS,
                             help="cleaners to run; default both")
 
     epoch = meg_commands.add_parser(
@@ -231,11 +233,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="Build event-locked epochs from staged raw and behavior derivatives.",
     )
     epoch.add_argument("--subjects", nargs="+", required=True)
-    epoch.add_argument("--alignment", "--align-to", dest="alignment", choices=["go", "enter", "feedback"], default="go")
-    epoch.add_argument("--tmin", type=float, default=-0.5)
-    epoch.add_argument("--tmax", type=float, default=2.0)
-    epoch.add_argument("--raw-root")
-    epoch.add_argument("--behavior-root")
+    epoch.add_argument("--locks", nargs="+", choices=EPOCH_LOCKS, default=list(EPOCH_LOCKS))
+    epoch.add_argument("--streams", nargs="+", choices=STREAMS, default=list(STREAMS))
 
     coreg = meg_commands.add_parser(
         "coreg",
@@ -260,7 +259,8 @@ def build_parser() -> argparse.ArgumentParser:
     source.add_argument("--subjects", nargs="+", required=True)
     source.add_argument("--run")
     source.add_argument("--condition")
-    source.add_argument("--alignment", choices=["go", "enter", "feedback"], default="go")
+    source.add_argument("--alignment", choices=EPOCH_LOCKS, default="go")
+    source.add_argument("--stream", choices=STREAMS, default="ica")
     source.add_argument("--stages", nargs="+", choices=["cov", "bem", "src", "fwd", "inv", "apply"], default=["cov", "bem", "src", "fwd", "inv", "apply"])
     source.add_argument("--spacing", default="oct6")
     source.add_argument("--volume-labels", nargs="+")
@@ -279,7 +279,7 @@ def build_parser() -> argparse.ArgumentParser:
     erp.add_argument("--subjects", nargs="+", required=True)
     erp.add_argument("--run", required=True)
     erp.add_argument("--condition")
-    erp.add_argument("--alignment", choices=["go", "enter", "feedback"], default="go")
+    erp.add_argument("--alignment", choices=EPOCH_LOCKS, default="go")
     erp.add_argument("--source-method", default="dSPM")
     erp.add_argument("--parc", default="HCPMMP1")
     erp.add_argument("--feature-space", choices=["parcellated", "all_source", "volume"], default="parcellated")
@@ -297,7 +297,7 @@ def build_parser() -> argparse.ArgumentParser:
     power.add_argument("--subjects", nargs="+", required=True)
     power.add_argument("--run", required=True)
     power.add_argument("--condition")
-    power.add_argument("--alignment", choices=["go", "enter", "feedback"], default="go")
+    power.add_argument("--alignment", choices=EPOCH_LOCKS, default="go")
     power.add_argument("--source-method", default="dSPM")
     power.add_argument("--method", choices=["hilbert", "morlet", "multitaper"], default="hilbert")
     power.add_argument("--bands", nargs="+")
@@ -312,7 +312,7 @@ def build_parser() -> argparse.ArgumentParser:
     spectral.add_argument("--subjects", nargs="+", required=True)
     spectral.add_argument("--run")
     spectral.add_argument("--condition")
-    spectral.add_argument("--alignment", choices=["go", "enter", "feedback"])
+    spectral.add_argument("--alignment", choices=EPOCH_LOCKS)
     spectral.add_argument("--method", choices=["welch", "multitaper"], default="welch")
     spectral.add_argument("--fmin", type=float, default=1.0)
     spectral.add_argument("--fmax", type=float, default=100.0)
@@ -325,7 +325,7 @@ def build_parser() -> argparse.ArgumentParser:
     hilbert = feature_commands.add_parser("hilbert", help="Extract analytic-signal features.")
     hilbert.add_argument("--subjects", nargs="+", required=True)
     hilbert.add_argument("--conditions", nargs="+", required=True)
-    hilbert.add_argument("--alignment", choices=["go", "enter", "feedback"], default="go")
+    hilbert.add_argument("--alignment", choices=EPOCH_LOCKS, default="go")
     hilbert.add_argument("--source-method", default="dSPM")
     hilbert.add_argument("--parc", default="HCPMMP1")
     hilbert.add_argument("--labels", nargs="+")
@@ -340,7 +340,7 @@ def build_parser() -> argparse.ArgumentParser:
     pac.add_argument("--conditions", nargs="+", required=True)
     pac.add_argument("--phase-bands", nargs="+", required=True)
     pac.add_argument("--amplitude-bands", nargs="+", required=True)
-    pac.add_argument("--alignment", choices=["go", "enter", "feedback"], default="go")
+    pac.add_argument("--alignment", choices=EPOCH_LOCKS, default="go")
     pac.add_argument("--source-method", default="dSPM")
     pac.add_argument("--parc", default="HCPMMP1")
     pac.add_argument("--n-bins", type=int, default=18)
@@ -350,7 +350,7 @@ def build_parser() -> argparse.ArgumentParser:
     connectivity = feature_commands.add_parser("connectivity", help="Compute spectral connectivity.")
     connectivity.add_argument("--subjects", nargs="+", required=True)
     connectivity.add_argument("--conditions", nargs="+", required=True)
-    connectivity.add_argument("--alignment", choices=["go", "enter", "feedback"], default="enter")
+    connectivity.add_argument("--alignment", choices=EPOCH_LOCKS, default="enter")
     connectivity.add_argument("--source-method", default="dSPM")
     connectivity.add_argument("--parc", default="HCPMMP1")
     connectivity.add_argument("--labels", nargs="+")
@@ -369,7 +369,7 @@ def build_parser() -> argparse.ArgumentParser:
     statistics = analysis_commands.add_parser("statistics", help="Run a paired group contrast.")
     statistics.add_argument("--conditions", nargs=2, default=["Fast", "Slow"])
     statistics.add_argument("--subjects", nargs="+")
-    statistics.add_argument("--alignment", choices=["go", "enter", "feedback"], default="go")
+    statistics.add_argument("--alignment", choices=EPOCH_LOCKS, default="go")
     statistics.add_argument("--source-method", default="dSPM")
     statistics.add_argument("--parc", default="HCPMMP1")
     statistics.add_argument("--runs-condition-1", nargs="+")
@@ -386,7 +386,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     lateralization.add_argument("--condition", required=True)
     lateralization.add_argument("--subjects", nargs="+")
-    lateralization.add_argument("--alignment", choices=["go", "enter", "feedback"], default="go")
+    lateralization.add_argument("--alignment", choices=EPOCH_LOCKS, default="go")
     lateralization.add_argument("--source-method", default="dSPM")
     lateralization.add_argument("--parc", default="HCPMMP1")
     lateralization.add_argument("--runs", nargs="+")
@@ -401,7 +401,7 @@ def build_parser() -> argparse.ArgumentParser:
     decoding.add_argument("--input-conditions", nargs="+")
     decoding.add_argument("--subjects", nargs="+")
     decoding.add_argument("--feature-source", choices=["erp", "power"], default="erp")
-    decoding.add_argument("--alignment", choices=["go", "enter", "feedback"], default="go")
+    decoding.add_argument("--alignment", choices=EPOCH_LOCKS, default="go")
     decoding.add_argument("--source-method", default="dSPM")
     decoding.add_argument("--parc", default="HCPMMP1")
     decoding.add_argument("--band")
@@ -420,7 +420,7 @@ def build_parser() -> argparse.ArgumentParser:
     decomposition.add_argument("--subjects", nargs="+")
     decomposition.add_argument("--analysis", choices=["pca", "dpca"], default="pca")
     decomposition.add_argument("--feature-source", choices=["erp", "power"], default="erp")
-    decomposition.add_argument("--alignment", choices=["go", "enter", "feedback"], default="go")
+    decomposition.add_argument("--alignment", choices=EPOCH_LOCKS, default="go")
     decomposition.add_argument("--source-method", default="dSPM")
     decomposition.add_argument("--parc", default="HCPMMP1")
     decomposition.add_argument("--band")
@@ -494,7 +494,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     statistics_report = report_commands.add_parser("statistics", help="Plot group statistics.")
     statistics_report.add_argument("--conditions", nargs=2, default=["Fast", "Slow"])
-    statistics_report.add_argument("--alignment", default="go", choices=["go", "enter", "feedback"])
+    statistics_report.add_argument("--alignment", default="go", choices=EPOCH_LOCKS)
     statistics_report.add_argument("--source-method", default="dSPM")
     statistics_report.add_argument("--parc", default="HCPMMP1")
     statistics_report.add_argument("--labels", nargs="+")
@@ -809,13 +809,7 @@ def _meg_epoch(project: ProjectConfig, args: argparse.Namespace) -> object:
     return epoch_subjects(
         project,
         subjects=args.subjects,
-        settings=EpochingConfig(
-            tmin=args.tmin,
-            tmax=args.tmax,
-            alignment=args.alignment,
-        ),
-        raw_root=args.raw_root,
-        behavior_root=args.behavior_root,
+        settings=EpochingConfig(locks=tuple(args.locks), streams=tuple(args.streams)),
     )
 
 
@@ -848,6 +842,7 @@ def _meg_source(project: ProjectConfig, args: argparse.Namespace) -> object:
             run=args.run,
             condition=args.condition,
             alignment=args.alignment,
+            stream=args.stream,
             method=args.method,
             snr=args.snr,
         ),

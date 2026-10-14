@@ -329,7 +329,7 @@ how each was handled, and its impact.
 | H01, H05 raw-session duration counts don't match 8-Slow/Fast + 2-RT | `KNOWN_SESSION_OVERRIDES`, cross-referenced against the acquisition notebook (H01 labeled `Pilot01` there); fingerprint independently reproduces all 17 entries | H05 RT1 confirmed unmatched — real gap, not ambiguity |
 | H01 headshape not found on any known drive | Left `not_found` / review | No headshape derivative for H01 |
 | H01 Slow3, H06 Slow2, H10 Fast2: Start-pulse count mismatch at the trailing boundary | `KNOWN_TRAILING_TRIAL_MISMATCHES`, staged with a note instead of sent to review | 3 runs recovered |
-| H06 Start/Go trigger codes swapped vs. every other subject | `SUBJECT_EVENT_OVERRIDES` (event code `524288` is Start for H06, `262144` elsewhere) | H06 matches and epochs correctly |
+| H06 Start/Go trigger codes swapped vs. every other subject | `SUBJECT_TRIGGER_CODES` in `meg_bids.py` (event code `524288` is Start for H06, `262144` elsewhere) | H06 matches and epochs correctly |
 
 Permanent gaps — H05 RT1 (no raw MEG counterpart; excluded from H05's
 MEG-joined analyses) and empty-room, H07/H10 anatomy, and H26/H27's corrupt

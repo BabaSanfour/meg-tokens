@@ -40,7 +40,7 @@ Module map, in pipeline order. Stage numbers live only under [Running the Pipeli
 | **Behavioral Characterization Analyses** | [`behavior_characterization.py`](meg_tokens/workflows/behavior_characterization.py) and [`behavior/analyses/`](meg_tokens/behavior/analyses) | Runs the full analysis battery described in `docs/behavior.md` over the trial-feature table: distributions, design/session effects, evidence, criterion decline, individual differences, and more. |
 | **Behavioral Reporting** | [`behavior.py`](meg_tokens/reports/behavior.py) | Renders performance diagnostics and RT distributions. |
 | **MEG Preprocessing** | [`preprocessing.py`](meg_tokens/meg/preprocessing.py) | One shared trunk per recording (compensation, ZapLine, band-pass, bad channels and segments), then two cleaners -- DSS and ICA -- each persisted with its artifact estimate. |
-| **Epoch Extraction & Event Alignment** | [`epoching.py`](meg_tokens/meg/epoching.py) | Segments MEG data into trial epochs aligned to triggers and behavior. |
+| **Epoch Extraction & Event Alignment** | [`epoching.py`](meg_tokens/meg/epoching.py) | Pairs go cues with behavioral trials and cuts padded epochs around four locks. |
 | **Neural Source Localization** | [`sources.py`](meg_tokens/meg/sources.py) | Computes noise covariance, BEM models, sets up source spaces, and applies minimum-norm inverses. |
 | **Source-Space Time-Frequency Power** | [`time_frequency.py`](meg_tokens/features/time_frequency.py) | Extracts band power from source estimates using modern MNE calls. |
 | **ERP Slicing, Parcellation, & Export** | [`erp.py`](meg_tokens/features/erp.py) | Aligns, pads, parcellates, and exports labeled `.npy` arrays with JSON sidecars. |
@@ -243,11 +243,9 @@ meg-tokens --config tokens.toml meg preprocess --subjects H01 --run Slow1
 ```
 
 ### Stage 4: Epoch Extraction & Event Alignment
-Slices one Stage 3 stream (`ica` until the canonical stream is decided) into event-locked trial epochs, aligned to Stage 1 behavior TSV derivatives:
+Cuts the Fast and Slow runs of both Stage 3 streams into padded epochs around the go cue, the button press, the feedback and the decision, with the trial features as metadata; `--locks` and `--streams` narrow it:
 ```bash
-meg-tokens --config tokens.toml meg epoch \
-  --alignment go \
-  --subjects H01 H02
+meg-tokens --config tokens.toml meg epoch --subjects H01 H02
 ```
 
 ### Stage 5: Behavioral Figures

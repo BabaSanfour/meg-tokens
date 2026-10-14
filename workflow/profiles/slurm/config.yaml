@@ -67,9 +67,11 @@ set-resources:
   ssm_recovery_aggregate:
     slurm_partition: cpubase_bycore_b1
     runtime: 60
+  # One subject: ten runs, both streams, four locks, one at a time.
   epochs:
-    mem_mb: 64000
-    runtime: 1440
+    slurm_partition: cpubase_bycore_b1
+    mem_mb: 8000
+    runtime: 120
   source_models:
     mem_mb: 32000
     runtime: 2880

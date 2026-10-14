@@ -7,6 +7,9 @@ from typing import Optional, Tuple
 
 
 SOURCE_STAGES = ("cov", "bem", "src", "fwd", "inv", "apply")
+# The events epochs are locked to; their windows are in meg_tokens.meg.epoching.
+EPOCH_LOCKS = ("go", "enter", "feedback", "decision")
+STREAMS = ("dss", "ica")
 
 
 @dataclass(frozen=True)
@@ -68,26 +71,16 @@ class RawStagingConfig:
 
 @dataclass(frozen=True)
 class EpochingConfig:
-    """``stream`` names which preprocessed derivative to epoch.
+    """Which locks to epoch, from which preprocessing streams."""
 
-    Preprocessing writes one per cleaner, so epoching has to say which it consumes;
-    there is no "the" preprocessed recording any more.
-    """
-
-    tmin: float = -0.5
-    tmax: float = 2.0
-    alignment: str = "go"
-    stream: str = "ica"
+    locks: Tuple[str, ...] = EPOCH_LOCKS
+    streams: Tuple[str, ...] = STREAMS
 
     def __post_init__(self) -> None:
-        alignment = self.alignment.lower()
-        if alignment not in {"go", "enter", "feedback"}:
-            raise ValueError(f"Unknown alignment event: {self.alignment}")
-        if self.stream not in ("dss", "ica"):
-            raise ValueError(f"Unknown stream: {self.stream}")
-        if self.tmax <= self.tmin:
-            raise ValueError("tmax must be greater than tmin")
-        object.__setattr__(self, "alignment", alignment)
+        for name, values, allowed in (("lock", self.locks, EPOCH_LOCKS), ("stream", self.streams, STREAMS)):
+            unknown = sorted(set(values) - set(allowed))
+            if unknown or not values:
+                raise ValueError(f"{name}s must be a non-empty subset of {list(allowed)}, got {list(values)}")
 
 
 @dataclass(frozen=True)
@@ -99,6 +92,7 @@ class SourceConfig:
     run: Optional[str] = None
     condition: Optional[str] = None
     alignment: str = "go"
+    stream: str = "ica"
     method: str = "dSPM"
     snr: float = 1.0
 
@@ -112,14 +106,14 @@ class SourceConfig:
         # a subject, and setting it narrows them to one.
         if self.run is None and self.condition is not None:
             raise ValueError("condition narrows a declared run, so it needs one")
-        alignment = self.alignment.lower()
-        if alignment not in {"go", "enter", "feedback"}:
+        if self.alignment not in EPOCH_LOCKS:
             raise ValueError(f"Unknown alignment event: {self.alignment}")
+        if self.stream not in STREAMS:
+            raise ValueError(f"Unknown stream: {self.stream}")
         if self.volume_pos <= 0:
             raise ValueError("volume_pos must be positive")
         if self.snr <= 0:
             raise ValueError("snr must be positive")
-        object.__setattr__(self, "alignment", alignment)
 
 
 @dataclass(frozen=True)
@@ -170,7 +164,7 @@ class ERPConfig:
     min_rt_ms: float = 100.0
 
     def __post_init__(self) -> None:
-        if self.alignment not in {"go", "enter", "feedback"}:
+        if self.alignment not in EPOCH_LOCKS:
             raise ValueError(f"Unknown alignment event: {self.alignment}")
         if self.feature_space not in {"parcellated", "all_source", "volume"}:
             raise ValueError(f"Unknown feature space: {self.feature_space}")
@@ -195,7 +189,7 @@ class PowerConfig:
     baseline_method: str = "percent"
 
     def __post_init__(self) -> None:
-        if self.alignment not in {"go", "enter", "feedback"}:
+        if self.alignment not in EPOCH_LOCKS:
             raise ValueError(f"Unknown alignment event: {self.alignment}")
         if self.method not in {"hilbert", "morlet", "multitaper"}:
             raise ValueError(f"Unknown power method: {self.method}")
@@ -246,7 +240,7 @@ class HilbertConfig:
     def __post_init__(self) -> None:
         if not self.conditions:
             raise ValueError("At least one condition is required")
-        if self.alignment not in {"go", "enter", "feedback"}:
+        if self.alignment not in EPOCH_LOCKS:
             raise ValueError(f"Unknown alignment event: {self.alignment}")
         valid = {"amplitude", "power", "phase", "sigfilt", "filtered"}
         invalid = sorted(set(self.features) - valid)

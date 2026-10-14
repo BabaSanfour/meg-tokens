@@ -246,16 +246,17 @@ class DerivativeLayout:
         run: str,
         condition: Optional[str],
         alignment: str,
-        suffix: str = "epo",
-        extension: str = ".fif",
+        stream: str,
     ) -> Path:
+        """One run's epochs around one lock, from one preprocessing stream."""
         run_number, inferred = parse_run_label(run)
         return self.path(
             subject=subject,
             run=run_number,
+            processing=stream,
             description=_description(_condition(condition or inferred), alignment),
-            suffix=suffix,
-            extension=extension,
+            suffix="epo",
+            extension=".fif",
         )
 
     def find_epochs(
@@ -265,35 +266,15 @@ class DerivativeLayout:
         run: str,
         condition: Optional[str],
         alignment: str,
+        stream: str,
     ) -> Path:
-        """Find the unique epoch derivative for one run and alignment."""
-        run_number, inferred = parse_run_label(run)
-        condition = condition or inferred
-        expected = self.epochs(
-            subject=subject,
-            run=run_number,
-            condition=condition,
-            alignment=alignment,
+        """The epoch derivative for one run, lock and stream, which must exist."""
+        path = self.epochs(
+            subject=subject, run=run, condition=condition, alignment=alignment, stream=stream,
         )
-        candidates = [expected]
-        if not expected.is_file():
-            candidates.extend(
-                self.root.glob(
-                    f"**/sub-{subject}_task-{self.task}_run-{run_number}_"
-                    f"desc-*{alignment}*_epo.fif"
-                )
-            )
-        existing = sorted({path for path in candidates if path.is_file()})
-        if not existing:
-            raise FileNotFoundError(
-                f"No epochs found for subject={subject}, run={run_number}, "
-                f"condition={condition}, alignment={alignment} under {self.root}"
-            )
-        if len(existing) > 1:
-            raise ValueError(
-                f"Multiple epoch files matched subject={subject}, run={run_number}: {existing}"
-            )
-        return existing[0]
+        if not path.is_file():
+            raise FileNotFoundError(f"No epochs at {path}. Run `meg-tokens meg epoch` first.")
+        return path
 
     def find_trans(
         self,

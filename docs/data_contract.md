@@ -72,8 +72,33 @@ reduce rank and the inverse operator needs it), `compensation_grade_source` and
 spectral outlier score (`channel_scores`), annotated seconds before and after
 cleaning, and the per-cleaner detail.
 
-`preprocessed_meg_runs` requires an explicit `processing=` stream — the three
-cleaners are alternatives, not degrees of one thing, so there is no default.
+Every path below preprocessing names its stream (`proc`): the cleaners are
+alternatives, not degrees of one thing, so there is no default.
+
+## Epoch derivatives
+
+One file per staged Fast and Slow run, stream and lock (`go`, `enter`,
+`feedback`, `decision`); `desc` is the condition and the lock. RT runs are not
+epoched: they only measure the motor baseline that decision time subtracts.
+
+```
+derivatives/sub-H01/meg/sub-H01_task-tokens_run-1_proc-dss_desc-fast-go_epo.fif
+derivatives/sub-H01/meg/sub-H01_task-tokens_run-1_proc-dss_desc-fast-go_epo.json
+```
+
+Go cues come from the raw BIDS `events.tsv`, paired with the run's started
+trials. The recordings carry no press or feedback trigger, so the other locks
+sit at a behavioral offset from the go cue (`rawRT`, `tTrialEnd - tGO`,
+`dt_ms`); a trial without a response has no `enter` or `decision` epoch. Epochs keep the MEG and reference sensors, carry the trial features
+plus `tGO`, `tEnterTarget`, `tTrialEnd`, `go_onset_s` and `lock_onset_s` as
+metadata, and span the lock's analysis window plus 1 s on each side. An epoch
+whose analysis window touches a `BAD` annotation or runs past the recording is
+dropped and its reason kept in the drop log. Near the ends of a recording the
+margin is shorter: `pad_before_s` and `pad_after_s` give the recorded margin of
+each epoch, the samples beyond it are zero, and only the recorded span may be
+filtered. The sidecar records the window, the padding, the counts, the
+epochs with a short margin, the go cues reconstructed, trials excluded or
+truncated, and the dropped epochs by reason.
 
 ## Stage 0: Raw BIDSification
 

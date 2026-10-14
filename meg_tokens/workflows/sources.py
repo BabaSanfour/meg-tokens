@@ -44,7 +44,9 @@ def _source_runs(
     --run`` does; without it every epoched run of the subject is reconstructed.
     """
     if settings.run is None:
-        runs = epoched_meg_runs(epoch_layout, subject, alignment=settings.alignment)
+        runs = epoched_meg_runs(
+            epoch_layout, subject, alignment=settings.alignment, stream=settings.stream
+        )
         if not runs:
             raise FileNotFoundError(
                 f"No {settings.alignment}-locked epochs for {subject} under "
@@ -63,6 +65,7 @@ def _source_runs(
                 run=str(settings.run),
                 condition=settings.condition,
                 alignment=settings.alignment,
+                stream=settings.stream,
             ),
         )
     ]

@@ -7,7 +7,7 @@ from typing import Optional, Sequence
 
 import mne
 
-from meg_tokens.behavior.tables import read_behavior_table
+from meg_tokens.behavior.tables import read_behavior_table, read_trial_features
 from meg_tokens.core import (
     EpochingConfig,
     PreprocessingConfig,
@@ -17,16 +17,14 @@ from meg_tokens.core import (
 )
 from meg_tokens.io import DerivativeLayout
 from meg_tokens.meg.epoching import (
-    build_epochs_with_metadata,
-    exclude_unrecoverable_trials,
-    get_event_id,
-    mismatch_policy,
-    needs_go_reconstruction,
-    reconstruct_missing_go_events,
-    save_epochs_and_events,
+    EPOCH_CONDITIONS,
+    align_go,
+    epoch,
+    read_triggers,
+    save_epochs,
+    trial_metadata,
 )
 from meg_tokens.meg.meg_bids import (
-    preprocessed_meg_runs,
     raw_meg_path,
     raw_meg_sessions,
     staged_subjects,
@@ -171,95 +169,57 @@ def epoch_subjects(
     *,
     subjects: Sequence[str],
     settings: EpochingConfig = EpochingConfig(),
-    raw_root: Optional[str | Path] = None,
-    behavior_root: Optional[str | Path] = None,
     output_root: Optional[str | Path] = None,
 ) -> WorkflowResult:
-    """Build event-locked epochs for every staged run of selected subjects."""
-    raw_layout = DerivativeLayout(
-        raw_root or project.bids_root,
-        task=project.task,
-    )
-    behavior_layout = DerivativeLayout(
-        behavior_root or project.bids_root,
-        task=project.task,
-    )
-    destination = Path(output_root or project.bids_root)
-    inputs = []
-    outputs = []
+    """Epoch every staged Fast and Slow run of the selected subjects, per stream and lock.
+
+    The go cues are paired with the behavioral log once per run; every stream
+    and lock is cut from that one pairing, so the streams differ only in what
+    the cleaners did to the data.
+    """
+    layout = DerivativeLayout(project.bids_root, task=project.task)
+    destination = DerivativeLayout(output_root or project.bids_root, task=project.task)
+    features_path = layout.behavior_trial_features()
+    features = read_trial_features(features_path)
+    inputs: list[Path] = [features_path]
+    outputs: list[Path] = []
 
     for subject in subjects:
-        runs = preprocessed_meg_runs(raw_layout, subject, stream=settings.stream)
-        if not runs:
-            raise FileNotFoundError(
-                f"No preprocessed raw FIF files found for {subject} under "
-                f"{raw_layout.root}. Run `meg-tokens meg preprocess` first."
+        sessions = raw_meg_sessions(project.bids_root, subject, task=project.task)
+        if not sessions:
+            raise FileNotFoundError(f"No staged raw MEG for {subject} under {project.bids_root}")
+        for run, _ in sessions:
+            if run.condition not in EPOCH_CONDITIONS:
+                continue
+            behavior_path = layout.find_behavior(subject=run.subject, run=run.run, condition=run.condition)
+            triggers = read_triggers(project.bids_root, run.subject, run.condition, run.run, task=project.task)
+            go, trials, alignment = align_go(
+                triggers, read_behavior_table(behavior_path), run.subject, run.condition, run.run
             )
-        for run, raw_path in runs:
-            behavior_path = behavior_layout.find_behavior(
-                subject=run.subject,
-                run=run.run,
-                condition=run.condition,
-            )
-            raw = mne.io.read_raw_fif(str(raw_path), preload=True)
-            events = mne.find_events(raw)
-            behavior = read_behavior_table(behavior_path)
-            event_id = get_event_id(settings.alignment, run.subject)
-            if settings.alignment.lower() == "go" and needs_go_reconstruction(
-                run.subject, run.condition, run.run
-            ):
-                print(
-                    f"{run.subject} {run.condition}{run.run}: reconstructing "
-                    "missing go-cue event(s) from trial-start pulses + tGO "
-                    "(confirmed trigger dropout -- see "
-                    "docs/meg.md)"
+            this_run = features[
+                (features["subject"] == run.subject)
+                & (features["condition"].str.lower() == run.condition.lower())
+                & (features["run"].astype(str) == str(run.run))
+            ]
+            metadata = trial_metadata(trials, this_run)
+            inputs.append(behavior_path)
+            for stream in settings.streams:
+                raw_path = layout.preprocessed_raw(
+                    subject=run.subject, run=run.run, condition=run.condition, processing=stream
                 )
-                events = reconstruct_missing_go_events(
-                    events,
-                    behavior,
-                    raw.info['sfreq'],
-                    start_code=get_event_id('start', run.subject)['Start'],
-                    go_code=event_id['Go'],
-                )
-            before_exclusion = len(behavior)
-            behavior = exclude_unrecoverable_trials(
-                run.subject, run.condition, run.run, behavior
-            )
-            if len(behavior) != before_exclusion:
-                print(
-                    f"{run.subject} {run.condition}{run.run}: excluding "
-                    f"{before_exclusion - len(behavior)} trial(s) with no "
-                    "MEG event at all for this run (confirmed unrecoverable "
-                    "-- see docs/meg.md)"
-                )
-            policy = mismatch_policy(run.subject, run.condition, run.run)
-            if policy == "truncate":
-                print(
-                    f"{run.subject} {run.condition}{run.run}: applying known "
-                    "trailing-trial truncation (aborted final trial, "
-                    "confirmed via MEG timing cross-check -- see "
-                    "docs/meg.md)"
-                )
-            epochs = build_epochs_with_metadata(
-                raw=raw,
-                events=events,
-                event_ids=event_id,
-                tmin=settings.tmin,
-                tmax=settings.tmax,
-                behavior_df=behavior,
-                on_mismatch=policy,
-            )
-            saved = save_epochs_and_events(
-                epochs,
-                str(destination),
-                run.subject,
-                run.run,
-                bids_format=True,
-                condition=run.condition,
-                align_to=settings.alignment,
-            )
-            inputs.extend((raw_path, behavior_path))
-            outputs.extend(Path(path) for path in saved.values())
+                raw = mne.io.read_raw_fif(raw_path, preload=True, verbose=False)
+                inputs.append(raw_path)
+                for lock in settings.locks:
+                    path = destination.epochs(
+                        subject=run.subject, run=run.run, condition=run.condition,
+                        alignment=lock, stream=stream,
+                    )
+                    record = {
+                        "subject": run.subject, "condition": run.condition.lower(),
+                        "run": str(run.run), "stream": stream, "n_trials": len(trials), **alignment,
+                    }
+                    outputs.append(save_epochs(epoch(raw, go, metadata, lock), path, record))
+                del raw
 
     return WorkflowResult(
         stage="meg_epoching",
@@ -267,8 +227,7 @@ def epoch_subjects(
         outputs=tuple(outputs),
         settings={
             "subjects": list(subjects),
-            "alignment": settings.alignment,
-            "tmin": settings.tmin,
-            "tmax": settings.tmax,
+            "locks": list(settings.locks),
+            "streams": list(settings.streams),
         },
     )

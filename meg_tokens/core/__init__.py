@@ -4,7 +4,9 @@ from .config import ProjectConfig
 from .entities import RunSpec, normalize_subject_id, parse_run_label
 from .results import WorkflowResult
 from .settings import (
+    EPOCH_LOCKS,
     SOURCE_STAGES,
+    STREAMS,
     ConnectivityConfig,
     DecodingConfig,
     DecompositionConfig,
@@ -37,7 +39,9 @@ __all__ = [
     "PowerConfig",
     "PreprocessingConfig",
     "RawStagingConfig",
+    "EPOCH_LOCKS",
     "SOURCE_STAGES",
+    "STREAMS",
     "SourceConfig",
     "SpatialDecodingConfig",
     "SpectralConfig",

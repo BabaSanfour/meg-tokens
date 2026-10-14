@@ -25,11 +25,14 @@ retention 77.5%. H07 and H10 are the two worst fits and the two template
 anatomies; that flag follows them into every source-level result. Committed as
 `4a91e44` and `e11e727`.
 
-**Preprocessing — implemented.** `meg_tokens/meg/preprocessing.py` follows
-the specification below. It has not yet run on real data as a pipeline stage.
+**Preprocessing — complete.** Both streams on all 319 recordings, through
+the workflow (§4, Preprocessing).
 
-**Epoching and source reconstruction — not started.** Zero preprocessed raws, zero epochs, zero
-source estimates, zero features.
+**Epoching — implemented and checked on the cohort.** All 256 Fast and Slow
+recordings, both streams, four locks (§4, Epoching). The epochs are not kept
+yet.
+
+**Source reconstruction — not started.** Zero source estimates, zero features.
 
 **Downstream helpers with no callers.** `psd_description`
 (`workflows/spectral.py`), `run_batch_dpca` (`workflows/decomposition.py`),
@@ -306,28 +309,99 @@ field after it.
   7% by the head-position coils); in H10 the coils explain about 55% and the
   EOG about 5%. Something magnetic near the right temple moves with the head.
   Neither cleaner removes it. On the raw data about 14% of 3 s windows exceed
-  4 pT peak to peak, 33-41% in Fast 3, Fast 4 and Slow 4.
+  4 pT peak to peak, 33-41% in Fast 3, Fast 4 and Slow 4. H10 is kept, with
+  no subject-specific cleaning. Under the epoch rule it keeps 419 of 480
+  go-locked Fast and Slow epochs (DSS) and 429 (ICA), losing most in Fast 4
+  (39 of 64 kept, DSS) and Slow 4 (42 of 57). The bursts carry no mark and stay in the data;
+  they lie below the theta band.
 - *Unexplained.* `MZF02` correlates with its neighbours at about 0.65 in 13
   subjects, with normal power.
 
 **Open.**
 
-- **Preprocessing / autoreject boundary** — see Epoching.
 - **Evoked response on the occipital rim.** The tonic muscle stages shrink it
   in the nine people with tonic muscle (see Streams); noise or signal is
   undecided.
-- **H10.** No subject-specific cleaning so far: count its surviving epochs
-  after rejection and decide on exclusion from that.
 
-### Epoching · `todo`
+### Epoching · `checked on the cohort`
 
-Four locks: `go`, `enter`, `feedback`, and a `decision` alignment (button press
-minus the hand-specific motor baseline). Per-lock windows matching the paper.
-Attach behavioral metadata: corrected-frame trial class, condition, choice,
-correctness, `dt_ms`, SPD. `autoreject` handles per-epoch bad-channel
-interpolation and epoch rejection — it is not yet a dependency and must be
-added. The boundary between preprocessing's continuous detection and autoreject's
-per-epoch pass must be settled before either is implemented.
+Fast and Slow runs, both streams, four locks: `go` (−0.5 to +1.0 s), `enter`
+(button press), `feedback` and `decision` (press minus the hand-specific motor
+baseline), each −1.5 to +2.0 s, as in the paper. RT runs are not epoched; they
+only measure the motor baseline. The recordings carry Start and Go triggers
+only, so press, feedback and decision sit at their behavioral offset from the
+go cue. Metadata: the trial features (corrected-frame trial class, condition,
+choice, correctness, `dt_ms`, SPD) and the trial timings.
+
+**Padding.** Each epoch is cut with 1 s of margin on both sides of its
+analysis window. Band power is computed in source space after the inverse —
+band-pass, then Hilbert envelope — and the margins are trimmed after the
+envelope, so filter edges fall outside the analysed time. Near the start or
+end of a recording the margin is as long as the recording allows: the samples
+beyond it are zero, each epoch's metadata gives its recorded margin
+(`pad_before_s`, `pad_after_s`), and only the recorded span is filtered.
+
+**Epoch rejection.** An epoch is dropped when its analysis window (not its
+margins) touches any bad-segment annotation: `BAD_jump`, `BAD_muscle`,
+`BAD_peak` or `BAD_flat`, or runs past the recording.
+No sensor is repaired; each recording's bad sensors are left out of its
+forward and inverse model. For decoding, Fast and Slow trial counts are
+equalised within each subject.
+
+On all 256 Fast and Slow recordings (DSS stream; the ICA stream is within
+0.1 point on every lock):
+
+| Lock | Events | Kept | Lost | Window touches a mark | Window runs past the recording | Kept with a short margin |
+|---|---|---|---|---|---|---|
+| go | 16,290 | 15,257 | 6.3% | 979 | 54 | 32 |
+| enter | 16,280 | 14,632 | 10.1% | 1,480 | 168 | 44 |
+| feedback | 16,290 | 14,572 | 10.5% | 1,529 | 189 | 45 |
+| decision | 16,280 | 14,676 | 9.9% | 1,452 | 152 | 44 |
+
+Fast loses 6.5% of go-locked epochs and 10.2–10.6% on the longer locks, Slow
+6.1% and 9.5–10.5%. Per subject the median loss is 5.1% (go) and 9.4–9.5%
+(longer locks); H21 and H20 lose 27–29% on the longer locks, H12 and H04
+17–20%. The windows that run past the recording include the 20 reconstructed
+go cues, which by construction fall after their recording stopped. 1.4–2.0% of
+trials are kept in one stream only, from each stream's own second-pass muscle
+marks.
+
+Checked on every one of the 2,048 files: the kept epochs equal an independent
+recomputation of the rule in MNE's sample arithmetic; each lock sits at its
+behavioral offset; go cues fall 2.2 ms after trial start plus `tGO` at the
+median (8.7 ms at worst), so no trial is mispaired; the trigger channel and
+`events.tsv` agree within half a sample; the recorded part of each epoch equals
+the cleaned recording sample for sample and the rest is zero; 299 channels at
+compensation grade 3, 600 Hz.
+
+Marks fall evenly on Fast and Slow across the cohort (6.2% against 5.8% of
+go-locked events; Fast higher in 17 of 32 subjects) but not within every
+subject: H13 has 12 points more in Slow, H20 11 points more in Fast. After all
+cleaning, an epoch touching a muscle mark still carries 1.6 dB more 60–90 Hz
+power than clean epochs on its top 2% of sensors (0.5 dB on the median
+sensor), from 0.7 dB when under 0.25 s of it lies in the mark to 2.8 dB when
+over 1 s does.
+
+**Why no sensor is repaired.** Leaving ten sensors out at a time and
+rebuilding them with MNE's field interpolation from the rest, on all 638
+cleaned files (median sensor per subject, then cohort median, DSS stream):
+
+| Band | Correlation with the real sensor | Variance not recovered |
+|---|---|---|
+| below 30 Hz | 0.98 | 4% |
+| alpha | 0.985 | 3% |
+| beta | 0.96 | 8% |
+| 30–55 Hz | 0.88 | 23% |
+| 65–100 Hz | 0.78 | 42% (ICA stream 60%) |
+
+Below 30 Hz the worst subject is at 0.97, sensors on the helmet edge at
+0.90–0.92, and 0.8% of sensor-recordings fall under 0.8; `MZF02` is the worst
+sensor (0.78). A rebuilt sensor is trustworthy below 30 Hz and not in the
+gamma and high-gamma bands the paper's speed-accuracy results come from.
+The interpolation needs an explicit origin, `(0, 0, 0.04)` m in head
+coordinates, since the files carry no digitised head points. It uses the 270
+sensors alone and ignores the compensation grade; accounting for the
+reference sensors recovers under one percentage point more.
 
 ### Source reconstruction · `todo`
 
@@ -371,7 +445,7 @@ recordings in the `DDM-tthiery` dataset.
 | :--- | ---: | :--- |
 | Exact alignment | 184 | No exception |
 | Trailing-boundary mismatch | 114 | `KNOWN_TRAILING_TRIAL_MISMATCHES`, `on_mismatch="truncate"` |
-| Interior missing go cue | 21 | `KNOWN_GO_RECONSTRUCTION_RUNS`, go-cue reconstruction |
+| Missing go cue | 21 | 20 Fast/Slow runs: `KNOWN_GO_RECONSTRUCTION_RUNS`, go-cue reconstruction; `H02RT1`: RT, not epoched |
 | Unrecoverable real trial | 1 (`H12Slow2`, trial 2) | `KNOWN_UNRECOVERABLE_TRIALS` |
 | Scratch files | 3 | `behavior_ignore_files` |
 
@@ -384,20 +458,20 @@ All 114 runs align throughout their recordings and differ only at the final
 boundary. Examples include one extra MEG trial-start pulse (`H03RT1`),
 missing TDMS-side events (`H06Slow2`, -12), and the all-go-channel case
 (`H02RT1`, -39). Maximum confirmed timing residual was 4.25 ms.
-`mismatch_policy` truncates only these documented runs and leaves unknown or
+`align_go` truncates only these documented runs and leaves unknown or
 interior mismatches as hard errors; this recovers valid epochs from
 approximately 36% of the production runs without changing MEG/behavior
 pairing.
 
 ### Missing go cues
 
-Of the 21 reconstruction runs, `H02RT1` has approximately 39 real trials
-with no recorded go cue; the other 20 each have one interior dropout. For
-each run, `reconstruct_missing_go_events` pairs trials with trial-start
-pulses and synthesizes the missing go cue at `trial_start + tGO + lag`, the
-lag calibrated from that run's real go cues (4 ms fallback only for
-`H02RT1`). Never-started `7003` trials are never reconstructed, including
-mixed-pattern runs such as `H07Slow2` and `H07Slow4`.
+Twenty Fast and Slow runs each lose one go cue, their final trial's: the
+recording stopped between its start pulse and its go cue. For each,
+`reconstruct_missing_go` pairs trials with trial-start pulses and places the
+missing go cue at `trial_start + tGO + lag`, the lag calibrated from that
+run's real go cues. Never-started `7003` trials are never reconstructed,
+including mixed-pattern runs such as `H07Slow2` and `H07Slow4`. `H02RT1`, with
+about 39 trials and no recorded go cue at all, is an RT run and is not epoched.
 
 ### H02 motor baseline
 
@@ -419,8 +493,8 @@ removes only `('H12', 'Slow', '2') → {2}` before synchronization; the count
 closes as `65 total - 7 never-started - 1 unrecoverable = 57` MEG go
 events, matched at 2.38 ms mean / 4.83 ms maximum `tGO` residual.
 
-Implemented in `meg_tokens/meg/epoching.py` (never-started filtering,
-trailing policy, go-cue reconstruction, the H12 exception); the scratch-file
+Implemented in `meg_tokens/meg/epoching.py` (`align_go`: never-started
+filtering, trailing policy, go-cue reconstruction, the H12 exception); the scratch-file
 allowlist is `behavior_ignore_files`.
 
 ---

@@ -167,7 +167,7 @@ class BehaviorRun:
     ``OUTCOME_NEVER_STARTED`` ones: those trials still receive their own
     trial-start trigger pulse in the raw MEG recording (their go-cue phase
     never begins, but the trial slot itself does) -- see
-    ``reconstruct_missing_go_events`` in ``meg_tokens.meg.epoching`` -- so
+    ``reconstruct_missing_go`` in ``meg_tokens.meg.epoching`` -- so
     the full row count, not ``started_trials()``, is what should be
     compared against a session's real Start-pulse count.
     """
@@ -369,12 +369,12 @@ def read_start_pulse_times(ds_path: Path, subject: str) -> np.ndarray:
     """
     import mne
 
-    from meg_tokens.meg.epoching import get_event_id
+    from meg_tokens.meg.meg_bids import trigger_codes
 
     mne.set_log_level("ERROR")
     raw = mne.io.read_raw_ctf(str(ds_path), preload=False, verbose=False)
     events = mne.find_events(raw, verbose=False)
-    start_code = get_event_id("start", subject)["Start"]
+    start_code = trigger_codes(subject)["Start"]
     samples = np.sort(events[events[:, 2] == start_code][:, 0])
     if len(samples) == 0:
         return np.empty(0, dtype=float)

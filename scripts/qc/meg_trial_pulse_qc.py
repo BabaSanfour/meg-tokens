@@ -6,15 +6,17 @@ epoching stage relies on but never re-checks at runtime:
 1. **OUTCOME_NEVER_STARTED (7003) trials still emit a trial-start pulse.**
    ``meg_tokens.meg.raw_staging.BehaviorRun.trial_count`` compares a session's
    Start-pulse count against *every* logged row, 7003 included, and
-   ``reconstruct_missing_go_events`` pairs behavior row *i* positionally with
+   ``reconstruct_missing_go`` pairs behavior row *i* positionally with
    Start pulse *i* -- both are wrong if a 7003 trial produces no pulse.
-2. **7003 trials never emit a go-cue.** ``synchronize_events_and_behavior``
+2. **7003 trials never emit a go-cue.** ``align_go``
    drops them from the alignment entirely (``started_trials``), which is only
    correct if they have no Go event to align to.
 3. **Every started trial has exactly one go-cue, at its logged tGO latency.**
    Interior violations are the genuine trigger dropouts enumerated in
    ``KNOWN_GO_RECONSTRUCTION_RUNS``; this script reports any run that violates
    it *without* being on that list.
+
+Only Fast and Slow runs are audited: RT runs are not epoched.
 
 Trials are paired positionally (behavior row i <-> Start pulse i) and a trial's
 Go window is bounded by the next Start pulse, so the check never assumes the
@@ -35,15 +37,11 @@ import pandas as pd
 
 from meg_tokens.behavior.schema import OUTCOME_NEVER_STARTED
 from meg_tokens.meg.epoching import (
+    EPOCH_CONDITIONS,
     KNOWN_GO_RECONSTRUCTION_RUNS,
     KNOWN_TRAILING_TRIAL_MISMATCHES,
     KNOWN_UNRECOVERABLE_TRIALS,
-    exclude_unrecoverable_trials,
-    get_event_id,
-    mismatch_policy,
-    needs_go_reconstruction,
-    reconstruct_missing_go_events,
-    synchronize_events_and_behavior,
+    align_go,
 )
 
 _ENTITY_RE = re.compile(
@@ -51,7 +49,7 @@ _ENTITY_RE = re.compile(
 )
 _ACQ_TO_CONDITION = {"slow": "Slow", "fast": "Fast", "rt": "RT"}
 
-# The real start->go hardware lag is a few ms (see DEFAULT_GO_LAG_S); an
+# The real start->go hardware lag is a few ms; an
 # off-by-one trial pairing shifts the residual by a whole inter-trial interval
 # (hundreds of ms), so anything above this threshold is a pairing error, not jitter.
 MAX_ALIGNMENT_RESIDUAL_MS = 50.0
@@ -66,53 +64,24 @@ def load_run(events_path, beh_path):
     return starts, gos, beh.sort_values("nTrialIndex").reset_index(drop=True)
 
 
-def load_events_array(events_path):
-    """The run's events as MNE's (sample, 0, code) array, plus its sample rate."""
-    events = pd.read_csv(events_path, sep="\t", encoding="utf-8-sig")
-    array = np.column_stack([
-        events["sample"].to_numpy(int),
-        np.zeros(len(events), dtype=int),
-        events["value"].to_numpy(int),
-    ])
-    array = array[array[:, 0].argsort()]
-    nonzero = events.loc[events["onset"] > 0]
-    sfreq = float((nonzero["sample"] / nonzero["onset"]).median())
-    return array, sfreq
+def simulate_alignment(subject, condition, run, starts, gos, beh):
+    """Replay the epoching stage's own go alignment for one run.
 
-
-def simulate_alignment(subject, condition, run, events, sfreq, beh):
-    """Replay the epoching stage's own alignment decisions for one run.
-
-    Calls the real ``meg_tokens.meg.epoching`` helpers in the same order
-    ``meg_tokens.workflows.preprocessing`` does, then independently re-derives
-    each retained epoch's start->go latency and compares it against that
-    trial's logged ``tGO``. A correct alignment leaves the same few-ms hardware
-    lag on every epoch; an off-by-one pairing leaves residuals of hundreds of
+    Calls ``meg_tokens.meg.epoching.align_go`` as the epoching workflow does,
+    then re-derives each retained trial's start->go latency and compares it
+    with its logged ``tGO``. A correct alignment leaves the same few-ms hardware
+    lag on every trial; an off-by-one pairing leaves residuals of hundreds of
     ms, so this catches a silently mis-paired truncation, not just a crash.
     """
-    event_id = get_event_id("go", subject)
-    if needs_go_reconstruction(subject, condition, run):
-        events = reconstruct_missing_go_events(
-            events, beh, sfreq,
-            start_code=get_event_id("start", subject)["Start"],
-            go_code=event_id["Go"],
-        )
-    trials = exclude_unrecoverable_trials(subject, condition, run, beh)
-    policy = mismatch_policy(subject, condition, run)
+    policy = "truncate" if (subject, condition, run) in KNOWN_TRAILING_TRIAL_MISMATCHES else "error"
     try:
-        final_events, metadata = synchronize_events_and_behavior(
-            events, event_id, trials, on_mismatch=policy
-        )
+        go, trials, _ = align_go({"Start": starts, "Go": gos}, beh, subject, condition, run)
     except ValueError as error:
         return {"ok": False, "policy": policy, "error": str(error)}
-
-    starts = np.sort(events[events[:, 2] == get_event_id("start", subject)["Start"]][:, 0])
-    go_samples = final_events[:, 0]
-    preceding = np.searchsorted(starts, go_samples, side="right") - 1
-    latency_ms = (go_samples - starts[preceding]) / sfreq * 1000.0
-    residuals = latency_ms - metadata["tGO"].to_numpy(float)
+    preceding = np.searchsorted(starts, go, side="right") - 1
+    residuals = (go - starts[preceding]) * 1000.0 - trials["tGO"].to_numpy(float)
     return {
-        "ok": True, "policy": policy, "n_epochs": len(metadata),
+        "ok": True, "policy": policy, "n_epochs": len(trials),
         "max_residual_ms": float(np.abs(residuals).max()),
     }
 
@@ -169,6 +138,8 @@ def main():
             if entities is None:
                 continue
             condition = _ACQ_TO_CONDITION[entities.group("acq")]
+            if condition not in EPOCH_CONDITIONS:
+                continue
             run = entities.group("run")
             beh_path = subject_dir / "beh" / events_path.name.replace("_events.tsv", "_beh.tsv")
             if not beh_path.exists():
@@ -252,8 +223,7 @@ def main():
                 )
             audits.append(audit.assign(subject=subject, condition=condition, run=run))
 
-            events_array, sfreq = load_events_array(events_path)
-            outcome = simulate_alignment(subject, condition, run, events_array, sfreq, beh)
+            outcome = simulate_alignment(subject, condition, run, starts, gos, beh)
             if not outcome["ok"]:
                 problems.append(
                     f"{subject} {condition}{run}: go-alignment fails under policy "
