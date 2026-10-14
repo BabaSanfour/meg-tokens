@@ -55,7 +55,7 @@ Thiery, Rainville, Cisek, Jerbi (2022),
 | Resample | 600 Hz, before ICA | 600 Hz, **last** |
 | Bad channels | visual, spectral | automated: broadband spectral outlier + LOF |
 | Bad segments | visual | automated: amplitude + muscle z-score, two passes |
-| Artifact removal | 20-component ICA, projector `I − ΦΦ⁺` on unfiltered raw | two parallel streams, DSS chain and ICA, each followed by the same ASR muscle step |
+| Artifact removal | 20-component ICA, projector `I − ΦΦ⁺` on unfiltered raw | two parallel streams, DSS chain and ICA, each followed by the same ASR muscle step and a tonic muscle stage of its own method |
 | EOG/ECG | 2 bipolar EOG + 1 ECG | `EEG057` vEOG, `EEG058` hEOG, `EEG059` ECG |
 | Epoch locks | token jump, button press, feedback, decision time | `go`, `enter`, `feedback`, `decision` |
 | Epoch windows | −500/+1000 token; −1500/+2000 press/fb/DT | per-lock, matching |
@@ -121,8 +121,10 @@ per-subject and the correction per-session.
 
 ### Preprocessing · `run on the cohort`
 
-Two cleaners run on one shared trunk and are followed by one shared muscle
-step, so the streams differ **only** in the cleaner. Both streams are run on
+Two cleaners run on one shared trunk. Each is followed by the same ASR step
+for muscle bursts and then by a tonic muscle stage of its own method, so the
+DSS stream contains no ICA. The streams differ in the cleaner and in the
+tonic muscle stage. Both streams are run on
 every recording and both carry through; they are compared on results, not
 chosen between in advance. Each stream persists its own cleaned recording and
 its own artifact estimate: three MEG files per run per stream output.
@@ -159,9 +161,10 @@ differ in two ways at once and the comparison uninterpretable.
 | # | step |
 |---|---|
 | 6 | muscle — ASR on the magnetometers: cutoff 20, 0.5 s windows, `max_dims=0.25`, statistics high-passed at 80 Hz (4th-order Butterworth), calibrated on the recording itself |
-| 7 | bad segments, pass 2 — residual muscle the stream missed |
-| 8 | resample to 600 Hz — **last**, after the low-pass |
-| 9 | persist: cleaned raw, artifact estimate, sidecar |
+| 7 | tonic muscle, by the stream's own method. DSS stream: DSS biased to 30–140 Hz power on the leading 80 principal components, subtracting the leading run of components whose spectral slope is above 0. ICA stream: a second ICA, 40 components, seed 0, removing every component whose spectral slope is above −0.5 |
+| 8 | bad segments, pass 2 — residual muscle the stream missed |
+| 9 | resample to 600 Hz — **last**, after the low-pass |
+| 10 | persist: cleaned raw, artifact estimate, sidecar |
 
 ASR's statistics — calibration and the per-window decision to reconstruct —
 see only the data above 80 Hz, so muscle triggers it and alpha and evoked
@@ -170,8 +173,46 @@ runs on the arrays, annotated spans included: the library's MNE interface
 pastes annotated samples back uncleaned, and those are the muscle segments.
 The trunk's `BAD_muscle` annotations stay on the recording after ASR, so the
 spans it reconstructed can still be excluded downstream. The artifact estimate
-is the trunk minus the stream's output, so it holds what the cleaner and ASR
-removed together.
+is the trunk minus the stream's output, so it holds what the cleaner, ASR and
+the tonic muscle stage removed together.
+
+The tonic muscle stage is there for what ASR cannot see: muscle held through
+the whole recording is ASR's own baseline. A component counts as muscle when
+its spectrum does not fall with frequency. The slope is that of log power on
+log frequency, fitted over 7–55 and 65–70 Hz on 2 s Welch windows, outside
+annotated spans (Dharmaprani 2016 for ICA, Janani 2018 for BSS). Both stages
+subtract a fixed set of components per recording, which lowers the rank; the
+sidecar's `rank` counts them.
+
+Tested on the finished recordings of all 319 runs, both streams, before
+adoption. People without tonic muscle (23): either stage changes alpha, beta
+and gamma power on the median sensor by under 0.1 dB, leaves the evoked
+response at a correlation of 0.999 or more, and keeps 96% (DSS) and 91% (ICA)
+of a simulated source at the worst 5% of positions; 21% (DSS) and 38% (ICA)
+of their recordings lose no component. People with it (9): 65–100 Hz power
+on the occipital rim falls by 5.8 dB (DSS) and 6.8 dB (ICA), from 7.5 dB above
+the median sensor to 1.5 and 0.4 dB, against 0.4 dB in the 23. Their
+high-gamma task response map matches the 23's at 0.21 before, 0.29 after DSS
+and 0.41 after ICA; beta and alpha responses are unchanged. Neither stage
+changes power differently in Fast and Slow.
+
+What the stages cost in the nine: alpha power on the rim sensors falls by 1.2
+dB (DSS) and 1.8 dB (ICA) while the alpha peak rises above its floor (5.7 dB
+to 6.9 and 7.5), and the 20 strongest alpha sensors lose under 0.1 dB, so the
+loss is floor and not peak. The evoked response on the rim sensors shrinks by
+1.2–1.3 dB (DSS) and 1.5–2.1 dB (ICA), waveform correlation 0.87 and 0.80;
+whether that is noise leaving the average or signal is not known. A simulated
+source low at the back of the head keeps 48% (DSS) and 21% (ICA) at the worst
+5% of positions.
+
+The two rules are not equally firm. DSS components sit close to its threshold:
+at −0.15 it removes 17 components from a recording without muscle, at 0 it
+removes 2.6. ICA components separate (median slope −0.25 removed, −1.32 kept),
+but the fit depends on its seed: across three seeds the same recording gives
+the same component count two times in three, the rim result in the nine
+differs by 0.4 dB at the median and 1.4 dB in one recording in ten, and 5.5%
+of fits stop without converging. The sidecar records
+`tonic_muscle_converged`.
 
 Resampling earlier aliases; resampling before ZapLine folds the higher
 harmonics onto real signal.
@@ -237,8 +278,9 @@ field after it.
   subjects that have one, so it is the subject. Rim over the subject's median
   sensor, 40-100 Hz: H02 15.5 dB, H04 13.0, H16 11.0, H18 8.8, H21 8.5, H24
   8.0, H29 7.3, H03 7.0, H01 6.5. ASR is calibrated on the recording itself,
-  so tonic muscle counts as its baseline and is barely reduced. A limit on
-  results above about 20 Hz at the back of the head for these nine.
+  so tonic muscle counts as its baseline and is barely reduced; the tonic
+  muscle stages are there for it. H31, H27, H20, H23, H26 and H07 carry a
+  smaller plateau of the same shape.
 - *H10.* From its fourth recording on, bursts of 20-50 pT at 0.5-3 Hz on
   `MRT41`, `MRT51`, `MRT52`, `MRT42`. Elsewhere in the cohort the slow field
   at the helmet edge follows the EOG channels (64% explained at the median,
@@ -258,9 +300,9 @@ field after it.
   paper excludes jaw-clenching segments deliberately, so ~2.4% may be the
   correct amount; derive the coverage limit from that intent, not a round number.
 - **Preprocessing / autoreject boundary** — see Epoching.
-- **Tonic neck muscle.** Not addressed by ASR (see Cohort check). A DSS stage
-  biased to 20-140 Hz power is the candidate if high-frequency results at the
-  back of the head are wanted; untested.
+- **Evoked response on the occipital rim.** The tonic muscle stages shrink it
+  in the nine people with tonic muscle (see Streams); noise or signal is
+  undecided.
 - **H10.** No subject-specific cleaning so far: count its surviving epochs
   after rejection and decide on exclusion from that.
 

@@ -3,11 +3,13 @@ artifact it removed. Specification and rationale: ``docs/meg.md``.
 
     read + compensate - flux jumps - ZapLine - bandpass - bad channels
         - bad segments (1)
-        -> DSS | ICA -> ASR (muscle) - bad segments (2) - resample - persist
+        -> DSS | ICA -> ASR (muscle bursts) -> DSS | ICA (tonic muscle)
+        - bad segments (2) - resample - persist
 """
 
 from __future__ import annotations
 
+import warnings
 from pathlib import Path
 
 import mne
@@ -19,7 +21,8 @@ from mne.preprocessing import (
     find_bad_channels_lof,
     find_ecg_events,
 )
-from scipy.signal import butter, find_peaks, lfilter
+from scipy.signal import butter, find_peaks, lfilter, sosfiltfilt, welch
+from sklearn.exceptions import ConvergenceWarning
 
 from meg_tokens.io import sidecar_path
 
@@ -77,6 +80,19 @@ ASR_CUTOFF = 20.0
 ASR_WINDOW = 0.5
 ASR_MAX_DIMS = 0.25
 
+# Tonic muscle, which ASR takes for the recording's baseline. A component is
+# muscle when its spectrum does not fall with frequency: the slope of log power
+# on log frequency, fitted clear of the line. Each stream uses its own method,
+# so the DSS stream contains no ICA.
+TONIC_SLOPE_FIT = ((7.0, 55.0), (65.0, 70.0))
+TONIC_SLOPE_WINDOW = 2.0
+TONIC_DSS_BAND = (30.0, 140.0)
+TONIC_DSS_N_PCS = 80
+TONIC_DSS_N_CANDIDATES = 40
+TONIC_DSS_SLOPE = 0.0
+TONIC_ICA_N_COMPONENTS = 40
+TONIC_ICA_SLOPE = -0.5
+
 STREAMS = ("dss", "ica")
 
 __all__ = [
@@ -90,6 +106,8 @@ __all__ = [
     "ocular_events",
     "read_staged_raw",
     "remove_muscle",
+    "remove_tonic_muscle_dss",
+    "remove_tonic_muscle_ica",
     "repair_flux_jumps",
     "run_stream",
     "save_stream",
@@ -477,6 +495,90 @@ def remove_muscle(raw: mne.io.BaseRaw) -> tuple[mne.io.BaseRaw, dict]:
     }
 
 
+def _unannotated(raw: mne.io.BaseRaw) -> np.ndarray:
+    """Samples outside every ``BAD`` annotation."""
+    keep = np.ones(raw.n_times, dtype=bool)
+    sfreq = float(raw.info["sfreq"])
+    for onset, duration, description in zip(
+        raw.annotations.onset, raw.annotations.duration, raw.annotations.description
+    ):
+        if description.upper().startswith("BAD"):
+            start = int(round((onset - raw.first_time) * sfreq))
+            keep[max(start, 0) : start + int(round(duration * sfreq)) + 1] = False
+    return keep
+
+
+def _spectral_slope(sources: np.ndarray, sfreq: float) -> np.ndarray:
+    """Slope of log power on log frequency, one per source."""
+    freqs, power = welch(sources, fs=sfreq, nperseg=int(TONIC_SLOPE_WINDOW * sfreq))
+    fit = np.zeros(freqs.shape, dtype=bool)
+    for low, high in TONIC_SLOPE_FIT:
+        fit |= (freqs >= low) & (freqs <= high)
+    return np.polyfit(np.log10(freqs[fit]), np.log10(power[:, fit]).T, 1)[0]
+
+
+def remove_tonic_muscle_dss(raw: mne.io.BaseRaw) -> tuple[mne.io.BaseRaw, int, dict]:
+    """DSS biased to 30-140 Hz power, in place.
+
+    Components are ordered by the share of their power in the band, on the
+    leading principal components only: on the full rank the first ones are
+    sensor noise. The leading run whose spectrum does not fall is subtracted;
+    the run ends at the first component that looks like brain.
+    """
+    sfreq = float(raw.info["sfreq"])
+    picks = mne.pick_types(raw.info, meg=True, ref_meg=False, eeg=False, exclude=[])
+    data = raw.get_data(picks=picks)
+    keep = _unannotated(raw)
+
+    def covariance(x: np.ndarray) -> np.ndarray:
+        x = x[:, keep] - x[:, keep].mean(axis=1, keepdims=True)
+        return x @ x.T / x.shape[1]
+
+    broadband = covariance(data)
+    band = covariance(
+        sosfiltfilt(butter(4, TONIC_DSS_BAND, btype="bandpass", fs=sfreq, output="sos"), data, axis=1)
+    )
+    values, vectors = np.linalg.eigh(broadband)
+    leading = slice(-TONIC_DSS_N_PCS, None)
+    whitener = vectors[:, leading] / np.sqrt(values[leading])
+    share, rotation = np.linalg.eigh(whitener.T @ band @ whitener)
+    unmixing = (whitener @ rotation[:, np.argsort(-share)])[:, :TONIC_DSS_N_CANDIDATES]
+    mixing = broadband @ unmixing
+
+    falls = _spectral_slope(unmixing.T @ data[:, keep], sfreq) <= TONIC_DSS_SLOPE
+    n_removed = int(np.argmax(falls)) if falls.any() else falls.size
+    raw._data[picks] = data - mixing[:, :n_removed] @ (unmixing[:, :n_removed].T @ data)
+    return raw, n_removed, {"components": n_removed}
+
+
+def remove_tonic_muscle_ica(raw: mne.io.BaseRaw) -> tuple[mne.io.BaseRaw, int, dict]:
+    """A second ICA, in place, removing every component whose spectrum does
+    not fall steeply enough.
+
+    The fit depends on its seed, and about one fit in twenty stops without
+    converging; the sidecar says which.
+    """
+    picks = mne.pick_types(raw.info, meg=True, ref_meg=False, eeg=False, exclude=[])
+    ica = ICA(n_components=TONIC_ICA_N_COMPONENTS, random_state=0, max_iter="auto")
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always", ConvergenceWarning)
+        ica.fit(raw, picks=picks, reject_by_annotation=True)
+    converged = not any(issubclass(w.category, ConvergenceWarning) for w in caught)
+
+    sources = ica.get_sources(raw).get_data()[:, _unannotated(raw)]
+    slope = _spectral_slope(sources, float(raw.info["sfreq"]))
+    ica.exclude = [int(index) for index in np.flatnonzero(slope > TONIC_ICA_SLOPE)]
+    ica.apply(raw)
+    return raw, len(ica.exclude), {
+        "components": len(ica.exclude),
+        "excluded": list(ica.exclude),
+        "converged": converged,
+    }
+
+
+TONIC_MUSCLE = {"dss": remove_tonic_muscle_dss, "ica": remove_tonic_muscle_ica}
+
+
 def finish(raw: mne.io.BaseRaw) -> tuple[mne.io.BaseRaw, dict]:
     """Bad segments pass 2, then resample -- last, after the low-pass.
 
@@ -503,19 +605,22 @@ def finish(raw: mne.io.BaseRaw) -> tuple[mne.io.BaseRaw, dict]:
 def run_stream(
     trunk: mne.io.BaseRaw, events: dict[str, np.ndarray], stream: str
 ) -> tuple[mne.io.BaseRaw, mne.io.BaseRaw, dict]:
-    """One cleaner, then the shared muscle step and tail: the cleaned
-    recording, what the stream removed, and the stream's sidecar fields."""
+    """One cleaner, ASR, the stream's tonic muscle stage, then the shared
+    tail: the cleaned recording, what the stream removed, and the stream's
+    sidecar fields."""
     if stream not in CLEANERS:
         raise ValueError(f"unknown stream {stream!r}; expected one of {sorted(CLEANERS)}")
     cleaned, n_removed, detail = CLEANERS[stream](trunk, events)
     cleaned, muscle = remove_muscle(cleaned)
+    cleaned, n_tonic, tonic = TONIC_MUSCLE[stream](cleaned)
     artifact = _artifact_of(trunk, cleaned)
     cleaned, tail = finish(cleaned)
     artifact.resample(RESAMPLE_HZ, verbose=False)
     return cleaned, artifact, {
         "stream": stream,
-        "n_dimensions_removed": n_removed,
+        "n_dimensions_removed": n_removed + n_tonic,
         **{f"muscle_{key}": value for key, value in muscle.items()},
+        **{f"tonic_muscle_{key}": value for key, value in tonic.items()},
         **{f"tail_{key}": value for key, value in tail.items()},
         **{f"detail_{key}": value for key, value in detail.items()},
     }
@@ -573,7 +678,8 @@ def save_stream(
         "run": str(run),
         **trunk_record,
         **stream_record,
-        # The inverse operator needs the rank; both cleaners remove dimensions.
+        # The inverse operator needs the rank; the cleaners and the tonic
+        # muscle stages remove dimensions.
         # ASR does not count: it reconstructs within windows, not a fixed subspace.
         "rank": trunk_record["n_meg_channels"] - stream_record["n_dimensions_removed"],
     }
