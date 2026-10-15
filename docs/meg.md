@@ -125,8 +125,8 @@ per-subject and the correction per-session.
 ### Preprocessing · `run on the cohort`
 
 Two cleaners run on one shared trunk. Each is followed by the same ASR step
-for muscle bursts and then by a tonic muscle stage of its own method, so the
-DSS stream contains no ICA. The streams differ in the cleaner and in the
+for muscle bursts, a tonic muscle stage of its own method, so the DSS stream
+contains no ICA, and the same head-movement regression. The streams differ in the cleaner and in the
 tonic muscle stage. Both streams are run on
 every recording and both carry through; they are compared on results, not
 chosen between in advance. Each stream persists its own cleaned recording and
@@ -141,7 +141,7 @@ its own artifact estimate: three MEG files per run per stream output.
 | 2 | ZapLine on the **unfiltered** raw | `line_freq=60`, `n_harmonics=2`, fixed |
 | 3 | bandpass | 0.5–150 Hz, `firwin` |
 | 4 | bad channels — record and score, do not auto-drop | broadband spectral outlier over 1–150 Hz; `find_bad_channels_lof` |
-| 5 | bad segments, pass 1 — excluded from cleaner *fitting* | `annotate_amplitude` peak `1.2485926067065662e-12 T`, flat `1.2485926067065662e-16 T`; `annotate_muscle_zscore` at 110–140 Hz |
+| 5 | bad segments, pass 1 — excluded from cleaner *fitting* | `annotate_amplitude` peak `1.2485926067065662e-12 T` (a step between consecutive samples, not a peak-to-peak), flat `1.2485926067065662e-16 T`; `annotate_muscle_zscore` at 110–140 Hz |
 
 Flux jumps come first because a jump is a step only until something filters
 it: the 0.5 Hz high-pass turns a 360 pT step into about six seconds of ringing
@@ -171,9 +171,10 @@ amount.
 |---|---|
 | 6 | muscle — ASR on the magnetometers: cutoff 20, 0.5 s windows, `max_dims=0.25`, statistics high-passed at 80 Hz (4th-order Butterworth), calibrated on the recording itself |
 | 7 | tonic muscle, by the stream's own method. DSS stream: DSS biased to 30–140 Hz power on the leading 80 principal components, subtracting the leading run of components whose spectral slope is above 0. ICA stream: a second ICA, 40 components, seed 0, removing every component whose spectral slope is above −0.5 |
-| 8 | bad segments, pass 2 — residual muscle the stream missed |
-| 9 | resample to 600 Hz — **last**, after the low-pass |
-| 10 | persist: cleaned raw, artifact estimate, sidecar |
+| 8 | head movement — the nine head-coil channels (`HLC0011`–`HLC0033`: x, y, z of the nasion and ear coils) regressed out of the magnetometers, MNE `EOGRegression` |
+| 9 | bad segments, pass 2 — residual muscle the stream missed |
+| 10 | resample to 600 Hz — **last**, after the low-pass |
+| 11 | persist: cleaned raw, artifact estimate, sidecar |
 
 ASR's statistics — calibration and the per-window decision to reconstruct —
 see only the data above 80 Hz, so muscle triggers it and alpha and evoked
@@ -235,6 +236,24 @@ more and still ends further from the 23. H02 stays highest in both streams
 (4.7 and 4.1 dB), with H18 in the DSS stream (4.5 dB). The count does not
 differ between Fast and Slow (3.9 and 3.8 DSS, 2.4 and 2.4 ICA). 12 of the
 319 ICA fits did not converge, 3 each in H08 and H29.
+
+What is left of the tonic muscle in the epochs was checked on all 32 people,
+both streams, every kept epoch of the four locks. The rim here is the two
+lowest occipital rows and the two lower midline sensors (`MLO41`–`44`,
+`MRO41`–`44`, `MLO51`–`53`, `MRO51`–`53`, `MZO02`, `MZO03`), its power taken
+over the median sensor's. Fast minus Slow, 65–100 Hz: the nine +0.17 dB and the
+23 +0.07 dB in the DSS stream (permutation p 0.61), −0.05 and −0.01 dB in the
+ICA stream (p 0.85); the same on every lock and at 30–55 Hz. Within people,
+Fast and Slow runs differ in one person per stream, as chance gives: H16 has
+more rim power in Slow (ICA), H31 in Fast (DSS). The DSS figure for the nine
+comes from one run, H24 Fast 4, at 7.1 dB against 2.0–2.9 in that person's
+other runs; it holds the most tonic muscle of H24's runs (7 components
+removed, none reconstructed by ASR), and the ICA stream brings it to 2.7 dB.
+Locked to the go cue, the press, the feedback or the decision, rim power moves
+by under 0.1 dB in either group; the nine rise 0.05 dB more than the 23 around
+the decision (−0.25 to +0.5 s; p 0.003 DSS, 0.04 ICA). The residual muscle is
+therefore not time-locked to the trial and does not differ between Fast and
+Slow in the group; a single person's result can still carry it.
 
 Resampling earlier aliases; resampling before ZapLine folds the higher
 harmonics onto real signal.
@@ -312,16 +331,31 @@ field after it.
   4 pT peak to peak, 33-41% in Fast 3, Fast 4 and Slow 4. H10 is kept, with
   no subject-specific cleaning. Under the epoch rule it keeps 419 of 480
   go-locked Fast and Slow epochs (DSS) and 429 (ICA), losing most in Fast 4
-  (39 of 64 kept, DSS) and Slow 4 (42 of 57). The bursts carry no mark and stay in the data;
-  they lie below the theta band.
+  (39 of 64 kept, DSS) and Slow 4 (42 of 57). The bursts carry no mark and stay in the data.
+  They are not only slow: in the kept epochs the right temporal sensors
+  (`MRT51` worst) also carry excess power above 30 Hz, strongest at 65–150 Hz
+  (see Epoching, unmarked artifacts).
 - *Unexplained.* `MZF02` correlates with its neighbours at about 0.65 in 13
   subjects, with normal power.
 
 **Open.**
 
 - **Evoked response on the occipital rim.** The tonic muscle stages shrink it
-  in the nine people with tonic muscle (see Streams); noise or signal is
-  undecided.
+  in the nine people with tonic muscle (see Streams). Rebuilt before and after
+  the stage on all 72 Fast and Slow runs of the nine (the rebuild reproduces
+  the stored recordings to 4e-8 and the same component counts), go-locked,
+  40 Hz low-pass, rim over 0–0.5 s, with the noise measured by the ±average
+  (half the trials sign-flipped). DSS stream: what the stage removes is noise.
+  The evoked power falls 0.85 dB and its noise 2.2 dB (medians); summed over
+  the nine the noise is all of the evoked power removed, and the signal moves
+  by +2% of the evoked power at the median (it falls in 4 of 9, Wilcoxon p
+  0.65). Signal over noise improves in eight of the nine. ICA stream: the
+  evoked power falls 1.4 dB and its noise 2.5 dB; noise is 57% of what is
+  removed and the signal falls in 7 of 9, by 10% of the evoked power at the
+  median (p 0.13), most in H18 (31%), H21 (25%) and H29 (17%). The ICA tonic
+  stage likely takes some evoked signal from the rim in these people; the DSS
+  stage does not. Rim waveforms differ too much between people (the 23 match
+  each other at 0.24) for the shape to tell.
 
 ### Epoching · `checked on the cohort`
 
@@ -343,7 +377,14 @@ beyond it are zero, each epoch's metadata gives its recorded margin
 
 **Epoch rejection.** An epoch is dropped when its analysis window (not its
 margins) touches any bad-segment annotation: `BAD_jump`, `BAD_muscle`,
-`BAD_peak` or `BAD_flat`, or runs past the recording.
+`BAD_peak` or `BAD_flat`, or runs past the recording. An epoch the marks
+keep is then dropped as an outlier when the log peak-to-peak of any
+magnetometer over its analysis window exceeds that sensor's cohort median by
+5 robust SDs (1.4826 × the median absolute deviation, per stream and lock,
+over every subject's epochs). What the marks leave is abnormal against the
+other people, not within its own recording (see the unmarked artifacts below),
+so only a cohort reference finds it; the thresholds are computed from every
+subject before any epoch is written.
 No sensor is repaired; each recording's bad sensors are left out of its
 forward and inverse model. For decoding, Fast and Slow trial counts are
 equalised within each subject.
@@ -381,6 +422,93 @@ cleaning, an epoch touching a muscle mark still carries 1.6 dB more 60–90 Hz
 power than clean epochs on its top 2% of sensors (0.5 dB on the median
 sensor), from 0.7 dB when under 0.25 s of it lies in the mark to 2.8 dB when
 over 1 s does.
+
+**Unmarked artifacts in the kept epochs.** Every kept epoch of the cohort,
+both streams, four locks, analysis window, 270 magnetometers: an epoch counts
+as an outlier when any sensor's log peak-to-peak lies more than 5 robust SDs
+above that sensor's cohort median (rule fixed beforehand). 1.6–2.0% of kept
+epochs are outliers, and at the median subject none.
+
+| Subject | Outlier epochs (DSS / ICA) | Where | What |
+|---|---|---|---|
+| H10 | 44–46% / 48–51% | right temporal, `MRT51` | broadband, strongest at 65–150 Hz (robust z +9.7 DSS, +6.5 ICA) and below 4 Hz (+5); its other epochs are raised on the same sensor too |
+| H18 | 8–10% / 5–13% | occipital rim, `MRO51`, `MLO52` | below 4 Hz (+4.5); in DSS also 30–150 Hz; most in Fast 1 |
+| H02 | 7.5% go, under 1% other locks / 4% go | right temporal `MRT54`, occipital | 4–30 Hz (+4.8); go-locked, most in Slow 3 |
+| H31 | 0–0.2% / 1.6–2.2% | right temporal, `MRT42` | below 30 Hz; ICA stream only |
+| H16 | 0–0.2% / 0–0.2% | — | none |
+
+H16 carries nothing the marks miss; H31 only a little, and only in the ICA
+stream. H18's slow occipital excess and H10's right temporal one escape the
+marks in a share of epochs that matters, H10's in about half of them and into
+high gamma.
+
+Sensors and causes, from the outlier epochs and from 1 s windows of the
+continuous recordings outside marks, each person against the other 31 on the
+same sensor:
+
+- *H10:* nine sensors carry most of it (DSS; six in ICA), right temporal
+  (`MRT41`–`43`, `MRT51`–`54`) and left temporal (`MLT51`, `MLT52`); five
+  sensors per outlier epoch at the median, up to 83. Its slow amplitude rises
+  with 65–150 Hz power (Spearman 0.77; the others 0.02–0.61) and with head-coil
+  movement (0.59; the others at most 0.23), and in its largest bursts the slow
+  amplitude doubles on 133 sensors and the high-band power on 80. Movement
+  episodes with temporal muscle (jaw or head), not a steady source.
+- *H18:* one to three occipital rim sensors (`MLO51`, `MRO51`, `MZO03`;
+  `MLO52`). Not muscle (no link to high-band power). The head-coil positions
+  explain 35% of the slow signal there (the others at most 6%), and H18 moves
+  the most of the cohort: the back of the head moving against the nearest
+  sensors.
+- *H02:* four right temporal and occipital sensors, small, mostly Slow 3.
+- *H31, ICA stream only:* eight right temporal sensors; a slow field that
+  doubles on 211 sensors in its bursts, without muscle or movement. DSS
+  removes it, so it is ocular or cardiac field the ICA stream leaves.
+
+Why the marks miss them: `BAD_peak` (`annotate_amplitude`) marks spans where
+consecutive samples differ by at least the threshold, a step detector, not a
+peak-to-peak one; a 50 pT wave at 3 Hz moves under 1 pT per sample at
+1200 Hz, so slow excursions are never marked and `BAD_peak` drops no epoch in
+the cohort. `BAD_muscle` averages its z-score over all 270 sensors, so muscle
+on a few temporal sensors is diluted.
+
+**Head-movement regression, two forms, on all 32 people** (go and press locks,
+both streams, against the epochs as cut). *Continuous:* MNE's
+`EOGRegression` with the nine head-coil channels as regressors, fitted and
+applied on each cleaned recording. *Trial-wise* (Stolk et al. 2013, FieldTrip
+`ft_regressconfound`): each epoch's mean coil position regressed out across the
+subject's trials at every sensor and time point.
+
+| | Continuous | Trial-wise |
+|---|---|---|
+| H18 outlier epochs | 5–11% → 1.1–1.7% | 5–11% → 6–10% |
+| H18 slow power on its rim sensors | −1.4 to −1.7 dB | −0.1 dB |
+| H10 outlier epochs | 44–51% → 43–47% | 47–55% |
+| H02, H31 | unchanged | unchanged |
+| Others: band power above 4 Hz | unchanged (worst sensor 0.2 dB) | −0.08 dB in every band |
+| Others: Fast − Slow maps | r ≥ 0.999 | r 0.95–1.00, worst sensor 1.3–1.5 dB below 8 Hz |
+| Others: evoked shape | r ≥ 0.997 | identical |
+| Others: evoked signal over noise | +0.06 to −0.06 dB, half improve | +0.07 to +0.18 dB, 21–25 of 28 improve |
+
+The continuous form removes H18's artifact and leaves everyone else as they
+were; it is the head-movement step of preprocessing (step 8). The trial-wise form fixes nothing here: its uniform −0.08 dB is the
+variance any nine regressors absorb from about 470 trials (10 log10(1 − 9/470)
+= −0.08 dB), which also accounts for most of its evoked gain, and it shifts the
+Fast − Slow maps below 8 Hz because head position differs between Fast and
+Slow runs (1.1 mm at the median, 6.2 mm in H30). Neither form reaches H10.
+
+**Marks that look only at the recording itself do not find what is left.**
+On 1 s windows of all 319 recordings, both streams, after the continuous
+head-movement regression: an artifact window (any sensor's log peak-to-peak
+above that sensor's cohort median by 5 robust SD) makes up 0.09–0.14% of the
+28 people's unmarked time and 40% of H10's. MNE's muscle score per sensor
+region (11 regions, threshold 7) marks 0.07–0.09% of the 28's time against
+0.05–0.08% for the whole array, and catches under 1% of the artifact windows,
+H10's included: the score z-scores each sensor against its own recording, and
+H10's temporal muscle is present for so much of it that it sets the baseline.
+A peak-to-peak rule against the recording's own median catches at most half of
+the artifact windows (k = 6 times the median over all sensors, nearly all of
+them in H10), against a sensor's own median under a tenth. What remains after
+the regression is abnormal against the cohort, not within its recording,
+hence the outlier rule of the epoch rejection.
 
 **Why no sensor is repaired.** Leaving ten sensors out at a time and
 rebuilding them with MNE's field interpolation from the rest, on all 638
@@ -427,6 +555,8 @@ Every entry must be defensible in a methods section.
 | Artifact removal | one ICA pass; projector `I − ΦΦ⁺` on unfiltered raw | two parallel streams, both persisted | The explicit projector gained only 1–3.5 percentage points over `ica.apply` on the same components while adding >0.25 dB distortion on three of four subjects. Running two cleaners and keeping every artifact estimate makes the choice measurable rather than assumed. |
 | Saccades | not addressed separately | DSS stage per saccade direction, events from `EEG058` | Removal at saccade onset rose from 20% to 35% across all 319 recordings, and from 35/23% to 58/48% per direction; better in 32 of 32 subjects. A direction with fewer than 10 saccades — 20 of 638, in 16 recordings, 14 of them RT runs — gets no stage: built from that few, a stage gained a median 4.9 points at onsets for 0.21 dB of alpha, about a quarter of the return at 10–14 events (17 points for 0.33 dB across both directions). |
 | Muscle | excluded by visual inspection | ASR, statistics high-passed at 80 Hz, cutoff 20, after either cleaner; annotations kept | On all 319 recordings it removes 2.1 dB (after DSS) and 4.3 dB (after ICA) of 110–140 Hz power inside the annotated muscle segments, with no change in high-gamma, gamma or alpha power in clean time and evoked responses preserved in 30 of 32 subjects under both cleaners. A DSS muscle stage removed 0 components on the median recording; ICA muscle components removed nothing in muscle segments and stripped gamma elsewhere; cutoff 10 costs high gamma after ICA. |
+| Head movement | not stated | head-coil positions (`HLC` channels) regressed out of each cleaned recording | On all 32 subjects it brought H18's movement-locked occipital outliers from 5–11% to 1–2% of epochs and left the others unchanged above 4 Hz (evoked shape r ≥ 0.997). The trial-wise alternative (Stolk et al. 2013) fixed nothing here and shifted the Fast − Slow maps below 8 Hz. |
+| Epoch rejection | not stated | marks in the analysis window, then a cohort outlier rule on peak-to-peak; no sensor repaired | Sensor repair (autoreject) loses 42–60% of 65–100 Hz variance. What the marks leave is abnormal only against the cohort (H10: 40% of its time), which no rule within one recording finds. |
 | EOG channels | 2 bipolar EOG | both `EEG057` and `EEG058` | The paper describes two EOG channels; its code used only one. `EEG058` is a real horizontal EOG, so saccade artifact was invisible to component selection. |
 | Coregistration | manual fiducials + ICP, visually verified | landmark fit + two-pass ICP, one fit per subject composed to each session | Reproducible rather than hand-placed, and it corrects between-session head-frame drift a single manual fit would absorb as error. |
 | MRI landmarks | picked by hand | by hand for 24 of 30; estimated from `fsaverage` for H22, H27, H29, H30, H31, H32 | No picked set was ever saved for those six. Recorded per subject rather than left silent. |

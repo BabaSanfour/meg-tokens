@@ -70,7 +70,9 @@ Sidecar carries `stream`, `rank` and `n_dimensions_removed` (both cleaners
 reduce rank and the inverse operator needs it), `compensation_grade_source` and
 `compensation_applied`, the bad channels per detector with every channel's
 spectral outlier score (`channel_scores`), annotated seconds before and after
-cleaning, and the per-cleaner detail.
+cleaning, the per-cleaner detail, and the share of each magnetometer's
+variance the head-movement regression removed (`head_movement_variance_removed_median`,
+`head_movement_variance_removed_max`).
 
 Every path below preprocessing names its stream (`proc`): the cleaners are
 alternatives, not degrees of one thing, so there is no default.
@@ -96,9 +98,27 @@ whose analysis window touches a `BAD` annotation or runs past the recording is
 dropped and its reason kept in the drop log. Near the ends of a recording the
 margin is shorter: `pad_before_s` and `pad_after_s` give the recorded margin of
 each epoch, the samples beyond it are zero, and only the recorded span may be
-filtered. The sidecar records the window, the padding, the counts, the
-epochs with a short margin, the go cues reconstructed, trials excluded or
-truncated, and the dropped epochs by reason.
+filtered. An epoch the marks keep is still dropped, as `OUTLIER`, when any
+magnetometer's log peak-to-peak over its analysis window exceeds that sensor's
+cohort threshold for the stream and lock. The sidecar records the window, the
+padding, `outlier_sd`, the counts, the epochs with a short margin, the go cues
+reconstructed, trials excluded or truncated, and the dropped epochs by reason.
+
+The thresholds come from two derivatives built before any epoch is written.
+Per subject and stream, every epoch the marks keep, one row each (`condition`,
+`run`, `lock`, `trial`) with one column per magnetometer:
+
+```
+derivatives/sub-H01/meg/sub-H01_task-tokens_proc-dss_desc-epochamplitudes_meg.tsv
+```
+
+Per stream, the cohort's threshold per lock (rows) and magnetometer (columns),
+the median plus `outlier_sd` robust SDs over every subject's table; the sidecar
+names the subjects and the epoch counts:
+
+```
+derivatives/sub-group/meg/sub-group_task-tokens_proc-dss_desc-epochthresholds_meg.tsv
+```
 
 ## Stage 0: Raw BIDSification
 

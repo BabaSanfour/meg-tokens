@@ -4,7 +4,7 @@ artifact it removed. Specification and rationale: ``docs/meg.md``.
     read + compensate - flux jumps - ZapLine - bandpass - bad channels
         - bad segments (1)
         -> DSS | ICA -> ASR (muscle bursts) -> DSS | ICA (tonic muscle)
-        - bad segments (2) - resample - persist
+        - head movement - bad segments (2) - resample - persist
 """
 
 from __future__ import annotations
@@ -16,6 +16,7 @@ import mne
 import numpy as np
 from mne.preprocessing import (
     ICA,
+    EOGRegression,
     annotate_amplitude,
     annotate_muscle_zscore,
     find_bad_channels_lof,
@@ -94,6 +95,10 @@ TONIC_DSS_SLOPE = 0.0
 TONIC_ICA_N_COMPONENTS = 40
 TONIC_ICA_SLOPE = -0.5
 
+# Head movement: the continuous head-localization channels, x, y and z of the
+# nasion, left and right ear coils, regressed out of the magnetometers.
+HEAD_COILS = tuple(f"HLC00{coil}{axis}" for coil in "123" for axis in "123")
+
 __all__ = [
     "STREAMS",
     "artifact_events",
@@ -104,6 +109,7 @@ __all__ = [
     "dss_subtract",
     "ocular_events",
     "read_staged_raw",
+    "remove_head_movement",
     "remove_muscle",
     "remove_tonic_muscle_dss",
     "remove_tonic_muscle_ica",
@@ -578,6 +584,30 @@ def remove_tonic_muscle_ica(raw: mne.io.BaseRaw) -> tuple[mne.io.BaseRaw, int, d
 TONIC_MUSCLE = {"dss": remove_tonic_muscle_dss, "ica": remove_tonic_muscle_ica}
 
 
+def remove_head_movement(raw: mne.io.BaseRaw) -> tuple[mne.io.BaseRaw, dict]:
+    """Regress the head-coil positions out of the magnetometers, in place.
+
+    When the head moves, every sensor sees the head from another place, so its
+    signal follows the coil positions; what they predict linearly is removed.
+    In a still head they predict nothing and nothing changes. A recording
+    without the coil channels raises: continuing would leave the movement in.
+    """
+    coils = []
+    for name in HEAD_COILS:
+        found = [channel for channel in raw.ch_names if channel.startswith(name)]
+        if len(found) != 1:
+            raise ValueError(f"head-coil channel {name} absent from the recording")
+        coils.append(found[0])
+    picks = mne.pick_types(raw.info, meg="mag", ref_meg=False, exclude=[])
+    before = np.array([raw._data[pick].var() for pick in picks])
+    EOGRegression(picks="mag", picks_artifact=coils).fit(raw).apply(raw, copy=False)
+    removed = 1 - np.array([raw._data[pick].var() for pick in picks]) / before
+    return raw, {
+        "variance_removed_median": float(np.median(removed)),
+        "variance_removed_max": float(removed.max()),
+    }
+
+
 def finish(raw: mne.io.BaseRaw) -> tuple[mne.io.BaseRaw, dict]:
     """Bad segments pass 2, then resample -- last, after the low-pass.
 
@@ -604,14 +634,15 @@ def finish(raw: mne.io.BaseRaw) -> tuple[mne.io.BaseRaw, dict]:
 def run_stream(
     trunk: mne.io.BaseRaw, events: dict[str, np.ndarray], stream: str
 ) -> tuple[mne.io.BaseRaw, mne.io.BaseRaw, dict]:
-    """One cleaner, ASR, the stream's tonic muscle stage, then the shared
-    tail: the cleaned recording, what the stream removed, and the stream's
-    sidecar fields."""
+    """One cleaner, ASR, the stream's tonic muscle stage, head movement, then
+    the shared tail: the cleaned recording, what the stream removed, and the
+    stream's sidecar fields."""
     if stream not in CLEANERS:
         raise ValueError(f"unknown stream {stream!r}; expected one of {sorted(CLEANERS)}")
     cleaned, n_removed, detail = CLEANERS[stream](trunk, events)
     cleaned, muscle = remove_muscle(cleaned)
     cleaned, n_tonic, tonic = TONIC_MUSCLE[stream](cleaned)
+    cleaned, movement = remove_head_movement(cleaned)
     artifact = _artifact_of(trunk, cleaned)
     cleaned, tail = finish(cleaned)
     artifact.resample(RESAMPLE_HZ, verbose=False)
@@ -620,6 +651,7 @@ def run_stream(
         "n_dimensions_removed": n_removed + n_tonic,
         **{f"muscle_{key}": value for key, value in muscle.items()},
         **{f"tonic_muscle_{key}": value for key, value in tonic.items()},
+        **{f"head_movement_{key}": value for key, value in movement.items()},
         **{f"tail_{key}": value for key, value in tail.items()},
         **{f"detail_{key}": value for key, value in detail.items()},
     }

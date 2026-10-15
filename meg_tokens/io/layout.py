@@ -259,6 +259,26 @@ class DerivativeLayout:
             extension=".fif",
         )
 
+    def epoch_amplitudes(self, *, subject: str, stream: str) -> Path:
+        """One subject's per-epoch peak-to-peak table, every run and lock of one stream."""
+        return self.path(
+            subject=subject,
+            processing=stream,
+            description="epochamplitudes",
+            suffix="meg",
+            extension=".tsv",
+        )
+
+    def epoch_thresholds(self, *, stream: str) -> Path:
+        """The cohort's outlier threshold per lock and magnetometer, for one stream."""
+        return self.path(
+            subject="group",
+            processing=stream,
+            description="epochthresholds",
+            suffix="meg",
+            extension=".tsv",
+        )
+
     def find_epochs(
         self,
         *,

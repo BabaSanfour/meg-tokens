@@ -495,19 +495,55 @@ rule preprocess:
 
 
 EPOCHS_STATE = STATE / "epochs" / "sub-{subject}.done"
+EPOCH_AMPLITUDES_STATE = STATE / "epochs" / "amplitudes" / "sub-{subject}.done"
+EPOCH_THRESHOLDS = [str(LAYOUT.epoch_thresholds(stream=stream)) for stream in STREAMS]
+
+
+def cleaned_fast_slow(wildcards):
+    return [
+        str(LAYOUT.preprocessed_raw(
+            subject=wildcards.subject, run=spec.run, condition=spec.condition, processing=stream,
+        ))
+        for spec, _ in raw_meg_sessions(BIDS_ROOT, wildcards.subject)
+        if spec.condition in EPOCH_CONDITIONS
+        for stream in STREAMS
+    ]
+
+
+rule epoch_amplitudes:
+    input:
+        trial_features=rules.behavior_analyze.output,
+        raw=cleaned_fast_slow,
+    output:
+        touch(str(EPOCH_AMPLITUDES_STATE))
+    shell:
+        """
+        meg-tokens --config {PROJECT_CONFIG:q} meg epoch-amplitudes \
+          --subjects {wildcards.subject:q} \
+          --streams {STREAMS}
+        """
+
+
+# The outlier thresholds come from the whole cohort, so every subject's
+# amplitudes are in before any subject's epochs are cut.
+rule epoch_thresholds:
+    input:
+        expand(str(EPOCH_AMPLITUDES_STATE), subject=SUBJECTS)
+    output:
+        EPOCH_THRESHOLDS
+    shell:
+        """
+        meg-tokens --config {PROJECT_CONFIG:q} meg epoch-thresholds \
+          --subjects {SUBJECTS} \
+          --streams {STREAMS}
+        """
 
 
 rule epochs:
     input:
         trial_features=rules.behavior_analyze.output,
-        raw=lambda wildcards: [
-            str(LAYOUT.preprocessed_raw(
-                subject=wildcards.subject, run=spec.run, condition=spec.condition, processing=stream,
-            ))
-            for spec, _ in raw_meg_sessions(BIDS_ROOT, wildcards.subject)
-            if spec.condition in EPOCH_CONDITIONS
-            for stream in STREAMS
-        ],
+        thresholds=EPOCH_THRESHOLDS,
+        raw=cleaned_fast_slow,
     output:
         touch(str(EPOCHS_STATE))
     shell:

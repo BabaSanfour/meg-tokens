@@ -243,8 +243,10 @@ meg-tokens --config tokens.toml meg preprocess --subjects H01 --run Slow1
 ```
 
 ### Stage 4: Epoch Extraction & Event Alignment
-Cuts the Fast and Slow runs of both Stage 3 streams into padded epochs around the go cue, the button press, the feedback and the decision, with the trial features as metadata; `--locks` and `--streams` narrow it:
+Cuts the Fast and Slow runs of both Stage 3 streams into padded epochs around the go cue, the button press, the feedback and the decision, with the trial features as metadata; `--locks` and `--streams` narrow it. Outlier epochs are dropped against thresholds from the whole cohort, so the amplitudes of every subject and the thresholds come first:
 ```bash
+meg-tokens --config tokens.toml meg epoch-amplitudes --subjects H01 H02
+meg-tokens --config tokens.toml meg epoch-thresholds
 meg-tokens --config tokens.toml meg epoch --subjects H01 H02
 ```
 

@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Optional, Sequence
 
 import mne
+import pandas as pd
 
 from meg_tokens.behavior.tables import read_behavior_table, read_trial_features
 from meg_tokens.core import (
@@ -15,11 +16,15 @@ from meg_tokens.core import (
     RunSpec,
     WorkflowResult,
 )
-from meg_tokens.io import DerivativeLayout
+from meg_tokens.io import DerivativeLayout, load_table, save_table
 from meg_tokens.meg.epoching import (
     EPOCH_CONDITIONS,
+    OUTLIER_SD,
     align_go,
+    amplitudes,
+    drop_outliers,
     epoch,
+    outlier_thresholds,
     read_triggers,
     save_epochs,
     trial_metadata,
@@ -164,6 +169,129 @@ def preprocess_subjects(
     )
 
 
+def _cut_epochs(project: ProjectConfig, subject: str, settings: EpochingConfig, inputs: list[Path]):
+    """Every stream and lock of one subject's Fast and Slow runs, as the marks leave them.
+
+    The go cues are paired with the behavioral log once per run; every stream
+    and lock is cut from that one pairing, so the streams differ only in what
+    the cleaners did to the data. Yields the run, stream, lock, epochs and the
+    sidecar record.
+    """
+    layout = DerivativeLayout(project.bids_root, task=project.task)
+    features = read_trial_features(layout.behavior_trial_features())
+    sessions = raw_meg_sessions(project.bids_root, subject, task=project.task)
+    if not sessions:
+        raise FileNotFoundError(f"No staged raw MEG for {subject} under {project.bids_root}")
+    for run, _ in sessions:
+        if run.condition not in EPOCH_CONDITIONS:
+            continue
+        behavior_path = layout.find_behavior(subject=run.subject, run=run.run, condition=run.condition)
+        triggers = read_triggers(project.bids_root, run.subject, run.condition, run.run, task=project.task)
+        go, trials, alignment = align_go(
+            triggers, read_behavior_table(behavior_path), run.subject, run.condition, run.run
+        )
+        this_run = features[
+            (features["subject"] == run.subject)
+            & (features["condition"].str.lower() == run.condition.lower())
+            & (features["run"].astype(str) == str(run.run))
+        ]
+        metadata = trial_metadata(trials, this_run)
+        inputs.append(behavior_path)
+        for stream in settings.streams:
+            raw_path = layout.preprocessed_raw(
+                subject=run.subject, run=run.run, condition=run.condition, processing=stream
+            )
+            raw = mne.io.read_raw_fif(raw_path, preload=True, verbose=False)
+            inputs.append(raw_path)
+            for lock in settings.locks:
+                record = {
+                    "subject": run.subject, "condition": run.condition.lower(),
+                    "run": str(run.run), "stream": stream, "n_trials": len(trials), **alignment,
+                }
+                yield run, stream, lock, epoch(raw, go, metadata, lock), record
+            del raw
+
+
+def epoch_amplitude_subjects(
+    project: ProjectConfig,
+    *,
+    subjects: Sequence[str],
+    settings: EpochingConfig = EpochingConfig(),
+) -> WorkflowResult:
+    """Each subject's per-epoch peak-to-peak on every magnetometer, one table per stream.
+
+    The epochs are those the marks leave; the cohort's outlier thresholds are
+    computed from these tables, before any epoch is dropped as an outlier.
+    """
+    layout = DerivativeLayout(project.bids_root, task=project.task)
+    inputs: list[Path] = [layout.behavior_trial_features()]
+    outputs: list[Path] = []
+    for subject in subjects:
+        tables: dict[str, list[pd.DataFrame]] = {stream: [] for stream in settings.streams}
+        for run, stream, lock, epochs, _ in _cut_epochs(project, subject, settings, inputs):
+            table = amplitudes(epochs)
+            table.insert(0, "trial", epochs.metadata["nTrialIndex"].to_numpy())
+            table.insert(0, "lock", lock)
+            table.insert(0, "run", str(run.run))
+            table.insert(0, "condition", run.condition.lower())
+            tables[stream].append(table)
+        for stream, parts in tables.items():
+            outputs.append(save_table(
+                layout.epoch_amplitudes(subject=subject, stream=stream),
+                pd.concat(parts, ignore_index=True),
+                metadata={"subject": subject, "stream": stream, "measure": "log10 peak-to-peak (T), analysis window"},
+            ))
+    return WorkflowResult(
+        stage="meg_epoch_amplitudes",
+        inputs=tuple(inputs),
+        outputs=tuple(outputs),
+        settings={"subjects": list(subjects), "locks": list(settings.locks), "streams": list(settings.streams)},
+    )
+
+
+def epoch_thresholds(
+    project: ProjectConfig,
+    *,
+    subjects: Optional[Sequence[str]] = None,
+    settings: EpochingConfig = EpochingConfig(),
+) -> WorkflowResult:
+    """The cohort's outlier threshold per stream, lock and magnetometer.
+
+    Pools every subject's amplitude table; a subject without one raises, since
+    thresholds from part of the cohort would quietly differ from the rule.
+    """
+    layout = DerivativeLayout(project.bids_root, task=project.task)
+    selected = list(subjects or staged_subjects(project.bids_root))
+    inputs: list[Path] = []
+    outputs: list[Path] = []
+    for stream in settings.streams:
+        paths = [layout.epoch_amplitudes(subject=subject, stream=stream) for subject in selected]
+        pooled = pd.concat([load_table(path) for path in paths], ignore_index=True)
+        inputs.extend(paths)
+        sensors = [column for column in pooled.columns if column not in ("condition", "run", "lock", "trial")]
+        rows = []
+        for lock in settings.locks:
+            this = pooled.loc[pooled["lock"] == lock, sensors]
+            if this.empty:
+                raise ValueError(f"no {lock} epochs in the {stream} amplitude tables")
+            rows.append({"lock": lock, **outlier_thresholds(this).to_dict()})
+        outputs.append(save_table(
+            layout.epoch_thresholds(stream=stream),
+            pd.DataFrame(rows),
+            metadata={
+                "stream": stream, "subjects": selected, "outlier_sd": OUTLIER_SD,
+                "measure": "log10 peak-to-peak (T), analysis window",
+                "n_epochs": {lock: int((pooled["lock"] == lock).sum()) for lock in settings.locks},
+            },
+        ))
+    return WorkflowResult(
+        stage="meg_epoch_thresholds",
+        inputs=tuple(inputs),
+        outputs=tuple(outputs),
+        settings={"subjects": selected, "locks": list(settings.locks), "streams": list(settings.streams)},
+    )
+
+
 def epoch_subjects(
     project: ProjectConfig,
     *,
@@ -173,53 +301,23 @@ def epoch_subjects(
 ) -> WorkflowResult:
     """Epoch every staged Fast and Slow run of the selected subjects, per stream and lock.
 
-    The go cues are paired with the behavioral log once per run; every stream
-    and lock is cut from that one pairing, so the streams differ only in what
-    the cleaners did to the data.
+    The marks drop what they touch; then the cohort's outlier thresholds
+    (:func:`epoch_thresholds`) drop what stands out against the other people.
     """
     layout = DerivativeLayout(project.bids_root, task=project.task)
     destination = DerivativeLayout(output_root or project.bids_root, task=project.task)
-    features_path = layout.behavior_trial_features()
-    features = read_trial_features(features_path)
-    inputs: list[Path] = [features_path]
+    threshold_paths = {stream: layout.epoch_thresholds(stream=stream) for stream in settings.streams}
+    thresholds = {
+        stream: load_table(path).set_index("lock") for stream, path in threshold_paths.items()
+    }
+    inputs: list[Path] = [layout.behavior_trial_features(), *threshold_paths.values()]
     outputs: list[Path] = []
-
     for subject in subjects:
-        sessions = raw_meg_sessions(project.bids_root, subject, task=project.task)
-        if not sessions:
-            raise FileNotFoundError(f"No staged raw MEG for {subject} under {project.bids_root}")
-        for run, _ in sessions:
-            if run.condition not in EPOCH_CONDITIONS:
-                continue
-            behavior_path = layout.find_behavior(subject=run.subject, run=run.run, condition=run.condition)
-            triggers = read_triggers(project.bids_root, run.subject, run.condition, run.run, task=project.task)
-            go, trials, alignment = align_go(
-                triggers, read_behavior_table(behavior_path), run.subject, run.condition, run.run
+        for run, stream, lock, epochs, record in _cut_epochs(project, subject, settings, inputs):
+            path = destination.epochs(
+                subject=run.subject, run=run.run, condition=run.condition, alignment=lock, stream=stream,
             )
-            this_run = features[
-                (features["subject"] == run.subject)
-                & (features["condition"].str.lower() == run.condition.lower())
-                & (features["run"].astype(str) == str(run.run))
-            ]
-            metadata = trial_metadata(trials, this_run)
-            inputs.append(behavior_path)
-            for stream in settings.streams:
-                raw_path = layout.preprocessed_raw(
-                    subject=run.subject, run=run.run, condition=run.condition, processing=stream
-                )
-                raw = mne.io.read_raw_fif(raw_path, preload=True, verbose=False)
-                inputs.append(raw_path)
-                for lock in settings.locks:
-                    path = destination.epochs(
-                        subject=run.subject, run=run.run, condition=run.condition,
-                        alignment=lock, stream=stream,
-                    )
-                    record = {
-                        "subject": run.subject, "condition": run.condition.lower(),
-                        "run": str(run.run), "stream": stream, "n_trials": len(trials), **alignment,
-                    }
-                    outputs.append(save_epochs(epoch(raw, go, metadata, lock), path, record))
-                del raw
+            outputs.append(save_epochs(drop_outliers(epochs, thresholds[stream].loc[lock]), path, record))
 
     return WorkflowResult(
         stage="meg_epoching",
@@ -229,5 +327,6 @@ def epoch_subjects(
             "subjects": list(subjects),
             "locks": list(settings.locks),
             "streams": list(settings.streams),
+            "outlier_sd": OUTLIER_SD,
         },
     )

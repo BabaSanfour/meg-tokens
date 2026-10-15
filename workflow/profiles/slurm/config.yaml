@@ -68,6 +68,14 @@ set-resources:
     slurm_partition: cpubase_bycore_b1
     runtime: 60
   # One subject: ten runs, both streams, four locks, one at a time.
+  epoch_amplitudes:
+    slurm_partition: cpubase_bycore_b1
+    mem_mb: 8000
+    runtime: 120
+  epoch_thresholds:
+    slurm_partition: cpubase_bycore_b1
+    mem_mb: 16000
+    runtime: 60
   epochs:
     slurm_partition: cpubase_bycore_b1
     mem_mb: 8000

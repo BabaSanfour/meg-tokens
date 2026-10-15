@@ -8,10 +8,15 @@ import pytest
 from meg_tokens.behavior.schema import OUTCOME_NEVER_STARTED
 from meg_tokens.core import EPOCH_LOCKS
 from meg_tokens.meg.epoching import (
+    OUTLIER_REASON,
+    OUTLIER_SD,
     PADDING,
     WINDOWS,
     align_go,
+    amplitudes,
+    drop_outliers,
     epoch,
+    outlier_thresholds,
     read_triggers,
     reconstruct_missing_go,
     save_epochs,
@@ -183,3 +188,39 @@ def test_the_sidecar_counts_epochs_with_a_short_margin(tmp_path):
     path = save_epochs(epochs, tmp_path / "x_epo.fif", {"stream": "dss"})
     assert json.loads(path.with_suffix(".json").read_text())["n_short_padding"] == 1
     np.testing.assert_allclose(mne.read_epochs(path, verbose=False).metadata["pad_before_s"], [0.3, PADDING, PADDING])
+
+
+def test_amplitudes_are_the_log_peak_to_peak_of_each_magnetometer_over_the_analysis_window():
+    raw = _recording()
+    sfreq = raw.info["sfreq"]
+    # a 1 pT step inside the first epoch's margin, and one inside the second's window
+    data = raw.get_data()
+    data[0, int(4.0 * sfreq)] += 1e-12
+    data[1, int(12.5 * sfreq)] += 1e-12
+    raw = mne.io.RawArray(data, raw.info, verbose=False)
+    epochs = epoch(raw, np.array([5.0, 12.0]), _metadata(2), "go")
+    table = amplitudes(epochs)
+
+    assert list(table.columns) == ["MEG1", "MEG2"]
+    tmin, tmax = WINDOWS["go"]
+    window = epochs.copy().pick("mag").crop(tmin, tmax).get_data()
+    np.testing.assert_allclose(table.to_numpy(), np.log10(np.ptp(window, axis=2)))
+    assert table.loc[0, "MEG1"] < -12.0        # the margin's step is not in the window
+    assert table.loc[1, "MEG2"] > -12.0        # the window's is
+
+
+def test_thresholds_are_the_median_plus_robust_sds_and_outliers_are_dropped_by_reason():
+    table = pd.DataFrame({"A": [0.0, 1.0, 2.0, 3.0, 4.0], "B": [10.0, 10.0, 11.0, 12.0, 12.0]})
+    thresholds = outlier_thresholds(table)
+    assert thresholds["A"] == pytest.approx(2.0 + OUTLIER_SD * 1.4826 * 1.0)
+    assert thresholds["B"] == pytest.approx(11.0 + OUTLIER_SD * 1.4826 * 1.0)
+
+    raw = _recording()
+    data = raw.get_data()
+    data[1, int(20.2 * raw.info["sfreq"])] += 1e-11   # a large excursion in the third epoch's window
+    raw = mne.io.RawArray(data, raw.info, verbose=False)
+    epochs = epoch(raw, np.array([5.0, 12.0, 20.0, 28.0]), _metadata(4), "go")
+    cohort = amplitudes(epochs).drop(index=2)
+    kept = drop_outliers(epochs, outlier_thresholds(pd.concat([cohort] * 5, ignore_index=True)) + 0.1)
+    assert kept.selection.tolist() == [0, 1, 3]
+    assert kept.drop_log[2] == (OUTLIER_REASON,)

@@ -228,9 +228,25 @@ def build_parser() -> argparse.ArgumentParser:
                             choices=STREAMS,
                             help="cleaners to run; default both")
 
+    amplitudes = meg_commands.add_parser(
+        "epoch-amplitudes",
+        help="Per-epoch peak-to-peak on every magnetometer, for the cohort's outlier thresholds.",
+    )
+    amplitudes.add_argument("--subjects", nargs="+", required=True)
+    amplitudes.add_argument("--locks", nargs="+", choices=EPOCH_LOCKS, default=list(EPOCH_LOCKS))
+    amplitudes.add_argument("--streams", nargs="+", choices=STREAMS, default=list(STREAMS))
+
+    thresholds = meg_commands.add_parser(
+        "epoch-thresholds",
+        help="The cohort's outlier threshold per stream, lock and magnetometer.",
+    )
+    thresholds.add_argument("--subjects", nargs="+", help="default: every staged subject")
+    thresholds.add_argument("--locks", nargs="+", choices=EPOCH_LOCKS, default=list(EPOCH_LOCKS))
+    thresholds.add_argument("--streams", nargs="+", choices=STREAMS, default=list(STREAMS))
+
     epoch = meg_commands.add_parser(
         "epoch",
-        help="Build event-locked epochs from staged raw and behavior derivatives.",
+        help="Build event-locked epochs from the cleaned recordings, dropping marked and outlier epochs.",
     )
     epoch.add_argument("--subjects", nargs="+", required=True)
     epoch.add_argument("--locks", nargs="+", choices=EPOCH_LOCKS, default=list(EPOCH_LOCKS))
@@ -803,6 +819,26 @@ def _meg_preprocess(project: ProjectConfig, args: argparse.Namespace) -> object:
     )
 
 
+def _meg_epoch_amplitudes(project: ProjectConfig, args: argparse.Namespace) -> object:
+    from meg_tokens.workflows.preprocessing import epoch_amplitude_subjects
+
+    return epoch_amplitude_subjects(
+        project,
+        subjects=args.subjects,
+        settings=EpochingConfig(locks=tuple(args.locks), streams=tuple(args.streams)),
+    )
+
+
+def _meg_epoch_thresholds(project: ProjectConfig, args: argparse.Namespace) -> object:
+    from meg_tokens.workflows.preprocessing import epoch_thresholds
+
+    return epoch_thresholds(
+        project,
+        subjects=args.subjects,
+        settings=EpochingConfig(locks=tuple(args.locks), streams=tuple(args.streams)),
+    )
+
+
 def _meg_epoch(project: ProjectConfig, args: argparse.Namespace) -> object:
     from meg_tokens.workflows.preprocessing import epoch_subjects
 
@@ -1325,6 +1361,8 @@ _HANDLERS: dict[tuple[str, str], Handler] = {
     ("meg", "apply-raw-staging"): _meg_apply_raw_staging,
     ("meg", "preprocess"): _meg_preprocess,
     ("meg", "coreg"): _meg_coreg,
+    ("meg", "epoch-amplitudes"): _meg_epoch_amplitudes,
+    ("meg", "epoch-thresholds"): _meg_epoch_thresholds,
     ("meg", "epoch"): _meg_epoch,
     ("meg", "source"): _meg_source,
     ("features", "erp"): _features_erp,

@@ -8,7 +8,10 @@ from the continuous recording with a margin on both sides of the analysis
 window, so band-pass and Hilbert edges fall outside it; an epoch is dropped
 when its analysis window, not its margin, touches a ``BAD`` annotation or
 leaves the recording. Near the ends of a recording the margin is shorter, and
-zero beyond the last recorded sample.
+zero beyond the last recorded sample. Then an epoch is dropped as an outlier
+when any magnetometer's peak-to-peak over its analysis window is far above
+that sensor's level across the cohort: what remains after the marks is
+abnormal against the other people, not within its own recording.
 """
 
 from __future__ import annotations
@@ -37,6 +40,13 @@ WINDOWS = {
     "decision": (-1.5, 2.0),
 }
 PADDING = 1.0
+
+# An epoch is an outlier when the log peak-to-peak of any magnetometer over its
+# analysis window exceeds that sensor's cohort median by this many robust
+# standard deviations (1.4826 x the median absolute deviation), per stream and
+# lock.
+OUTLIER_SD = 5.0
+OUTLIER_REASON = "OUTLIER"
 
 # The RT blocks measure the motor baseline that decision time subtracts; their
 # trials are not analysed, so they are not epoched.
@@ -257,6 +267,37 @@ def epoch(raw: mne.io.BaseRaw, go: np.ndarray, metadata: pd.DataFrame, lock: str
     return epochs.set_annotations(kept.annotations)
 
 
+def amplitudes(epochs: mne.BaseEpochs) -> pd.DataFrame:
+    """Log10 peak-to-peak of every magnetometer over each epoch's analysis window.
+
+    One row per epoch, one column per magnetometer, named without its
+    system suffix so that recordings and people line up.
+    """
+    lock = next(iter(epochs.event_id))
+    tmin, tmax = WINDOWS[lock]
+    window = epochs.copy().pick("mag").crop(tmin, tmax)
+    names = [name.split("-")[0] for name in window.ch_names]
+    return pd.DataFrame(np.log10(np.ptp(window.get_data(), axis=2)), columns=names)
+
+
+def outlier_thresholds(table: pd.DataFrame) -> pd.Series:
+    """Per sensor, the cohort median of log peak-to-peak plus OUTLIER_SD robust SDs.
+
+    ``table`` holds one row per epoch of one stream and lock, pooled over the
+    cohort, as :func:`amplitudes` returns them.
+    """
+    median = table.median(axis=0)
+    spread = 1.4826 * (table - median).abs().median(axis=0)
+    return median + OUTLIER_SD * spread
+
+
+def drop_outliers(epochs: mne.BaseEpochs, thresholds: pd.Series) -> mne.BaseEpochs:
+    """Drop, in place, the epochs whose peak-to-peak exceeds a sensor's threshold."""
+    table = amplitudes(epochs)
+    over = (table > thresholds[table.columns].to_numpy()).any(axis=1).to_numpy()
+    return epochs.drop(np.flatnonzero(over), reason=OUTLIER_REASON, verbose=False)
+
+
 def save_epochs(epochs: mne.Epochs, path: Path, record: dict) -> Path:
     """Write the epochs and a sidecar with the window and every dropped epoch's reason."""
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -268,6 +309,7 @@ def save_epochs(epochs: mne.Epochs, path: Path, record: dict) -> Path:
         "lock": lock,
         "analysis_window_s": list(WINDOWS[lock]),
         "padding_s": PADDING,
+        "outlier_sd": OUTLIER_SD,
         "sfreq": float(epochs.info["sfreq"]),
         "n_events": len(epochs.drop_log),
         "n_epochs": len(epochs),
@@ -280,7 +322,7 @@ def save_epochs(epochs: mne.Epochs, path: Path, record: dict) -> Path:
 
 
 __all__ = [
-    "WINDOWS", "PADDING", "EPOCH_CONDITIONS", "KNOWN_TRAILING_TRIAL_MISMATCHES", "KNOWN_UNRECOVERABLE_TRIALS",
+    "WINDOWS", "PADDING", "OUTLIER_SD", "OUTLIER_REASON", "EPOCH_CONDITIONS", "KNOWN_TRAILING_TRIAL_MISMATCHES", "KNOWN_UNRECOVERABLE_TRIALS",
     "KNOWN_GO_RECONSTRUCTION_RUNS", "read_triggers", "reconstruct_missing_go", "align_go",
-    "trial_metadata", "lock_offset", "epoch", "save_epochs",
+    "trial_metadata", "lock_offset", "epoch", "amplitudes", "outlier_thresholds", "drop_outliers", "save_epochs",
 ]

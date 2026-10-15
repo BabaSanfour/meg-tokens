@@ -2,10 +2,14 @@ import mne
 import numpy as np
 
 from meg_tokens.io import DerivativeLayout
+import pytest
+
 from meg_tokens.meg.preprocessing import (
+    HEAD_COILS,
     REFERENCE_CHANNELS,
     STREAMS,
     artifact_events,
+    remove_head_movement,
     remove_tonic_muscle_dss,
     remove_tonic_muscle_ica,
     repair_flux_jumps,
@@ -141,3 +145,42 @@ def test_each_tonic_muscle_stage_removes_muscle_and_nothing_else():
         np.testing.assert_allclose(gamma[6:], reference[6:], rtol=0.05)
         np.testing.assert_allclose(_band_power(raw, 8, 13)[6:], alpha_before[6:], rtol=0.05)
 
+
+
+def _recording_with_head_coils(moving):
+    """Twenty sensors of noise; when the head moves, each also follows the coils."""
+    rng = np.random.default_rng(0)
+    sfreq, n_times = 600.0, 36000
+    times = np.arange(n_times) / sfreq
+    brain = 1e-13 * rng.standard_normal((20, n_times))
+    coils = 0.07 + 1e-6 * rng.standard_normal((9, n_times))
+    if moving:
+        drift = np.cumsum(rng.standard_normal((3, n_times)), axis=1)
+        drift = 1e-3 * (drift - drift.mean(axis=1, keepdims=True)) / drift.std(axis=1, keepdims=True)
+        coils += np.repeat(drift, 3, axis=0) * (1 + 0.2 * np.sin(times))
+    gain = 1e-9 * rng.standard_normal((20, 9))
+    data = brain + (gain @ (coils - coils.mean(axis=1, keepdims=True)) if moving else 0)
+    names = [f"M{i:02d}" for i in range(20)] + [f"{name}-2104" for name in HEAD_COILS]
+    info = mne.create_info(names, sfreq, ["mag"] * 20 + ["misc"] * 9)
+    return mne.io.RawArray(np.vstack([data, coils]), info, verbose=False), brain
+
+
+def test_head_movement_is_regressed_out_and_a_still_head_is_left_alone():
+    raw, brain = _recording_with_head_coils(moving=True)
+    assert (raw.get_data(picks="mag") - brain).std() > 5 * brain.std()
+    _, record = remove_head_movement(raw)
+    assert (raw.get_data(picks="mag") - brain).std() < 0.05 * brain.std()
+    assert record["variance_removed_median"] > 0.9
+
+    still, brain = _recording_with_head_coils(moving=False)
+    _, record = remove_head_movement(still)
+    # nine regressors over 36,000 samples fit sqrt(9 / 36000) = 1.6% of the noise by chance
+    assert (still.get_data(picks="mag") - brain).std() < 0.03 * brain.std()
+    assert record["variance_removed_max"] < 0.01
+
+
+def test_a_recording_without_the_head_coils_raises():
+    raw, _ = _recording_with_head_coils(moving=False)
+    raw.drop_channels([raw.ch_names[-1]])
+    with pytest.raises(ValueError, match="HLC0033 absent"):
+        remove_head_movement(raw)
