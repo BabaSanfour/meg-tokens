@@ -1,438 +1,206 @@
-"""
-Source reconstruction, fetching, and estimates for MEG data.
+"""Source reconstruction: noise covariance, head model, forward and inverse
+operators. Specification and rationale: ``docs/meg.md``.
 
-Note on legacy implementations:
-- Brain-level visualization (visbrain/mne.viz) and advanced source estimate manipulation
-  (e.g., morphing and regrouping sources) were heavily prototyped in legacy notebooks:
-  `archive/replicated/DDM_scripts/scripts_new/Untitled1.ipynb` and `Untitled1-Copy1.ipynb`.
+    empty room -> trunk's temporal steps -> noise covariance     (per subject)
+    BEM, source space                                             (per subject)
+    forward                                                       (per run)
+    stream's cleaning map, estimated -> inverse                  (per run and stream)
+
+No source estimate is stored: an inverse is one matrix, applied to the epochs
+by whichever analysis needs it.
 """
 
-import os
-import mne
-import pandas as pd
+from __future__ import annotations
+
 from pathlib import Path
-from typing import List, Optional
-from mne.minimum_norm import make_inverse_operator, apply_inverse_epochs, write_inverse_operator
 
-from meg_tokens.core import parse_run_label
-from meg_tokens.io import DerivativeLayout, ensure_dir, save_sidecar, save_table
+import mne
+import numpy as np
+from mne.bem import _surfaces_to_bem
+from mne.surface import _CheckInside
+from mne.io.constants import FIFF
+from scipy.spatial import cKDTree
 
+from meg_tokens.meg.preprocessing import (
+    HIGH_PASS,
+    LINE_FREQ,
+    LINE_HARMONICS,
+    LOW_PASS,
+    RESAMPLE_HZ,
+    HEAD_COILS,
+    read_staged_raw,
+    repair_flux_jumps,
+)
 
-def source_space_description(
-    spacing: str,
-    volume_labels: Optional[List[str]] = None,
-) -> str:
-    """Return the derivative description for surface or mixed source spaces."""
-    return f"{spacing}-mixed" if volume_labels else spacing
-
-
-def source_derivative_path(
-    output_root: str,
-    subject_id: str,
-    *,
-    suffix: str,
-    extension: str,
-    run_id: Optional[str] = None,
-    condition: Optional[str] = None,
-    description: Optional[str] = None,
-    processing: Optional[str] = None,
-    space: Optional[str] = None,
-) -> Path:
-    """Build a Stage 3 source derivative path."""
-    return DerivativeLayout(output_root).source(
-        subject=subject_id,
-        run=run_id,
-        condition=condition,
-        description=description,
-        processing=processing,
-        space=space,
-        suffix=suffix,
-        extension=extension,
-    )
+COVARIANCE_METHOD = "diagonal_fixed"
+BEM_CONDUCTIVITY = (0.3, 0.006, 0.3)
+BEM_ICO = 4
+BEM_GAP_MM = 1.0
+SPACING = "oct6"
+MINDIST_MM = 5.0
+LOOSE = 0.2
+DEPTH = 0.8
 
 
-def save_noise_covariance(cov: mne.Covariance, output_root: str, subject_id: str) -> str:
-    path = source_derivative_path(output_root, subject_id, suffix="cov", extension=".fif", description="noise")
-    ensure_dir(path.parent)
-    mne.write_cov(str(path), cov, overwrite=True)
-    save_sidecar(path, {"schema_version": 1, "format": "mne-covariance-fif", "stage": "source_reconstruction", "kind": "noise_covariance", "subject": subject_id})
-    return str(path)
+def noise_covariance(path: str | Path, *, method: str = COVARIANCE_METHOD) -> tuple[mne.Covariance, dict]:
+    """Noise covariance from an empty room, taken through the trunk's temporal steps.
 
-
-def save_bem_solution(bem: mne.bem.ConductorModel, output_root: str, subject_id: str) -> str:
-    path = source_derivative_path(output_root, subject_id, suffix="bem", extension=".fif", description="singlelayer")
-    ensure_dir(path.parent)
-    mne.write_bem_solution(str(path), bem, overwrite=True)
-    save_sidecar(path, {"schema_version": 1, "format": "mne-bem-fif", "stage": "source_reconstruction", "kind": "bem_solution", "subject": subject_id})
-    return str(path)
-
-
-def save_source_space(
-    src: mne.SourceSpaces,
-    output_root: str,
-    subject_id: str,
-    spacing: str,
-    *,
-    volume_labels: Optional[list[str]] = None,
-    volume_pos: Optional[float] = None,
-) -> str:
-    path = source_derivative_path(output_root, subject_id, suffix="src", extension=".fif", description=spacing, space="subject")
-    ensure_dir(path.parent)
-    mne.write_source_spaces(str(path), src, overwrite=True)
-    save_sidecar(path, {
-        "schema_version": 1,
-        "format": "mne-source-space-fif",
-        "stage": "source_reconstruction",
-        "kind": "source_space",
-        "subject": subject_id,
-        "spacing": spacing,
-        "volume_labels": volume_labels or [],
-        "volume_pos_mm": volume_pos,
-    })
-    return str(path)
-
-
-def save_forward_solution(fwd: mne.Forward, output_root: str, subject_id: str, run_id: str, condition: Optional[str], alignment: str) -> str:
-    path = source_derivative_path(output_root, subject_id, suffix="fwd", extension=".fif", run_id=run_id, condition=condition, description=alignment)
-    ensure_dir(path.parent)
-    mne.write_forward_solution(str(path), fwd, overwrite=True)
-    save_sidecar(path, {"schema_version": 1, "format": "mne-forward-fif", "stage": "source_reconstruction", "kind": "forward_solution", "subject": subject_id, "run": parse_run_label(run_id)[0], "condition": condition, "alignment": alignment})
-    return str(path)
-
-
-def save_inverse_operator(inverse_operator, output_root: str, subject_id: str, run_id: str, condition: Optional[str], alignment: str, method: str) -> str:
-    path = source_derivative_path(output_root, subject_id, suffix="inv", extension=".fif", run_id=run_id, condition=condition, description=f"{alignment}-{method}")
-    ensure_dir(path.parent)
-    write_inverse_operator(str(path), inverse_operator, overwrite=True)
-    save_sidecar(path, {"schema_version": 1, "format": "mne-inverse-operator-fif", "stage": "source_reconstruction", "kind": "inverse_operator", "subject": subject_id, "run": parse_run_label(run_id)[0], "condition": condition, "alignment": alignment, "method": method})
-    return str(path)
-
-
-def save_source_estimates(
-    stcs: List[mne.SourceEstimate],
-    output_root: str,
-    subject_id: str,
-    run_id: str,
-    condition: Optional[str],
-    alignment: str,
-    method: str,
-) -> str:
-    """Save trial source estimates and a manifest consumed by later stages."""
-    subject = subject_id
-    run, inferred_condition = parse_run_label(run_id)
-    condition = condition or inferred_condition
-    manifest_path = source_derivative_path(
-        output_root,
-        subject,
-        suffix="stcmanifest",
-        extension=".tsv",
-        run_id=run,
-        condition=condition,
-        description=f"{alignment}-{method}",
-    )
-    ensure_dir(manifest_path.parent)
-
-    rows = []
-    for trial_idx, stc in enumerate(stcs, start=1):
-        base = source_derivative_path(
-            output_root,
-            subject,
-            suffix=f"trial{trial_idx:04d}stc",
-            extension="",
-            run_id=run,
-            condition=condition,
-            description=f"{alignment}-{method}",
-        )
-        ensure_dir(base.parent)
-        stc.save(str(base), ftype="stc", overwrite=True)
-        save_sidecar(
-            base,
-            {
-                "schema_version": 1,
-                "format": "mne-source-estimate",
-                "stage": "source_reconstruction",
-                "kind": "source_estimate",
-                "subject": subject,
-                "run": run,
-                "condition": condition,
-                "alignment": alignment,
-                "method": method,
-                "trial_index": trial_idx,
-                "n_times": int(stc.data.shape[-1]),
-            },
-        )
-        rows.append({
-            "trial": trial_idx,
-            "stc_base": str(base),
-            "subject": subject,
-            "run": run,
-            "condition": condition,
-            "alignment": alignment,
-            "method": method,
-        })
-
-    save_table(
-        manifest_path,
-        pd.DataFrame(rows),
-        metadata={
-            "stage": "source_reconstruction",
-            "kind": "source_estimate_manifest",
-            "subject": subject,
-            "run": run,
-            "condition": condition,
-            "alignment": alignment,
-            "method": method,
-            "n_trials": len(rows),
-        },
-    )
-    return str(manifest_path)
-
-def compute_noise_covariance(
-    noise_raw_path: str,
-    ch_names: list = None,
-    method: str = 'shrunk',
-    cv: int = 5,
-    tmin: float = 0.0,
-    tmax: float = 10.0,
-    preload: bool = True
-) -> mne.Covariance:
+    The cleaned recordings are at compensation grade 3, ZapLine'd, band-passed
+    0.5-150 Hz and at 600 Hz; the empty rooms were acquired at grade 0 and
+    unfiltered. A covariance of the empty room as acquired would describe other
+    sensors and another band. The spatial cleaning (DSS or ICA, the tonic
+    stage) has no counterpart in an empty room; the inverse passes the
+    covariance through the stream's own map (:func:`cleaning_operator`).
     """
-    Computes noise covariance matrix from an empty room noise raw file.
-    
-    Args:
-        noise_raw_path: Path to the raw empty room noise recording.
-        ch_names: Optional channel names list to restrict covariance computation.
-        method: Covariance estimator method (default 'shrunk').
-        cv: Cross-validation folds (default 5).
-        tmin: Start time for covariance calculation in seconds.
-        tmax: End time for covariance calculation in seconds.
-        preload: If True, preload raw file into memory.
-        
-    Returns:
-        mne.Covariance matrix object.
-    """
-    if not os.path.exists(noise_raw_path):
-        raise FileNotFoundError(f"Noise raw path does not exist: {noise_raw_path}")
-        
-    if noise_raw_path.endswith('.ds'):
-        noise_raw = mne.io.read_raw_ctf(noise_raw_path, preload=preload)
-    else:
-        noise_raw = mne.io.read_raw_fif(noise_raw_path, preload=preload)
-        
-    if ch_names:
-        # Filter channels to match selected channels
-        common_chs = [ch for ch in ch_names if ch in noise_raw.info['ch_names']]
-        noise_raw.pick_channels(common_chs)
-        
-    cov = mne.compute_raw_covariance(
-        noise_raw,
-        method=method,
-        cv=cv,
-        tmin=tmin,
-        tmax=tmax
-    )
-    return cov
+    from mne_denoise.zapline import ZapLine
 
-def setup_bem_solution(
+    raw, grade = read_staged_raw(path)
+    jump_annotations, jumps = repair_flux_jumps(raw)
+    raw.set_annotations(jump_annotations)
+    raw = ZapLine(sfreq=raw.info["sfreq"], line_freq=LINE_FREQ, n_harmonics=LINE_HARMONICS).fit_transform(raw)
+    raw.filter(HIGH_PASS, LOW_PASS, picks="mag", fir_design="firwin", verbose=False)
+    raw.resample(RESAMPLE_HZ, verbose=False)
+    cov = mne.compute_raw_covariance(raw, picks="mag", method=method, verbose=False)
+    return cov, {
+        "emptyroom": Path(path).name,
+        "compensation_grade_source": grade,
+        "flux_jumps": len(jumps),
+        "seconds": float(raw.times[-1]),
+        "method": method,
+    }
+
+
+def _inside(surface: dict, points: np.ndarray) -> np.ndarray:
+    """Which points lie inside a closed surface, by MNE's own containment test."""
+    closed = mne.surface.complete_surface_info({"rr": surface["rr"] / 1000, "tris": surface["tris"]}, copy=False, verbose=False)
+    return _CheckInside(closed)(points / 1000)
+
+
+def _clear_of(outer: dict, inner: dict, gap_mm: float) -> tuple[int, float]:
+    """Push ``outer`` out along its normals until ``inner`` lies ``gap_mm`` inside it.
+
+    Only the outer vertices within 4 mm of an inner vertex that is outside or
+    too close move; the rest of ``outer`` is left as it is. In place.
+    """
+    original = outer["rr"].copy()
+    for _ in range(50):
+        tree = cKDTree(outer["rr"])
+        distance, _ = tree.query(inner["rr"])
+        signed = np.where(_inside(outer, inner["rr"]), distance, -distance)
+        close = signed < gap_mm
+        if not close.any():
+            moved = np.linalg.norm(outer["rr"] - original, axis=1)
+            return int((moved > 0).sum()), float(moved.max())
+        normals = mne.surface.complete_surface_info({"rr": outer["rr"], "tris": outer["tris"]}, copy=False, verbose=False)["nn"]
+        shift = np.zeros(len(outer["rr"]))
+        for point, needed in zip(inner["rr"][close], gap_mm - signed[close]):
+            near = tree.query_ball_point(point, r=4.0)
+            shift[near] = np.maximum(shift[near], needed + 0.1)
+        outer["rr"] = outer["rr"] + normals * shift[:, np.newaxis]
+    raise ValueError("the outer surface could not be cleared of the inner one")
+
+
+def head_model(
     subject: str,
-    subjects_dir: str,
-    conductivity: tuple = (0.3,)
-) -> mne.bem.ConductorModel:
-    """
-    Sets up a single-layer Boundary Element Model (BEM) solution.
-    
-    Args:
-        subject: Subject identifier name.
-        subjects_dir: Path to the FreeSurfer IRM / subjects directory.
-        conductivity: Single-layer conductivity (default (0.3,)).
-        
-    Returns:
-        mne.bem.ConductorModel solution.
-    """
-    model = mne.make_bem_model(
-        subject=subject,
-        ico=4,
-        conductivity=conductivity,
-        subjects_dir=subjects_dir
-    )
-    bem_sol = mne.make_bem_solution(model)
-    return bem_sol
+    subjects_dir: str | Path,
+    *,
+    conductivity: tuple[float, ...] = BEM_CONDUCTIVITY,
+    spacing: str = SPACING,
+) -> tuple[mne.bem.ConductorModel, mne.SourceSpaces, dict]:
+    """The subject's BEM solution and cortical source space.
 
-def setup_mixed_source_space(
-    subject: str,
-    subjects_dir: str,
-    spacing: str = 'oct6',
-    volume_labels: list = None,
-    volume_pos: float = 5.0,
-    bem: mne.bem.ConductorModel = None
-) -> mne.SourceSpaces:
+    The watershed surfaces of five subjects (H05, H16, H24, H25, H28) let the
+    inner skull cross the outer skull by up to 2.5 mm, which no BEM accepts.
+    The inner skull is the surface MEG depends on, so it is kept as it is and
+    the outer skull is moved out locally to clear it by :data:`BEM_GAP_MM`,
+    and the scalp in turn to clear the outer skull (H05, H28).
     """
-    Sets up a mixed source space containing cortical surfaces and subcortical volumes.
-    
-    Args:
-        subject: Subject identifier name.
-        subjects_dir: Path to FreeSurfer subjects directory.
-        spacing: Surface source space grid spacing (default 'oct6').
-        volume_labels: List of subcortical anatomical segmentation labels from aseg.mgz.
-        volume_pos: Grid spacing in mm for volume source space (default 5.0).
-        bem: Conductor model (BEM) required if setup_volume_source_space needs BEM boundaries.
-        
-    Returns:
-        mne.SourceSpaces object containing surface and volume components.
-    """
-    # 1. Surface source space
-    src = mne.setup_source_space(
-        subject,
-        spacing=spacing,
-        add_dist=False,
-        subjects_dir=subjects_dir
-    )
-    
-    # 2. Add subcortical volumes if requested
-    if volume_labels:
-        # Default subcortical labels if none provided:
-        # Left-Accumbens-area, Left-Pallidum, Left-Caudate, Left-Putamen, etc.
-        vol_src = mne.setup_volume_source_space(
-            subject,
-            mri='aseg.mgz',
-            pos=volume_pos,
-            bem=bem,
-            volume_label=volume_labels,
-            subjects_dir=subjects_dir,
-            add_interpolator=True,
-            verbose=False
-        )
-        src += vol_src
-        
-    return src
+    bem_dir = Path(subjects_dir) / subject / "bem"
+    surfaces = [
+        mne.read_surface(bem_dir / f"{name}.surf", return_dict=True)[2]
+        for name in ("inner_skull", "outer_skull", "outer_skin")[: len(conductivity)]
+    ]
+    record = {"conductivity": list(conductivity)}
+    if len(surfaces) == 3:
+        inner, outer, skin = surfaces
+        for name, surface, within in (("outer_skull", outer, inner), ("outer_skin", skin, outer)):
+            moved, shift = _clear_of(surface, within, BEM_GAP_MM)
+            record.update({f"{name}_moved": moved, f"{name}_moved_max_mm": round(shift, 2)})
+    ids = [FIFF.FIFFV_BEM_SURF_ID_BRAIN, FIFF.FIFFV_BEM_SURF_ID_SKULL, FIFF.FIFFV_BEM_SURF_ID_HEAD][: len(surfaces)]
+    model = _surfaces_to_bem(surfaces, ids, list(conductivity), ico=BEM_ICO)
+    src = mne.setup_source_space(subject, spacing=spacing, add_dist=False, subjects_dir=subjects_dir, verbose=False)
+    return mne.make_bem_solution(model, verbose=False), src, record
 
-def compute_forward_solution(
-    info: mne.Info,
-    trans_path: str,
-    src: mne.SourceSpaces,
-    bem: mne.bem.ConductorModel,
-    mindist: float = 5.0,
-    meg: bool = True,
-    eeg: bool = False
-) -> mne.Forward:
-    """
-    Computes a forward solution leadfield matrix.
-    
-    Args:
-        info: MNE recording info object.
-        trans_path: Path to coordinate trans file (-trans.fif).
-        src: mne.SourceSpaces object.
-        bem: BEM conductor solution model.
-        mindist: Exclude sources closer than this distance (mm) to inner skull boundary.
-        meg: If True, include MEG channels.
-        eeg: If True, include EEG channels.
-        
-    Returns:
-        mne.Forward solution object.
-    """
-    fwd = mne.make_forward_solution(
-        info,
-        trans=trans_path,
-        src=src,
-        bem=bem,
-        mindist=mindist,
-        meg=meg,
-        eeg=eeg
-    )
-    return fwd
 
-def build_inverse_operator(
+def forward(info: mne.Info, trans: str | Path, src: mne.SourceSpaces, bem: mne.bem.ConductorModel) -> mne.Forward:
+    """The run's forward model: magnetometers at the run's compensation grade, from its own transform."""
+    return mne.make_forward_solution(info, trans=str(trans), src=src, bem=bem, meg=True, eeg=False, mindist=MINDIST_MM, verbose=False)
+
+
+def cleaning_operator(cleaned: mne.io.BaseRaw, artifact: mne.io.BaseRaw, rank: int) -> tuple[np.ndarray, dict]:
+    """The linear map the stream applied to the magnetometers, estimated from its own output.
+
+    DSS, ICA and the tonic stages subtract components through their own
+    patterns and filters: the cleaned magnetometers are ``M`` times the trunk's,
+    an oblique map of rank ``rank``. The trunk is the cleaned recording plus
+    the artifact estimate, so ``M`` is the least-squares fit of the one on the
+    other, with the head-coil channels as further regressors for the
+    head-movement step. ASR acts window by window and is not linear; what it
+    leaves unexplained is the fit's residual.
+    """
+    picks = mne.pick_types(cleaned.info, meg="mag", ref_meg=False, exclude=[])
+    names = [cleaned.ch_names[pick] for pick in picks]
+    output = cleaned.get_data(picks=names)
+    trunk = output + artifact.get_data(picks=names)
+    coils = cleaned.get_data(picks=[name for name in cleaned.ch_names if name.startswith(HEAD_COILS)])
+    regressors = np.vstack([trunk, coils])
+    regressors -= regressors.mean(axis=1, keepdims=True)
+    output = output - output.mean(axis=1, keepdims=True)
+    scale = regressors.std(axis=1)
+    varying = scale > 0
+    coefficients, *_ = np.linalg.lstsq((regressors[varying] / scale[varying, np.newaxis]).T, output.T, rcond=None)
+    residual = np.sum((output - coefficients.T @ (regressors[varying] / scale[varying, np.newaxis])) ** 2) / np.sum(output ** 2)
+    operator = (coefficients.T / scale[varying])[:, : len(names)]
+    singular = np.linalg.svd(operator, compute_uv=False)
+    return operator, {
+        "rank": rank,
+        "operator_residual": float(residual),
+        # How sharply the fitted map falls to zero beyond the recorded rank.
+        "operator_rank_gap": float(singular[rank - 1] / singular[rank]) if rank < len(names) else None,
+    }
+
+
+def inverse(
     info: mne.Info,
     fwd: mne.Forward,
     cov: mne.Covariance,
-    loose: dict = None,
-    depth: float = None
+    operator: np.ndarray,
+    rank: int,
+    *,
+    loose: float = LOOSE,
+    depth: float | None = DEPTH,
 ) -> mne.minimum_norm.InverseOperator:
-    """
-    Compiles the minimum-norm inverse operator.
-    
-    Note: DICS Beamforming is a planned alternative frequency-domain source localization
-    method that may be added alongside this minimum-norm approach in the future.
-    
-    Args:
-        info: MNE recording info object.
-        fwd: Computed forward solution model.
-        cov: Measured noise covariance matrix.
-        loose: Dict defining loose orientation constraints (default Dict(surface=0.2, volume=1.0)).
-        depth: Depth weighting parameter (default None).
-        
-    Returns:
-        mne.minimum_norm.InverseOperator object.
-    """
-    if loose is None:
-        loose = dict(surface=0.2, volume=1.0)
-        
-    inverse_operator = make_inverse_operator(
-        info,
-        forward=fwd,
-        noise_cov=cov,
-        loose=loose,
-        depth=depth,
-        verbose=True
-    )
-    return inverse_operator
+    """Minimum-norm inverse of what the stream left: forward and noise both through its map.
 
-def apply_inverse_operator(
-    epochs: mne.Epochs,
-    inverse_operator: mne.minimum_norm.InverseOperator,
-    method: str = 'dSPM',
-    snr: float = 1.0
-) -> list:
+    The cleaned data hold ``M G s + M n``, so the inverse is built from the
+    forward ``M G`` and the noise covariance ``M C M^T``, in the ``rank``
+    dimensions the stream kept.
     """
-    Applies the inverse operator to epochs to obtain trial-by-trial SourceEstimates.
-    
-    Args:
-        epochs: mne.Epochs object.
-        inverse_operator: Computed inverse operator object.
-        method: Source estimation method ('dSPM', 'sLORETA', 'MNE', etc. Default 'dSPM').
-        snr: Signal-to-noise ratio parameter (default 1.0).
-        
-    Returns:
-        List of mne.SourceEstimate objects (one per epoch).
-    """
-    lambda2 = 1.0 / (snr ** 2)
-    stc = apply_inverse_epochs(
-        epochs,
-        inverse_operator=inverse_operator,
-        lambda2=lambda2,
-        method=method,
-        pick_ori=None
+    names = [info.ch_names[pick] for pick in mne.pick_types(info, meg="mag", ref_meg=False, exclude=[])]
+    fwd = fwd.copy()
+    rows = [fwd["sol"]["row_names"].index(name) for name in names]
+    gain = fwd["sol"]["data"].copy()
+    gain[rows] = operator @ gain[rows]
+    fwd["sol"]["data"] = gain
+    order = [cov.ch_names.index(name) for name in names]
+    noise = operator @ cov.data[np.ix_(order, order)] @ operator.T
+    cov = mne.Covariance(noise, names, [], [], cov["nfree"], method=cov.get("method"))
+    return mne.minimum_norm.make_inverse_operator(
+        info, fwd, cov, loose=loose, depth=depth, rank={"mag": rank}, verbose=False,
     )
-    return stc
 
-def morph_source_estimates(
-    stc: mne.SourceEstimate,
-    subject_from: str,
-    subjects_dir: str,
-    fname_src_to: str
-) -> mne.SourceEstimate:
-    """
-    Morphs a subject-specific SourceEstimate into a standard target template space (e.g. fsaverage).
-    
-    Args:
-        stc: Single-trial or averaged SourceEstimate object.
-        subject_from: Subject identifier name.
-        subjects_dir: Path to FreeSurfer subjects directory.
-        fname_src_to: Path to standard target source space template file (-src.fif).
-        
-    Returns:
-        Morphed source estimate in target template space.
-    """
-    src_to = mne.read_source_spaces(fname_src_to)
-    
-    # Compute source morph
-    morph = mne.compute_source_morph(
-        stc,
-        subject_from=subject_from,
-        subjects_dir=subjects_dir,
-        src_to=src_to,
-        verbose=False
-    )
-    
-    stc_morphed = morph.apply(stc)
-    return stc_morphed
+
+__all__ = [
+    "COVARIANCE_METHOD", "BEM_CONDUCTIVITY", "SPACING", "LOOSE", "DEPTH",
+    "noise_covariance", "head_model", "forward", "cleaning_operator", "inverse",
+]

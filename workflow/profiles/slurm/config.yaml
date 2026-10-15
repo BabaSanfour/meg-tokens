@@ -80,15 +80,13 @@ set-resources:
     slurm_partition: cpubase_bycore_b1
     mem_mb: 8000
     runtime: 120
+  # Measured on the cohort: a subject's covariance, 3-layer BEM and source
+  # space take about 5 min; a run's forward and two inverses about 1 min.
   source_models:
-    mem_mb: 32000
-    runtime: 2880
-  source_run:
-    mem_mb: 32000
-    runtime: 2880
-  power:
-    mem_mb: 32000
-    runtime: 1440
-  decoding:
-    mem_mb: 32000
-    runtime: 480
+    slurm_partition: cpubase_bycore_b1
+    mem_mb: 16000
+    runtime: 60
+  source:
+    slurm_partition: cpubase_bycore_b1
+    mem_mb: 16000
+    runtime: 60

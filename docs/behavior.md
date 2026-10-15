@@ -467,24 +467,30 @@ Figure: `conditionorder-balance` (F02).
 
 **Result.**
 
+- Side 1 is the right target, answered with the right hand; side 2 the left.
+  Every task log places target 1 at 0°, 65 px right of centre, and target 2
+  at 180° (323 of 323 files), and tokens of direction 1 land on the right;
+  presses on side 1 drive the left motor cortex in 31 of 32 subjects
+  (`docs/meg.md`, Source reconstruction); the original analysis scripts
+  name side 2 left.
 - Left and right are balanced on all three measures
   (`choiceside`, `choicesidestats`, paired per subject, n = 32):
 
 | Measure (left − right) | Δ | t(31) | p | 90% CI |
 | :--- | ---: | ---: | ---: | :--- |
-| choice proportion | +0.016 | 1.14 | .263 | [−0.008, +0.040] |
-| accuracy | +0.002 | 0.16 | .877 | [−0.017, +0.020] |
-| decision time | −9.8 ms | −0.94 | .354 | [−27.5, +7.9] |
-| decision time, Fast | −0.3 ms | — | .979 | — |
-| decision time, Slow | −18.9 ms | — | .250 | — |
+| choice proportion | −0.016 | −1.14 | .263 | [−0.040, +0.008] |
+| accuracy | −0.002 | −0.16 | .877 | [−0.020, +0.017] |
+| decision time | +9.8 ms | 0.94 | .354 | [−7.9, +27.5] |
+| decision time, Fast | +0.3 ms | — | .979 | — |
+| decision time, Slow | +18.9 ms | — | .250 | — |
 
 - All three are bounded, not merely non-significant: the choice bias is
   within ±0.04 (≈4 percentage points), the accuracy difference within ±0.02,
   and the decision-time difference within ±28 ms. None passes a TOST at
   dz = ±0.5, so a small asymmetry is not excluded — but nothing approaching
   a side preference survives.
-- One subject sits outside the plotted decision-time range: H21 at +239 ms
-  under Slow, running opposite to the group (left *slower*), which pulls the
+- One subject sits outside the plotted decision-time range: H21 at −239 ms
+  under Slow, running opposite to the group (right *slower*), which pulls the
   group mean toward zero.
 
 **Interpretation.**
@@ -494,8 +500,8 @@ Figure: `conditionorder-balance` (F02).
   hand. The two-alternative design is balanced in every way that would bias
   a choice analysis.
 - **This is the result of a correction, not the raw data.** A single pooled
-  motor baseline gives −22.8 ms, p = .023 — motor latency, not a left-hand
-  speed advantage. See "Deliberate deviations from the preprint's analysis,"
+  motor baseline gives +22.8 ms, p = .023 — the right hand's shorter motor
+  latency, not slower deciding on the left. See "Deliberate deviations from the preprint's analysis,"
   below.
 - A residual ~10 ms remains, and the bound cannot exclude it. It is small
   relative to the Fast/Slow effect (127 ms) and common to both conditions,
@@ -2094,12 +2100,12 @@ silently applied.
   without changing accuracy.**
 - **The motor baseline is estimated per response side.** The preprint
   subtracts one pooled RT latency per subject. The RT runs contain no
-  deliberation, yet they show a reliable hand difference — left 442.1 ms vs.
-  right 456.0 ms, Δ = 13.9 ms, t(31) = −3.29, p = .003 — so a pooled baseline
+  deliberation, yet they show a reliable hand difference — right 442.1 ms vs.
+  left 456.0 ms, Δ = 13.9 ms, t(31) = 3.29, p = .003 — so a pooled baseline
   leaves a purely motor asymmetry inside `dt_ms`. Each trial is now corrected
   with the baseline for the hand that answered it (a hand with no usable RT
   response falls back to the pooled value). Effect: the left-minus-right
-  asymmetry in decision time drops from −22.8 ms (p = .023) to −9.8 ms
+  asymmetry in decision time drops from +22.8 ms (p = .023) to +9.8 ms
   (p = .354), while **every conclusion elsewhere is unchanged** (Slow − Fast
   +127.4 → +127.1 ms with identical t and p). The commitment time that
   `logged_spd` is read at shifts by 10.4 ms on average, which is why SPD

@@ -26,7 +26,6 @@ from meg_tokens.core import (
     PreprocessingConfig,
     ProjectConfig,
     RunSpec,
-    SourceConfig,
     SpatialDecodingConfig,
     SpectralConfig,
     StatisticsConfig,
@@ -268,25 +267,20 @@ def build_parser() -> argparse.ArgumentParser:
     )
     coreg.add_argument("--omit-distance", dest="omit_distance", type=float, default=0.005)
 
+    source_models = meg_commands.add_parser(
+        "source-models",
+        help="Noise covariance, BEM and source space for selected subjects.",
+    )
+    source_models.add_argument("--subjects", nargs="+", required=True)
+
     source = meg_commands.add_parser(
         "source",
-        help="Run source reconstruction stages for selected subjects.",
+        help="Forward model per recording and inverse operator per stream.",
     )
     source.add_argument("--subjects", nargs="+", required=True)
-    source.add_argument("--run")
+    source.add_argument("--run", help="one recording; default every Fast and Slow run")
     source.add_argument("--condition")
-    source.add_argument("--alignment", choices=EPOCH_LOCKS, default="go")
-    source.add_argument("--stream", choices=STREAMS, default="ica")
-    source.add_argument("--stages", nargs="+", choices=["cov", "bem", "src", "fwd", "inv", "apply"], default=["cov", "bem", "src", "fwd", "inv", "apply"])
-    source.add_argument("--spacing", default="oct6")
-    source.add_argument("--volume-labels", nargs="+")
-    source.add_argument("--volume-pos", type=float, default=5.0)
-    source.add_argument("--method", default="dSPM")
-    source.add_argument("--snr", type=float, default=1.0)
-    source.add_argument("--epochs-root")
-    source.add_argument("--subjects-dir")
-    source.add_argument("--trans-dir")
-    source.add_argument("--noise-dir")
+    source.add_argument("--streams", nargs="+", choices=STREAMS, default=list(STREAMS))
 
     features = domains.add_parser("features", help="Neural feature extraction.")
     feature_commands = features.add_subparsers(dest="feature_command", required=True)
@@ -603,15 +597,9 @@ def build_parser() -> argparse.ArgumentParser:
 def _project_from_args(args: argparse.Namespace) -> ProjectConfig:
     project = ProjectConfig.from_toml(args.config)
 
-    updates = {}
-    for argument, field_name in (
-        ("subjects_dir", "subjects_dir"),
-        ("trans_dir", "trans_dir"),
-    ):
-        value = getattr(args, argument, None)
-        if value:
-            updates[field_name] = Path(value)
-    return replace(project, **updates) if updates else project
+    if getattr(args, "subjects_dir", None):
+        return replace(project, subjects_dir=Path(args.subjects_dir))
+    return project
 
 
 # argparse names the second-level dest per domain rather than uniformly,
@@ -864,25 +852,21 @@ def _meg_coreg(project: ProjectConfig, args: argparse.Namespace) -> object:
     )
 
 
-def _meg_source(project: ProjectConfig, args: argparse.Namespace) -> object:
-    from meg_tokens.workflows.sources import reconstruct_sources
+def _meg_source_models(project: ProjectConfig, args: argparse.Namespace) -> object:
+    from meg_tokens.workflows.sources import source_models
 
-    return reconstruct_sources(
-        project,
-        subjects=args.subjects,
-        settings=SourceConfig(
-            stages=tuple(args.stages),
-            spacing=args.spacing,
-            volume_labels=tuple(args.volume_labels) if args.volume_labels else None,
-            volume_pos=args.volume_pos,
-            run=args.run,
-            condition=args.condition,
-            alignment=args.alignment,
-            stream=args.stream,
-            method=args.method,
-            snr=args.snr,
-        ),
-        epochs_root=args.epochs_root,
+    return source_models(project, subjects=args.subjects)
+
+
+def _meg_source(project: ProjectConfig, args: argparse.Namespace) -> object:
+    from meg_tokens.workflows.sources import source_operator_subjects, source_operators
+
+    if args.run is None:
+        return source_operator_subjects(project, subjects=args.subjects, streams=args.streams)
+    if len(args.subjects) != 1:
+        raise SystemExit("--run narrows to a single recording, so it needs exactly one --subjects.")
+    return source_operators(
+        project, RunSpec(subject=args.subjects[0], run=args.run, condition=args.condition), streams=args.streams,
     )
 
 
@@ -1364,6 +1348,7 @@ _HANDLERS: dict[tuple[str, str], Handler] = {
     ("meg", "epoch-amplitudes"): _meg_epoch_amplitudes,
     ("meg", "epoch-thresholds"): _meg_epoch_thresholds,
     ("meg", "epoch"): _meg_epoch,
+    ("meg", "source-models"): _meg_source_models,
     ("meg", "source"): _meg_source,
     ("features", "erp"): _features_erp,
     ("features", "power"): _features_power,

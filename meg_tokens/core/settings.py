@@ -6,7 +6,6 @@ from dataclasses import dataclass
 from typing import Optional, Tuple
 
 
-SOURCE_STAGES = ("cov", "bem", "src", "fwd", "inv", "apply")
 # The events epochs are locked to; their windows are in meg_tokens.meg.epoching.
 EPOCH_LOCKS = ("go", "enter", "feedback", "decision")
 STREAMS = ("dss", "ica")
@@ -81,39 +80,6 @@ class EpochingConfig:
             unknown = sorted(set(values) - set(allowed))
             if unknown or not values:
                 raise ValueError(f"{name}s must be a non-empty subset of {list(allowed)}, got {list(values)}")
-
-
-@dataclass(frozen=True)
-class SourceConfig:
-    stages: Tuple[str, ...] = SOURCE_STAGES
-    spacing: str = "oct6"
-    volume_labels: Optional[Tuple[str, ...]] = None
-    volume_pos: float = 5.0
-    run: Optional[str] = None
-    condition: Optional[str] = None
-    alignment: str = "go"
-    stream: str = "ica"
-    method: str = "dSPM"
-    snr: float = 1.0
-
-    def __post_init__(self) -> None:
-        invalid = sorted(set(self.stages) - set(SOURCE_STAGES))
-        if invalid:
-            raise ValueError(f"Unknown source stages: {invalid}")
-        if not self.stages:
-            raise ValueError("At least one source stage is required")
-        # ``run`` is optional: the per-run stages discover every epoched run of
-        # a subject, and setting it narrows them to one.
-        if self.run is None and self.condition is not None:
-            raise ValueError("condition narrows a declared run, so it needs one")
-        if self.alignment not in EPOCH_LOCKS:
-            raise ValueError(f"Unknown alignment event: {self.alignment}")
-        if self.stream not in STREAMS:
-            raise ValueError(f"Unknown stream: {self.stream}")
-        if self.volume_pos <= 0:
-            raise ValueError("volume_pos must be positive")
-        if self.snr <= 0:
-            raise ValueError("snr must be positive")
 
 
 @dataclass(frozen=True)

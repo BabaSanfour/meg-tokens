@@ -393,15 +393,15 @@ def build_choiceside_asymmetry(tables: BehaviorTableSet) -> tuple[Figure, dict[s
     # to contain every point: letting the axes stretch to the extremes leaves
     # most of each panel empty. Two subjects fall outside (one in A, one in
     # B) and are drawn as open circles on the limit with their value, so
-    # nothing is silently dropped. C's ceiling clears its top tick, which
+    # nothing is silently dropped. Each ceiling clears its top tick, which
     # would otherwise sit under the panel letter.
     measures = (
         ("choice_proportion", "proportion_left_choices", "proportion_right_choices",
-         "Δ choice proportion", (-0.15, 0.25), [-0.1, 0.0, 0.1, 0.2], 2, ""),
+         "Δ choice proportion", (-0.25, 0.15), [-0.2, -0.1, 0.0, 0.1], 2, ""),
         ("decision_time", "mean_left_dt_ms", "mean_right_dt_ms",
-         "Δ decision time (ms)", (-200.0, 140.0), [-200, -100, 0, 100], 1, " ms"),
+         "Δ decision time (ms)", (-140.0, 200.0), [-100, 0, 100], 1, " ms"),
         ("accuracy", "accuracy_left", "accuracy_right",
-         "Δ accuracy", (-0.15, 0.165), [-0.15, -0.05, 0.05, 0.15], 2, ""),
+         "Δ accuracy", (-0.165, 0.165), [-0.15, -0.05, 0.05, 0.15], 2, ""),
     )
     conditions = ("all", "fast", "slow")
 

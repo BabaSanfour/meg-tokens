@@ -296,61 +296,6 @@ class DerivativeLayout:
             raise FileNotFoundError(f"No epochs at {path}. Run `meg-tokens meg epoch` first.")
         return path
 
-    def find_trans(
-        self,
-        *,
-        subject: str,
-        run: Optional[str] = None,
-        condition: Optional[str] = None,
-    ) -> Path:
-        """Find one MEG-MRI transform for a subject and optional run.
-
-        Run number alone does not identify a recording here -- every subject has
-        an ``acq-fast`` run 1 *and* an ``acq-slow`` run 1, and the two sit in
-        different head frames. The condition is taken from a labelled ``run``
-        such as ``"Fast1"`` when it carries one, and can be passed explicitly
-        otherwise; without it an ambiguous match still raises rather than
-        picking.
-        """
-        if run is not None:
-            run_number, inferred = parse_run_label(run)
-            condition = _condition(condition or inferred)
-            scope = f"*desc-{condition}" if condition else ""
-            run_matches = sorted(
-                {
-                    path
-                    for path in self.root.glob(
-                        f"**/sub-{subject}*run-{run_number}{scope}*trans.fif"
-                    )
-                    if path.is_file()
-                }
-            )
-            if len(run_matches) == 1:
-                return run_matches[0]
-            if len(run_matches) > 1:
-                raise ValueError(
-                    f"Multiple run-specific trans files matched {subject}, "
-                    f"run={run_number}: {run_matches}"
-                )
-
-        matches = {
-            path
-            for pattern in (
-                f"**/sub-{subject}*trans.fif",
-                f"**/{subject}*trans.fif",
-            )
-            for path in self.root.glob(pattern)
-            if path.is_file()
-        }
-        existing = sorted(matches)
-        if not existing:
-            raise FileNotFoundError(
-                f"No MEG-MRI trans file found for {subject} under {self.root}"
-            )
-        if len(existing) > 1:
-            raise ValueError(f"Multiple trans files matched {subject}: {existing}")
-        return existing[0]
-
     def source(
         self,
         *,
@@ -377,36 +322,27 @@ class DerivativeLayout:
             extension=extension,
         )
 
-    def source_models(
-        self,
-        *,
-        subject: str,
-        spacing: str,
-        mixed: bool = False,
-    ) -> dict[str, Path]:
-        """Return subject-level covariance, BEM, and source-space paths."""
-        source_description = f"{spacing}-mixed" if mixed else spacing
+    def source_models(self, *, subject: str) -> dict[str, Path]:
+        """One subject's noise covariance, BEM solution and source space."""
         return {
-            "cov": self.source(
-                subject=subject,
-                suffix="cov",
-                extension=".fif",
-                description="noise",
-            ),
-            "bem": self.source(
-                subject=subject,
-                suffix="bem",
-                extension=".fif",
-                description="singlelayer",
-            ),
-            "src": self.source(
-                subject=subject,
-                suffix="src",
-                extension=".fif",
-                description=source_description,
-                space="subject",
-            ),
+            "cov": self.path(subject=subject, description="noise", suffix="cov", extension=".fif"),
+            "bem": self.path(subject=subject, suffix="bem", extension=".fif"),
+            "src": self.path(subject=subject, space="subject", suffix="src", extension=".fif"),
         }
+
+    def trans(self, *, subject: str, run: str, condition: str) -> Path:
+        """One recording's MEG-MRI transform, as coregistration writes it."""
+        return self.source(subject=subject, run=run, condition=condition, suffix="trans", extension=".fif")
+
+    def forward(self, *, subject: str, run: str, condition: str) -> Path:
+        """One recording's forward model; it does not depend on the stream."""
+        return self.source(subject=subject, run=run, condition=condition, suffix="fwd", extension=".fif")
+
+    def inverse(self, *, subject: str, run: str, condition: str, stream: str) -> Path:
+        """One recording's inverse operator for one stream."""
+        return self.source(
+            subject=subject, run=run, condition=condition, processing=stream, suffix="inv", extension=".fif",
+        )
 
     def find_source_manifest(
         self,

@@ -96,7 +96,7 @@ def test_per_hand_baselines_are_applied_to_the_hand_that_answered_or_fall_back()
     assert per_hand["dt_ms"].tolist() == pytest.approx([600.0, 500.0])
     assert per_hand["motor_baseline_ms"].tolist() == pytest.approx([300.0, 400.0])
 
-    # Only the left hand has an RT-run estimate; the right must not be dropped
+    # Only the right hand (side 1) has an RT-run estimate; the left must not be dropped
     # or invented, it falls back to the pooled baseline.
     partial = build_trial_features({subject: [run]}, {subject: 350.0}, {subject: {1: 300.0}})
     assert partial["motor_baseline_ms"].tolist() == pytest.approx([300.0, 350.0])

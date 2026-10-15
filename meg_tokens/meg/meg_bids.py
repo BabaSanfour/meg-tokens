@@ -19,7 +19,9 @@ the staged tree is canonical by construction, so nothing here re-checks.
 
 from __future__ import annotations
 
+import csv
 import json
+from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
@@ -124,71 +126,38 @@ def epoched_meg_runs(
     return runs
 
 
-def associated_emptyroom(
-    bids_root: str | Path,
-    subject: str,
-    *,
-    task: str = "tokens",
-) -> Path:
-    """The empty-room recording this subject's runs were staged against.
+def _acquisitions(scans: Path) -> dict[str, datetime]:
+    """Each MEG file's acquisition time from a BIDS ``scans.tsv``."""
+    with scans.open(encoding="utf-8-sig") as handle:
+        return {
+            row["filename"]: datetime.fromisoformat(row["acq_time"].replace("Z", "+00:00"))
+            for row in csv.DictReader(handle, delimiter="\t")
+            if row["filename"].startswith("meg/")
+        }
 
-    ``write_meg_bids`` already recorded the association, as the root-relative
-    ``AssociatedEmptyRoom`` in each run's ``*_meg.json``, so this reads what
-    Stage 0 decided rather than re-deriving it from acquisition dates.
 
-    Noise was acquired once per recording day and every run of a subject
-    resolves to the same session, but that is a property of the data rather
-    than a guarantee of the format: a subject whose runs disagree is refused
-    instead of being given whichever one sorted first.
+def nearest_emptyroom(bids_root: str | Path, subject: str) -> tuple[Path, float]:
+    """The empty room acquired nearest a subject's first run, and how many hours away.
+
+    Noise was acquired once per recording day, so for 31 subjects this is
+    their day's own session, the one Stage 0 recorded as ``AssociatedEmptyRoom``.
+    H05 was recorded on a day without one and takes the nearest: the same room
+    and sensors, a day later.
     """
     root = Path(bids_root)
-    sessions = raw_meg_sessions(root, subject, task=task)
-    if not sessions:
-        raise FileNotFoundError(
-            f"No staged raw MEG for {subject} under {root}. "
-            "Run `meg-tokens meg apply-raw-staging` first."
-        )
-
-    recorded: set[str] = set()
-    missing_sidecars = []
-    for _, path in sessions:
-        sidecar = path.with_suffix(".json")
-        if not sidecar.is_file():
-            missing_sidecars.append(sidecar.name)
-            continue
-        associated = json.loads(sidecar.read_text(encoding="utf-8")).get(
-            "AssociatedEmptyRoom"
-        )
-        if associated:
-            recorded.add(str(associated))
-
-    if not recorded and missing_sidecars:
-        raise FileNotFoundError(
-            f"{subject} has {len(missing_sidecars)} run(s) with no sidecar "
-            f"({', '.join(sorted(missing_sidecars)[:3])}...), so no empty-room "
-            "association can be read. Re-run `meg-tokens meg apply-raw-staging`."
-        )
-    if not recorded:
-        raise FileNotFoundError(
-            f"{subject}'s run sidecars name no AssociatedEmptyRoom: no "
-            "empty-room session was acquired on its recording day. Empty-room "
-            "noise covariance is not available for this subject."
-        )
-    if len(recorded) > 1:
-        raise ValueError(
-            f"{subject}'s runs name {len(recorded)} different empty-room "
-            f"sessions ({sorted(recorded)}); a per-subject noise covariance "
-            "cannot stand for all of them."
-        )
-
-    # BIDS stores it root-relative with a leading separator.
-    noise_path = root / str(recorded.pop()).lstrip("/")
-    if not noise_path.is_dir():
-        raise FileNotFoundError(
-            f"{subject}'s associated empty room {noise_path} is not staged. "
-            "Run `meg-tokens meg apply-raw-staging` to materialize it."
-        )
-    return noise_path
+    scans = root / f"sub-{subject}" / f"sub-{subject}_scans.tsv"
+    if not scans.is_file():
+        raise FileNotFoundError(f"No {scans.name} for {subject} under {root}")
+    start = min(_acquisitions(scans).values())
+    candidates = [
+        (abs(acquired - start), session / filename)
+        for session in sorted((root / "sub-emptyroom").glob("ses-*"))
+        for filename, acquired in _acquisitions(session / f"sub-emptyroom_{session.name}_scans.tsv").items()
+    ]
+    if not candidates:
+        raise FileNotFoundError(f"No staged empty room under {root / 'sub-emptyroom'}")
+    distance, path = min(candidates)
+    return path, distance.total_seconds() / 3600
 
 
 # Trigger-channel codes; the 319 recordings carry these two and no others.
@@ -309,7 +278,7 @@ def write_emptyroom_bids(
     associating the wrong day's noise.
 
     This tree is what ``meg_tokens.workflows.sources``' noise covariance reads,
-    reached through :func:`associated_emptyroom`.
+    reached through :func:`nearest_emptyroom`.
     """
     bids_path = BIDSPath(
         subject="emptyroom",

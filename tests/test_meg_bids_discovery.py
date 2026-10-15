@@ -1,47 +1,42 @@
-import json
-
 import pytest
 
-from meg_tokens.meg.meg_bids import associated_emptyroom, raw_meg_path
+from meg_tokens.meg.meg_bids import nearest_emptyroom
 
 
-def _stage(bids_root, subject, condition, run, associated):
-    path = raw_meg_path(bids_root, subject, condition, run)
-    path.mkdir(parents=True)
-    sidecar = path.with_suffix(".json")
-    sidecar.write_text(
-        json.dumps({"AssociatedEmptyRoom": associated} if associated else {}),
-        encoding="utf-8",
-    )
-    return path
+def _scans(path, rows):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lines = ["filename\tacq_time", *(f"{name}\t{time}" for name, time in rows)]
+    # mne-bids writes a byte-order mark.
+    path.write_text("\ufeff" + "\n".join(lines) + "\n", encoding="utf-8")
 
 
-def _stage_noise(bids_root, date):
-    path = (
-        bids_root
-        / "sub-emptyroom"
-        / f"ses-{date}"
-        / "meg"
-        / f"sub-emptyroom_ses-{date}_task-noise_meg.ds"
-    )
-    path.mkdir(parents=True)
-    return path
+def _stage_noise(bids_root, session, time):
+    name = f"sub-emptyroom_ses-{session}_task-noise_meg.ds"
+    _scans(bids_root / "sub-emptyroom" / f"ses-{session}" / f"sub-emptyroom_ses-{session}_scans.tsv", [(f"meg/{name}", time)])
+    return bids_root / "sub-emptyroom" / f"ses-{session}" / "meg" / name
 
 
-def test_associated_emptyroom_reads_what_stage_0_recorded(tmp_path):
-    noise = _stage_noise(tmp_path, "20180213")
-    associated = "/sub-emptyroom/ses-20180213/meg/sub-emptyroom_ses-20180213_task-noise_meg.ds"
-    _stage(tmp_path, "H01", "Fast", 1, associated)
-    _stage(tmp_path, "H01", "Slow", 1, associated)
+def test_nearest_emptyroom_is_the_recording_days_own(tmp_path):
+    _stage_noise(tmp_path, "20180130", "2018-01-30T19:00:00.000000Z")
+    noise = _stage_noise(tmp_path, "20180131", "2018-01-31T19:35:00.000000Z")
+    # Runs late in the local evening cross midnight in UTC.
+    _scans(tmp_path / "sub-H01" / "sub-H01_scans.tsv", [
+        ("meg/sub-H01_task-tokens_acq-fast_run-1_meg.ds", "2018-01-31T23:19:00.000000Z"),
+        ("meg/sub-H01_task-tokens_acq-fast_run-4_meg.ds", "2018-02-01T00:00:00.000000Z"),
+    ])
 
-    assert associated_emptyroom(tmp_path, "H01") == noise
+    path, hours = nearest_emptyroom(tmp_path, "H01")
+    assert path == noise
+    assert hours == pytest.approx(3 + 44 / 60)
 
 
-def test_associated_emptyroom_refuses_runs_that_disagree(tmp_path):
-    for date in ("20180213", "20180214"):
-        _stage_noise(tmp_path, date)
-    _stage(tmp_path, "H01", "Fast", 1, "/sub-emptyroom/ses-20180213/meg/a_meg.ds")
-    _stage(tmp_path, "H01", "Slow", 1, "/sub-emptyroom/ses-20180214/meg/b_meg.ds")
+def test_nearest_emptyroom_takes_the_nearest_day_when_the_day_has_none(tmp_path):
+    _stage_noise(tmp_path, "20180215", "2018-02-15T12:00:00.000000Z")
+    noise = _stage_noise(tmp_path, "20180221", "2018-02-21T12:48:00.000000Z")
+    _scans(tmp_path / "sub-H05" / "sub-H05_scans.tsv", [
+        ("meg/sub-H05_task-tokens_acq-fast_run-1_meg.ds", "2018-02-20T13:55:00.000000Z"),
+    ])
 
-    with pytest.raises(ValueError, match="2 different empty-room sessions"):
-        associated_emptyroom(tmp_path, "H01")
+    path, hours = nearest_emptyroom(tmp_path, "H05")
+    assert path == noise
+    assert hours == pytest.approx(22 + 53 / 60)

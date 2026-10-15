@@ -141,7 +141,7 @@ def render_subject_coregistration(
     # plus a landmark correction.
     trans = mne.read_trans(
         str(
-            layout.find_trans(
+            layout.trans(
                 subject=subject,
                 run=session.split("_run-")[1].split("_")[0],
                 condition=session.split("_acq-")[1].split("_")[0],

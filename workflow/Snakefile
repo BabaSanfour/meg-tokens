@@ -2,51 +2,22 @@
 
 from pathlib import Path
 
-from meg_tokens.core import parse_run_label
 from meg_tokens.io import DerivativeLayout
 from meg_tokens.meg.epoching import EPOCH_CONDITIONS
 from meg_tokens.meg.meg_bids import raw_meg_path, raw_meg_sessions
 from meg_tokens.behavior.analyses.sequential_sampling import ROBUSTNESS_CONFIGURATIONS
-from meg_tokens.workflows.decomposition import pca_derivative_path
 
 
 PROJECT_CONFIG = config["project_config"]
 BIDS_ROOT = config["bids_root"]
 SUBJECTS = config["subjects"]
-RUNS_BY_CONDITION = config["runs"]
-RUN_CELLS = [
-    (condition, run)
-    for condition, runs in RUNS_BY_CONDITION.items()
-    for run in runs
-]
-CONDITIONS = list(RUNS_BY_CONDITION)
-if len(CONDITIONS) != 2:
-    raise ValueError("The orchestrated group contrast requires exactly two conditions")
-ALIGNMENT = config.get("alignment", "go")
-SOURCE_METHOD = config.get("source_method", "dSPM")
-SPACING = config.get("spacing", "oct6")
-PARC = config.get("parcellation", "HCPMMP1")
-FEATURE_SPACE = config.get("feature_space", "parcellated")
-POWER_METHOD = config.get("power_method", "hilbert")
-POWER_BANDS = config.get("power_bands", ["theta", "alpha", "beta"])
 PREPROCESSING = config.get("preprocessing", {})
 LAYOUT = DerivativeLayout(BIDS_ROOT)
 DERIVATIVES = Path(BIDS_ROOT) / "derivatives"
 STATE = DERIVATIVES / ".workflow"
-RUN_BY_ENTITY = {
-    (condition.lower(), parse_run_label(run)[0]): run
-    for condition, run in RUN_CELLS
-}
-BAND_BY_ENTITY = {band.replace("_", "-"): band for band in POWER_BANDS}
-# Preprocessing writes one derivative per cleaner, so the DAG fans out two ways per
-# recording and every downstream rule has to say which stream it consumes.
+# Preprocessing writes one derivative per cleaner and both carry through to
+# the source operators: the streams are compared on results.
 STREAMS = tuple(PREPROCESSING.get("streams", ("dss", "ica")))
-STREAM = PREPROCESSING.get("stream", "ica")
-if STREAM not in STREAMS:
-    raise ValueError(
-        f"preprocessing.stream {STREAM!r} is not among preprocessing.streams {list(STREAMS)}: "
-        "the stream consumed downstream must be one that preprocessing actually writes"
-    )
 CLEAN_PATTERN = str(
     DERIVATIVES
     / "sub-{subject}"
@@ -56,137 +27,24 @@ CLEAN_PATTERN = str(
         "_desc-{condition}_raw.fif"
     )
 )
-SOURCE_MANIFEST_PATTERN = str(
+ARTIFACT_PATTERN = str(
     DERIVATIVES
     / "sub-{subject}"
     / "meg"
-    / (
-        "sub-{subject}_task-tokens_run-{run_number}_desc-{condition}-"
-        + ALIGNMENT
-        + "-"
-        + SOURCE_METHOD
-        + "_stcmanifest.tsv"
-    )
+    / "sub-{subject}_task-tokens_run-{run_number}_proc-{stream}_desc-{condition}-artifact_raw.fif"
 )
-ERP_PATTERN = str(
-    DERIVATIVES
-    / "sub-{subject}"
-    / "meg"
-    / (
-        "sub-{subject}_task-tokens_run-{run_number}_desc-{condition}-"
-        + ALIGNMENT
-        + "-"
-        + SOURCE_METHOD
-        + "-"
-        + PARC
-        + "_erp.npy"
-    )
-)
-POWER_PATTERN = str(
-    DERIVATIVES
-    / "sub-{subject}"
-    / "meg"
-    / (
-        "sub-{subject}_task-tokens_run-{run_number}_desc-{condition}-"
-        + ALIGNMENT
-        + "-"
-        + SOURCE_METHOD
-        + "-"
-        + POWER_METHOD
-        + "-{band}_power.npy"
-    )
-)
-NOISE_COV_PATTERN = str(
-    DERIVATIVES
-    / "sub-{subject}"
-    / "meg"
-    / "sub-{subject}_task-tokens_desc-noise_cov.fif"
-)
-BEM_PATTERN = str(
-    DERIVATIVES
-    / "sub-{subject}"
-    / "meg"
-    / "sub-{subject}_task-tokens_desc-singlelayer_bem.fif"
-)
-SRC_PATTERN = str(
-    DERIVATIVES
-    / "sub-{subject}"
-    / "meg"
-    / ("sub-{subject}_task-tokens_space-subject_desc-" + SPACING + "_src.fif")
-)
-
-
-def condition_for_run(run):
-    for condition, runs in RUNS_BY_CONDITION.items():
-        if run in runs:
-            return condition
-    raise ValueError(f"Run {run} is not declared in workflow/config.yaml")
-
-
-def run_for_entities(condition, run_number):
-    key = (str(condition).lower(), str(run_number))
-    if key not in RUN_BY_ENTITY:
-        raise ValueError(f"No configured run matches condition/run entities {key}")
-    return RUN_BY_ENTITY[key]
-
-
-def clean_raw(subject, run, stream=None):
-    """The derivative a downstream rule consumes, from one named stream."""
-    return str(
-        LAYOUT.preprocessed_raw(
-            subject=subject,
-            run=run,
-            condition=condition_for_run(run),
-            processing=stream or STREAM,
-        )
-    )
-
-
-def source_manifest(subject, run):
-    condition = condition_for_run(run)
-    return str(
-        LAYOUT.source(
-            subject=subject,
-            run=run,
-            condition=condition,
-            description=f"{ALIGNMENT}-{SOURCE_METHOD}",
-            suffix="stcmanifest",
-            extension=".tsv",
-        )
-    )
-
-
-def erp_array(subject, run):
-    return str(
-        LAYOUT.erp(
-            subject=subject,
-            run=run,
-            condition=condition_for_run(run),
-            alignment=ALIGNMENT,
-            source_method=SOURCE_METHOD,
-            parc=PARC,
-            suffix="erp",
-            extension=".npy",
-        )
-    )
-
-
-def power_array(subject, run, band):
-    return str(
-        LAYOUT.power(
-            subject=subject,
-            run=run,
-            condition=condition_for_run(run),
-            alignment=ALIGNMENT,
-            source_method=SOURCE_METHOD,
-            power_method=POWER_METHOD,
-            band=band,
-        )
-    )
-
-
+RUN_DERIVATIVE = str(DERIVATIVES / "sub-{subject}" / "meg" / "sub-{subject}_task-tokens_run-{run_number}")
+TRANS_PATTERN = RUN_DERIVATIVE + "_desc-{condition}_trans.fif"
+FORWARD_PATTERN = RUN_DERIVATIVE + "_desc-{condition}_fwd.fif"
+INVERSE_PATTERN = RUN_DERIVATIVE + "_proc-{stream}_desc-{condition}_inv.fif"
+SUBJECT_DERIVATIVE = str(DERIVATIVES / "sub-{subject}" / "meg" / "sub-{subject}_task-tokens")
+SOURCE_MODELS = {
+    "cov": SUBJECT_DERIVATIVE + "_desc-noise_cov.fif",
+    "bem": SUBJECT_DERIVATIVE + "_bem.fif",
+    "src": SUBJECT_DERIVATIVE + "_space-subject_src.fif",
+}
 # Every staged recording, RT included: preprocessing covers the whole cohort,
-# while the targets below follow the two conditions of the group contrast.
+# while the source operators follow the two epoched conditions.
 PREPROCESS_TARGETS = [
     str(
         LAYOUT.preprocessed_raw(
@@ -200,52 +58,13 @@ PREPROCESS_TARGETS = [
     for spec, _ in raw_meg_sessions(BIDS_ROOT, subject)
     for stream in STREAMS
 ]
-ERP_TARGETS = [
-    erp_array(subject, run)
+SOURCE_TARGETS = [
+    str(LAYOUT.inverse(subject=subject, run=spec.run, condition=spec.condition, stream=stream))
     for subject in SUBJECTS
-    for _, run in RUN_CELLS
+    for spec, _ in raw_meg_sessions(BIDS_ROOT, subject)
+    if spec.condition in EPOCH_CONDITIONS
+    for stream in STREAMS
 ]
-POWER_TARGETS = [
-    power_array(subject, run, band)
-    for subject in SUBJECTS
-    for _, run in RUN_CELLS
-    for band in POWER_BANDS
-]
-STATS_TARGET = str(
-    LAYOUT.group_stats(
-        conditions=CONDITIONS,
-        alignment=ALIGNMENT,
-        source_method=SOURCE_METHOD,
-        parc=PARC,
-        suffix="tstat",
-        extension=".npy",
-    )
-)
-DECODING_TARGET = str(
-    LAYOUT.decoding(
-        conditions=CONDITIONS,
-        feature_source="erp",
-        alignment=ALIGNMENT,
-        source_method=SOURCE_METHOD,
-        parc=PARC,
-        band=None,
-        suffix="decoding",
-        extension=".npy",
-    )
-)
-PCA_TARGET = str(
-    pca_derivative_path(
-        BIDS_ROOT,
-        conditions=CONDITIONS,
-        feature_source="erp",
-        align_to=ALIGNMENT,
-        source_method=SOURCE_METHOD,
-        parc=PARC,
-        band=None,
-        suffix="pcatrajectory",
-        extension=".npy",
-    )
-)
 # The behavioral stages each write many tables or figures, named inside the
 # package. The DAG tracks them by one marker per job under the workflow state.
 SSM = config.get("ssm", {})
@@ -268,32 +87,22 @@ SSM_AGGREGATES = [
     )
 ]
 BEHAVIOR_REPORT_TARGET = str(BEHAVIOR_STATE / "report.done")
-STATS_REPORT_TARGET = str(
-    LAYOUT.group_stats(
-        conditions=CONDITIONS,
-        alignment=ALIGNMENT,
-        source_method=SOURCE_METHOD,
-        parc=PARC,
-        suffix="statsummary",
-        extension=".tsv",
-    )
-)
 
 
 rule all:
     input:
-        ERP_TARGETS,
-        POWER_TARGETS,
-        STATS_TARGET,
-        DECODING_TARGET,
-        PCA_TARGET,
+        SOURCE_TARGETS,
         BEHAVIOR_REPORT_TARGET,
-        STATS_REPORT_TARGET,
 
 
 rule preprocess_all:
     input:
         PREPROCESS_TARGETS,
+
+
+rule source_all:
+    input:
+        SOURCE_TARGETS,
 
 
 rule behavior:
@@ -481,7 +290,8 @@ rule preprocess:
         # One invocation writes every stream, because the trunk is shared: the
         # streams must not be separate jobs or each would recompute it and
         # they could disagree about bad channels and segments.
-        expand(CLEAN_PATTERN, stream=STREAMS, allow_missing=True)
+        raw=expand(CLEAN_PATTERN, stream=STREAMS, allow_missing=True),
+        artifact=expand(ARTIFACT_PATTERN, stream=STREAMS, allow_missing=True),
     params:
         streams=" ".join(STREAMS),
     shell:
@@ -553,160 +363,37 @@ rule epochs:
           --streams {STREAMS}
         """
 
-
 rule source_models:
     input:
-        str(EPOCHS_STATE)
+        # The stage finds the nearest empty room from the acquisition times.
+        scans=str(Path(BIDS_ROOT) / "sub-{subject}" / "sub-{subject}_scans.tsv"),
     output:
-        cov=NOISE_COV_PATTERN,
-        bem=BEM_PATTERN,
-        src=SRC_PATTERN,
+        **SOURCE_MODELS,
+    shell:
+        """
+        meg-tokens --config {PROJECT_CONFIG:q} meg source-models \
+          --subjects {wildcards.subject:q}
+        """
+
+
+rule source:
+    input:
+        **SOURCE_MODELS,
+        trans=TRANS_PATTERN,
+        raw=expand(CLEAN_PATTERN, stream=STREAMS, allow_missing=True),
+        artifact=expand(ARTIFACT_PATTERN, stream=STREAMS, allow_missing=True),
+    output:
+        fwd=FORWARD_PATTERN,
+        inv=expand(INVERSE_PATTERN, stream=STREAMS, allow_missing=True),
+    params:
+        streams=" ".join(STREAMS),
     shell:
         """
         meg-tokens --config {PROJECT_CONFIG:q} meg source \
           --subjects {wildcards.subject:q} \
-          --alignment {ALIGNMENT:q} \
-          --stream {STREAM:q} \
-          --method {SOURCE_METHOD:q} \
-          --spacing {SPACING:q} \
-          --stages cov bem src
-        """
-
-
-rule source_run:
-    input:
-        epoch_state=str(EPOCHS_STATE),
-        models=rules.source_models.output,
-    output:
-        SOURCE_MANIFEST_PATTERN
-    params:
-        run=lambda wildcards: run_for_entities(
-            wildcards.condition, wildcards.run_number
-        )
-    shell:
-        """
-        meg-tokens --config {PROJECT_CONFIG:q} meg source \
-          --subjects {wildcards.subject:q} \
-          --run {params.run:q} \
+          --run {wildcards.run_number:q} \
           --condition {wildcards.condition:q} \
-          --alignment {ALIGNMENT:q} \
-          --stream {STREAM:q} \
-          --method {SOURCE_METHOD:q} \
-          --spacing {SPACING:q} \
-          --stages fwd inv apply
-        """
-
-
-rule erp:
-    input:
-        SOURCE_MANIFEST_PATTERN
-    output:
-        ERP_PATTERN
-    params:
-        run=lambda wildcards: run_for_entities(
-            wildcards.condition, wildcards.run_number
-        )
-    shell:
-        """
-        meg-tokens --config {PROJECT_CONFIG:q} features erp \
-          --subjects {wildcards.subject:q} \
-          --run {params.run:q} \
-          --condition {wildcards.condition:q} \
-          --alignment {ALIGNMENT:q} \
-          --source-method {SOURCE_METHOD:q} \
-          --parc {PARC:q} \
-          --feature-space {FEATURE_SPACE:q}
-        """
-
-
-rule power:
-    input:
-        SOURCE_MANIFEST_PATTERN
-    output:
-        POWER_PATTERN
-    params:
-        run=lambda wildcards: run_for_entities(
-            wildcards.condition, wildcards.run_number
-        ),
-        band=lambda wildcards: BAND_BY_ENTITY[wildcards.band],
-    threads:
-        4
-    shell:
-        """
-        meg-tokens --config {PROJECT_CONFIG:q} features power \
-          --subjects {wildcards.subject:q} \
-          --run {params.run:q} \
-          --condition {wildcards.condition:q} \
-          --alignment {ALIGNMENT:q} \
-          --source-method {SOURCE_METHOD:q} \
-          --method {POWER_METHOD:q} \
-          --bands {params.band:q} \
-          --n-jobs {threads}
-        """
-
-
-rule statistics:
-    input:
-        ERP_TARGETS
-    output:
-        STATS_TARGET
-    params:
-        conditions=" ".join(CONDITIONS),
-        permutations=config.get("statistics", {}).get("permutations", 1000),
-        n_jobs=config.get("statistics", {}).get("n_jobs", 1),
-    shell:
-        """
-        meg-tokens --config {PROJECT_CONFIG:q} analyze statistics \
-          --conditions {params.conditions} \
-          --alignment {ALIGNMENT:q} \
-          --source-method {SOURCE_METHOD:q} \
-          --parc {PARC:q} \
-          --permutations {params.permutations} \
-          --n-jobs {params.n_jobs}
-        """
-
-
-rule decoding:
-    input:
-        ERP_TARGETS
-    output:
-        DECODING_TARGET
-    params:
-        conditions=" ".join(CONDITIONS),
-        permutations=config.get("decoding", {}).get("permutations", 100),
-    threads:
-        config.get("decoding", {}).get("n_jobs", 4)
-    shell:
-        """
-        meg-tokens --config {PROJECT_CONFIG:q} analyze decoding \
-          --conditions {params.conditions} \
-          --feature-source erp \
-          --alignment {ALIGNMENT:q} \
-          --source-method {SOURCE_METHOD:q} \
-          --parc {PARC:q} \
-          --permutations {params.permutations} \
-          --n-jobs {threads}
-        """
-
-
-rule pca:
-    input:
-        ERP_TARGETS
-    output:
-        PCA_TARGET
-    params:
-        conditions=" ".join(CONDITIONS),
-        n_components=config.get("decomposition", {}).get("n_components", 20),
-    shell:
-        """
-        meg-tokens --config {PROJECT_CONFIG:q} analyze decomposition \
-          --analysis pca \
-          --feature-source erp \
-          --conditions {params.conditions} \
-          --alignment {ALIGNMENT:q} \
-          --source-method {SOURCE_METHOD:q} \
-          --parc {PARC:q} \
-          --n-components {params.n_components}
+          --streams {params.streams}
         """
 
 
@@ -718,20 +405,3 @@ rule behavior_report:
         touch(BEHAVIOR_REPORT_TARGET)
     shell:
         "meg-tokens --config {PROJECT_CONFIG:q} report behavior --figures all"
-
-
-rule statistics_report:
-    input:
-        STATS_TARGET
-    output:
-        STATS_REPORT_TARGET
-    params:
-        conditions=" ".join(CONDITIONS)
-    shell:
-        """
-        meg-tokens --config {PROJECT_CONFIG:q} report statistics \
-          --conditions {params.conditions} \
-          --alignment {ALIGNMENT:q} \
-          --source-method {SOURCE_METHOD:q} \
-          --parc {PARC:q}
-        """

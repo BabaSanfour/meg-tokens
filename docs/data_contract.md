@@ -120,6 +120,28 @@ names the subjects and the epoch counts:
 derivatives/sub-group/meg/sub-group_task-tokens_proc-dss_desc-epochthresholds_meg.tsv
 ```
 
+## Source derivatives
+
+Per subject, the noise covariance, BEM solution and source space; per staged
+Fast and Slow run, the forward model; per run and stream, the inverse
+operator. No source estimate is stored: analyses apply the operator to the
+epochs.
+
+```
+derivatives/sub-H01/meg/sub-H01_task-tokens_desc-noise_cov.fif
+derivatives/sub-H01/meg/sub-H01_task-tokens_bem.fif
+derivatives/sub-H01/meg/sub-H01_task-tokens_space-subject_src.fif
+derivatives/sub-H01/meg/sub-H01_task-tokens_run-1_desc-fast_fwd.fif
+derivatives/sub-H01/meg/sub-H01_task-tokens_run-1_proc-dss_desc-fast_inv.fif
+```
+
+The covariance sidecar names the empty room, its acquired compensation grade,
+flux jumps, seconds used, estimator and `hours_from_recording`; the BEM sidecar
+the conductivities and the outer-skull and scalp points moved to clear the
+inner skull (`*_moved`, `*_moved_max_mm`); the source-space sidecar the spacing
+and source count; the inverse sidecar the stream, `rank`, `operator_residual`,
+`operator_rank_gap`, `loose` and `depth`.
+
 ## Stage 0: Raw BIDSification
 
 Raw CTF media carries no condition/run label (`H02_DDM-tthiery_20180213_03.ds`
@@ -207,7 +229,7 @@ recomputes the plan.
 | Layer | Rule |
 | :--- | :--- |
 | MEG | each matched `.ds` via `mne_bids.write_raw_bids`, which also writes `channels.tsv`, `*_meg.json`, `coordsystem.json`, `dataset_description.json`, `participants.tsv`. `*_events.tsv` comes from the trigger channel (`mne.find_events`); CTF's `MarkerFile.mrk` annotations are dropped first (`raw.set_annotations(None)`) to avoid double-counting |
-| Empty room | under `sub-emptyroom/ses-<date>/meg/`, cross-referenced via `AssociatedEmptyRoom`, which is what `workflows/sources.py` resolves noise through |
+| Empty room | under `sub-emptyroom/ses-<date>/meg/`, cross-referenced via `AssociatedEmptyRoom`; `workflows/sources.py` takes the one nearest each subject's first run by `scans.tsv` acquisition time, which is that link wherever one exists |
 | Behavior | `parse_tdms_file(path)` under raw-legal entities; never infers trial classes. Independent of and additive to `derivatives/sub-*/beh/*_beh.tsv`. Staged for every requested subject regardless of MEG match status |
 | Head shape | verbatim copy of the native CTF Polhemus export to `BIDS/sub-*/meg/sub-*_headshape.eeg`; BIDS leaves this extension to the digitizer's format |
 | Anat | `subjects_dir/<ID>/mri/rawavg.mgz` -> `BIDS/sub-<ID>/anat/sub-<ID>_T1w.nii.gz` via `mne_bids.write_anat`. Lossless: identical shape, bit-identical voxels and affine, `sform_code = 2`. Row is `found`/`not_found`, needs no matching. `subjects_dir` itself is untouched |

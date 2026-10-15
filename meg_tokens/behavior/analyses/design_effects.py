@@ -37,7 +37,10 @@ from meg_tokens.behavior.trials import (
 )
 
 
-SIDE_NAMES: Final[dict[int, str]] = {1: "left", 2: "right"}
+# Side 1 is the right target, answered with the right hand; side 2 the left.
+# The task logs place target 1 at 0 degrees, right of centre, in every file,
+# and presses on side 1 drive the left motor cortex (docs/behavior.md).
+SIDE_NAMES: Final[dict[int, str]] = {1: "right", 2: "left"}
 
 # Robust cutoff for the extreme-DT review, in scaled median absolute
 # deviations. Flagged trials are reported, never removed.
@@ -205,7 +208,7 @@ def choice_side_summary(features: pd.DataFrame) -> pd.DataFrame:
 
     Notes
     -----
-    Side 1 is labeled left and side 2 right. Choice and correct-target
+    Side 1 is the right target and hand, side 2 the left. Choice and correct-target
     proportions use every selected row as their denominator; accuracy excludes
     rows with missing correctness.
     """

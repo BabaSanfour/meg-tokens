@@ -28,11 +28,12 @@ anatomies; that flag follows them into every source-level result. Committed as
 **Preprocessing — complete.** Both streams on all 319 recordings, through
 the workflow (§4, Preprocessing).
 
-**Epoching — implemented and checked on the cohort.** All 256 Fast and Slow
-recordings, both streams, four locks (§4, Epoching). The epochs are not kept
-yet.
+**Epoching — complete.** All 256 Fast and Slow recordings, both streams, four
+locks, with the cohort outlier rule (§4, Epoching).
 
-**Source reconstruction — not started.** Zero source estimates, zero features.
+**Source reconstruction — implemented and benchmarked on the cohort** (§4,
+Source reconstruction). Inverse operators not yet produced by the workflow;
+zero features.
 
 **Downstream helpers with no callers.** `psd_description`
 (`workflows/spectral.py`), `run_batch_dpca` (`workflows/decomposition.py`),
@@ -62,10 +63,10 @@ Thiery, Rainville, Cisek, Jerbi (2022),
 | EOG/ECG | 2 bipolar EOG + 1 ECG | `EEG057` vEOG, `EEG058` hEOG, `EEG059` ECG |
 | Epoch locks | token jump, button press, feedback, decision time | `go`, `enter`, `feedback`, `decision` |
 | Epoch windows | −500/+1000 token; −1500/+2000 press/fb/DT | per-lock, matching |
-| Noise covariance | baseline [−200, 0] ms, shrunk | empty-room, shrunk |
+| Noise covariance | baseline [−200, 0] ms, shrunk | empty-room through the trunk's temporal steps, `diagonal_fixed`, passed through each stream's cleaning map |
 | BEM | 3-layer, [0.3, 0.006, 0.3] | same |
 | Source space | ~8196 vertices | `oct6` = 8196 |
-| Inverse | dSPM, λ² = 1, single-trial | same |
+| Inverse | dSPM, λ² = 1, single-trial | operator stored per run and stream; method and λ² chosen where it is applied (sLORETA measured best) |
 | Bands | FOOOF: θ5–8, α9–13, β16–24, γ30–60, hγ60–90 | same |
 | Power | FIR1 order 3 + Hilbert, 500 ms / 50 ms step | Hilbert, same windowing |
 | PCA | source power, 12 classes, top 20 PCs | same, on the corrected class frame |
@@ -87,8 +88,18 @@ paper's chosen-target `nProb`, which is response-confounded
 (`docs/behavior.md`). Any class-keyed MEG analysis answers a different question
 than the paper's.
 
-**Storage → not a constraint.** Single-trial source estimates at `oct6` are
-1.63 TB at 1200 Hz against 300 TB available.
+**Streams → both primary.** Every result is computed and reported on the DSS
+and the ICA stream; neither is chosen over the other. They fail differently:
+DSS removes the heart and the eyes to the level of random events and ICA does
+not; ICA, followed by ASR, leaves fewer muscle bursts, keeps more of the
+sources' field and adds no high-frequency power; tonic muscle they remove
+alike (§4, Source reconstruction). A result that holds in one stream only is
+read against that stream's weakness.
+
+**Storage → no single-trial source estimates.** An inverse operator is one
+matrix per run and stream (512 files); each analysis applies it to the epochs,
+which takes seconds. Stored single-trial estimates with their 1 s margins would
+be about 11 TB in 350,000 files.
 
 ---
 
@@ -101,9 +112,10 @@ and H10; treat their source results as lower-confidence throughout.
 classes rest on a trial classification the behavioral work showed is
 response-confounded. Epoch metadata needs the corrected labels from the start.
 
-**3. H05 has no empty room.** Recorded 2018-02-20; no empty-room session was
-acquired that day. Open: nearest-day noise, baseline covariance for that
-subject alone, or exclusion from source analysis.
+**3. H05 has no same-day empty room.** Recorded 2018-02-20; no empty-room
+session was acquired that day. It takes the next day's (22.9 h later), the
+nearest in time. Its watershed skull is also the thinnest of the cohort (see
+Source reconstruction).
 
 **4. Four runs were acquired without gradient compensation.** H11 Fast 3/4 and
 Slow 3/4 are grade 0; the other 315 are grade 3. Corrected at read time (see Preprocessing),
@@ -235,7 +247,10 @@ dB in the nine against 7.1 dB after the DSS cleaner), so its stage removes
 more and still ends further from the 23. H02 stays highest in both streams
 (4.7 and 4.1 dB), with H18 in the DSS stream (4.5 dB). The count does not
 differ between Fast and Slow (3.9 and 3.8 DSS, 2.4 and 2.4 ICA). 12 of the
-319 ICA fits did not converge, 3 each in H08 and H29.
+319 ICA fits did not converge, 3 each in H08 and H29. These figures, and the
+test's, come from the run before the head-movement regression; rebuilt on all
+319 recordings with and without it, the regression moves none of them by more
+than 0.07 dB or 0.004 in correlation.
 
 What is left of the tonic muscle in the epochs was checked on all 32 people,
 both streams, every kept epoch of the four locks. The rim here is the two
@@ -253,7 +268,10 @@ Locked to the go cue, the press, the feedback or the decision, rim power moves
 by under 0.1 dB in either group; the nine rise 0.05 dB more than the 23 around
 the decision (−0.25 to +0.5 s; p 0.003 DSS, 0.04 ICA). The residual muscle is
 therefore not time-locked to the trial and does not differ between Fast and
-Slow in the group; a single person's result can still carry it.
+Slow in the group; a single person's result can still carry it. These epochs
+are the ones the marks keep, before the outlier rule; on the final files every
+figure here is unchanged. On the final epochs Fast minus Slow at 65–100 Hz is
++0.18 dB in the nine and +0.04 dB in the 23 (DSS, p 0.44), the rest as above.
 
 Resampling earlier aliases; resampling before ZapLine folds the higher
 harmonics onto real signal.
@@ -276,27 +294,31 @@ is not usable: its threshold is set from the segment's extremes, so it reports
 `find_ecg_events` on `EEG059`, which is stable to within 1.1% across lengths.
 
 **Cohort check.** Both streams were run and measured on all 319 recordings.
-Band-power and event-locked figures are from the run before the flux-jump
-repair; the 307 recordings without a jump came out identical in every sidecar
-field after it.
+The cardiac, ocular and spectrum figures are from the final files; the rest
+are from the run before the flux-jump repair, and the 307 recordings without a
+jump came out identical in every sidecar field after it.
 
-- *Rank.* DSS removes 20 dimensions at the median (rank about 250), ICA 3
-  components (rank about 267).
+- *Rank.* With the tonic stage, DSS removes 24 dimensions at the median
+  (13–35; rank 246, 235–257) and ICA 5 (2–13; rank 265, 257–268), over all 319
+  recordings.
 - *Cardiac and ocular.* After DSS the event-locked averages for heartbeat,
   blinks and saccades sit at the level of averages locked to random events.
-  ICA leaves the cardiac average 6.3 dB above that level at the median, more
-  than 6 dB in 174 recordings, and selects no cardiac component in four of
+  ICA leaves the cardiac average 6.4 dB above that level at the median, more
+  than 6 dB in 185 recordings, and selects no cardiac component in four of
   H16's. 28 saccade stages removed nothing, 20 of them for lack of events.
-- *Spectrum, in unannotated time away from blinks and saccades.* DSS takes
-  1.3 dB off alpha and adds 0.9 dB above 80 Hz (positive in 308 recordings);
-  the gain is there before ASR. ICA takes 0.35 dB off alpha and 0.3 dB above
-  80 Hz. Neither change differs between Fast and Slow within subjects (DSS
-  above 80 Hz: -0.06 dB, 95% interval about +/-0.20), so neither biases the
-  contrast, but the DSS change varies more between recordings (spread of
-  Fast minus Slow 0.56 dB against 0.15 for ICA above 80 Hz, 0.36 against 0.07
-  in alpha): DSS-stream power is the noisier of the two.
+- *Spectrum, in unannotated time away from blinks and saccades.* The DSS
+  stream takes 1.3 dB off alpha and adds 0.6 dB above 80 Hz (positive in 224
+  recordings); the gain comes from the DSS cleaner, before ASR. The ICA stream
+  takes 0.45 dB off alpha and 0.65 dB above 80 Hz. Neither change differs
+  between Fast and Slow within subjects (DSS above 80 Hz: -0.04 dB, 95%
+  interval about +/-0.14), so neither biases the contrast, but both vary
+  between recordings (spread of Fast minus Slow above 80 Hz 0.42 dB for DSS
+  and 0.52 for ICA, in alpha 0.21 against 0.09): DSS-stream power is the
+  noisier in alpha, ICA-stream power above 80 Hz.
 - *Muscle segments.* ASR lowers 110-140 Hz power inside annotated muscle by
-  2.8 dB after DSS and 4.5 dB after ICA.
+  2.8 dB after DSS and 4.5 dB after ICA; with the tonic stage and the
+  head-movement regression after it, the whole stream lowers it by 3.1 and
+  5.0 dB.
 - *Flux jumps.* Twelve recordings, one jump each: H04 Fast 3, H06 Fast 4, H10
   Slow 2, H13 Fast 4, H19 Fast 3, H21 Slow 3, H22 RT 2, H23 Fast 2, H24 RT 2,
   H25 Slow 3, H27 Slow 4, H30 Fast 2. With the repair the jumped channels peak
@@ -329,9 +351,9 @@ field after it.
   EOG about 5%. Something magnetic near the right temple moves with the head.
   Neither cleaner removes it. On the raw data about 14% of 3 s windows exceed
   4 pT peak to peak, 33-41% in Fast 3, Fast 4 and Slow 4. H10 is kept, with
-  no subject-specific cleaning. Under the epoch rule it keeps 419 of 480
-  go-locked Fast and Slow epochs (DSS) and 429 (ICA), losing most in Fast 4
-  (39 of 64 kept, DSS) and Slow 4 (42 of 57). The bursts carry no mark and stay in the data.
+  no subject-specific cleaning. The bursts carry no mark; the outlier rule of
+  the epoch rejection takes most of them, and with them most of H10's last
+  runs (see Epoching).
   They are not only slow: in the kept epochs the right temporal sensors
   (`MRT51` worst) also carry excess power above 30 Hz, strongest at 65–150 Hz
   (see Epoching, unmarked artifacts).
@@ -342,22 +364,25 @@ field after it.
 
 - **Evoked response on the occipital rim.** The tonic muscle stages shrink it
   in the nine people with tonic muscle (see Streams). Rebuilt before and after
-  the stage on all 72 Fast and Slow runs of the nine (the rebuild reproduces
-  the stored recordings to 4e-8 and the same component counts), go-locked,
-  40 Hz low-pass, rim over 0–0.5 s, with the noise measured by the ±average
-  (half the trials sign-flipped). DSS stream: what the stage removes is noise.
-  The evoked power falls 0.85 dB and its noise 2.2 dB (medians); summed over
-  the nine the noise is all of the evoked power removed, and the signal moves
-  by +2% of the evoked power at the median (it falls in 4 of 9, Wilcoxon p
-  0.65). Signal over noise improves in eight of the nine. ICA stream: the
-  evoked power falls 1.4 dB and its noise 2.5 dB; noise is 57% of what is
-  removed and the signal falls in 7 of 9, by 10% of the evoked power at the
-  median (p 0.13), most in H18 (31%), H21 (25%) and H29 (17%). The ICA tonic
-  stage likely takes some evoked signal from the rim in these people; the DSS
-  stage does not. Rim waveforms differ too much between people (the 23 match
-  each other at 0.24) for the shape to tell.
+  the stage on all 72 Fast and Slow runs of the nine, head movement regressed
+  from both (the rebuild reproduces the final files to 4e-8 and the same
+  component counts), on the final go-locked epochs, 40 Hz low-pass, rim over
+  0–0.5 s, with the noise measured by the ±average (half the trials
+  sign-flipped). DSS stream: what the stage removes is noise. The evoked power
+  falls 1.0 dB and its noise 2.3 dB (medians); summed over the nine the noise
+  is all of the evoked power removed, and the signal moves by +2% of the
+  evoked power at the median (it falls in 4 of 9, Wilcoxon p 0.57). Signal
+  over noise improves in all nine. ICA stream: the evoked power falls 1.4 dB
+  and its noise 2.5 dB; noise is 64% of what is removed and the signal falls
+  in 7 of 9, by 11% of the evoked power at the median (p 0.25), most in H21
+  (24%), H03 (16%) and H29 (16%). On the epochs before the outlier rule H18
+  lost 31%; the regression does not change that, the epochs the outlier rule
+  drops carried it. The ICA tonic stage likely takes some evoked signal from
+  the rim in these people; the DSS stage does not. Rim waveforms differ too
+  much between people (the 23 match each other at 0.23–0.27) for the shape to
+  tell.
 
-### Epoching · `checked on the cohort`
+### Epoching · `run on the cohort`
 
 Fast and Slow runs, both streams, four locks: `go` (−0.5 to +1.0 s), `enter`
 (button press), `feedback` and `decision` (press minus the hand-specific motor
@@ -389,31 +414,44 @@ No sensor is repaired; each recording's bad sensors are left out of its
 forward and inverse model. For decoding, Fast and Slow trial counts are
 equalised within each subject.
 
-On all 256 Fast and Slow recordings (DSS stream; the ICA stream is within
-0.1 point on every lock):
+On all 256 Fast and Slow recordings (DSS stream; the ICA stream loses up to
+0.3 points more on every lock):
 
-| Lock | Events | Kept | Lost | Window touches a mark | Window runs past the recording | Kept with a short margin |
-|---|---|---|---|---|---|---|
-| go | 16,290 | 15,257 | 6.3% | 979 | 54 | 32 |
-| enter | 16,280 | 14,632 | 10.1% | 1,480 | 168 | 44 |
-| feedback | 16,290 | 14,572 | 10.5% | 1,529 | 189 | 45 |
-| decision | 16,280 | 14,676 | 9.9% | 1,452 | 152 | 44 |
+| Lock | Events | Kept | Lost | Window touches a mark | Window runs past the recording | Outlier | Kept with a short margin |
+|---|---|---|---|---|---|---|---|
+| go | 16,290 | 15,025 | 7.8% | 978 | 54 | 233 | 32 |
+| enter | 16,280 | 14,423 | 11.4% | 1,483 | 168 | 206 | 43 |
+| feedback | 16,290 | 14,358 | 11.9% | 1,533 | 189 | 210 | 44 |
+| decision | 16,280 | 14,471 | 11.1% | 1,453 | 152 | 204 | 44 |
 
-Fast loses 6.5% of go-locked epochs and 10.2–10.6% on the longer locks, Slow
-6.1% and 9.5–10.5%. Per subject the median loss is 5.1% (go) and 9.4–9.5%
-(longer locks); H21 and H20 lose 27–29% on the longer locks, H12 and H04
-17–20%. The windows that run past the recording include the 20 reconstructed
-go cues, which by construction fall after their recording stopped. 1.4–2.0% of
-trials are kept in one stream only, from each stream's own second-pass muscle
-marks.
+Fast loses 7.9% of go-locked epochs and 11.5–12.0% on the longer locks, Slow
+7.5% and 10.7–11.7%, H10 making most of the difference. Per subject the median
+loss is 5.1% (go) and 9.5% (press). The outlier rule drops 1.3–1.4% of epochs
+(DSS; 1.4–1.6% ICA), none at the median subject (0.05% DSS, 0 ICA): H10 38%
+(DSS) and 43% (ICA), H02 2.4%, H18 1.2–1.7%, H31 1.9% in the ICA stream only,
+everyone else under 1%. Beyond H10, H21 and H20 lose most (20–31%), then H12,
+H04 and H02 (12–20%). The windows that run past the recording include the 20
+reconstructed go cues, which by construction fall after their recording
+stopped.
 
-Checked on every one of the 2,048 files: the kept epochs equal an independent
-recomputation of the rule in MNE's sample arithmetic; each lock sits at its
-behavioral offset; go cues fall 2.2 ms after trial start plus `tGO` at the
-median (8.7 ms at worst), so no trial is mispaired; the trigger channel and
-`events.tsv` agree within half a sample; the recorded part of each epoch equals
-the cleaned recording sample for sample and the rest is zero; 299 channels at
-compensation grade 3, 600 Hz.
+H10 keeps 236 of 480 go-locked epochs (DSS; 219 ICA), 107 Fast and 129 Slow,
+almost all from its first two runs of each condition: in the DSS stream Fast 3,
+Fast 4 and Slow 4 keep none and Slow 3 keeps 18 of 57, where its bursts begin
+(see Preprocessing, H10). Those epochs passed the same rule as everyone's and
+are used as they are; H10 gets no further step of its own and is flagged in
+results tables, as for its template anatomy.
+
+The mark rule, the alignment and the epoch data were checked on all 2,048 files
+of the run before the head-movement regression and the outlier rule, neither of
+which changes them: the kept epochs equal an independent recomputation of the
+rule in MNE's sample arithmetic; each lock sits at its behavioral offset; go
+cues fall 2.2 ms after trial start plus `tGO` at the median (8.7 ms at worst),
+so no trial is mispaired; the trigger channel and `events.tsv` agree within half
+a sample; the recorded part of each epoch equals the cleaned recording sample
+for sample and the rest is zero; 299 channels at compensation grade 3, 600 Hz.
+On the final run the thresholds recomputed from the 32 subjects' amplitude
+tables equal the stored ones, and every file's outlier and kept counts equal
+the recomputation.
 
 Marks fall evenly on Fast and Slow across the cohort (6.2% against 5.8% of
 go-locked events; Fast higher in 17 of 32 subjects) but not within every
@@ -427,7 +465,8 @@ over 1 s does.
 both streams, four locks, analysis window, 270 magnetometers: an epoch counts
 as an outlier when any sensor's log peak-to-peak lies more than 5 robust SDs
 above that sensor's cohort median (rule fixed beforehand). 1.6–2.0% of kept
-epochs are outliers, and at the median subject none.
+epochs are outliers, and at the median subject none (measured before the
+head-movement regression; the final figures are in the table above).
 
 | Subject | Outlier epochs (DSS / ICA) | Where | What |
 |---|---|---|---|
@@ -508,7 +547,11 @@ A peak-to-peak rule against the recording's own median catches at most half of
 the artifact windows (k = 6 times the median over all sensors, nearly all of
 them in H10), against a sensor's own median under a tenth. What remains after
 the regression is abnormal against the cohort, not within its recording,
-hence the outlier rule of the epoch rejection.
+hence the outlier rule of the epoch rejection. On the final cleaned recordings,
+windows that a region's score flags and the whole array's does not are
+0.07% (DSS) and 0.10% (ICA) of unmarked time, mostly temporal and focal muscle
+just under the whole-array threshold (score 6.0 against 7), and 0.03–0.06% of
+the kept epochs' time: per-region detection is left out.
 
 **Why no sensor is repaired.** Leaving ten sensors out at a time and
 rebuilding them with MNE's field interpolation from the rest, on all 638
@@ -531,13 +574,164 @@ coordinates, since the files carry no digitised head points. It uses the 270
 sensors alone and ignores the compensation grade; accounting for the
 reference sensors recovers under one percentage point more.
 
-### Source reconstruction · `todo`
+### Source reconstruction · `benchmarked on the cohort`
 
-`cov` / `bem` / `src` per subject, `fwd` / `inv` per run, single-trial dSPM,
-morph to `fsaverage`. Noise covariance is BIDS-native, resolved through each
-subject's own `AssociatedEmptyRoom`; 31 of 32 subjects resolve (see the risks section).
-3-layer BEM is feasible with no new anatomical processing — every reconstructed
-subject already carries `bem/` with the three surfaces.
+| Step | Per | What |
+|---|---|---|
+| noise covariance | subject | the empty room nearest the subject's first run (the same day for 31, the next day for H05); raised to grade 3, flux jumps repaired, ZapLine, 0.5–150 Hz, 600 Hz, all 68 s; `diagonal_fixed` |
+| BEM | subject | 3 layers (0.3, 0.006, 0.3), ico 4 |
+| source space | subject | `oct6`, 8,196 sources |
+| forward | run | the run's own transform; grade-3 compensation through the 29 reference sensors; sources 5 mm inside the inner skull |
+| inverse | run × stream | forward and noise covariance passed through the stream's cleaning map, in the rank its sidecar records; loose 0.2, depth 0.8; all 270 sensors |
+
+No source estimate is stored (§2). Method, λ², orientation, morphing to
+`fsaverage` and parcels are chosen where the operator is applied.
+
+**The empty room is taken through the trunk's temporal steps.** All 26 empty
+rooms were acquired at grade 0, unfiltered, at 1200 Hz; the cleaned
+recordings are at grade 3, line-free, 0.5–150 Hz, 600 Hz. A covariance of the
+empty room as acquired describes other sensors and another band. The nearest
+empty room in time is the one Stage 0 linked for all 31 subjects that have one.
+
+**The inverse models what each stream did to the data.** DSS, ICA and the
+tonic stages subtract components through their own patterns and filters, an
+oblique map `M` of rank 246 (DSS) or 265 (ICA) at the median. The cleaned data
+hold `M G s + M n`, so the inverse is built from `M G` and `M C Mᵀ`. `M` is not
+stored by preprocessing; it is the least-squares fit of the cleaned
+magnetometers on the trunk (cleaned plus artifact) and the head-coil channels.
+It explains all but 0.08% (DSS) and 0.3% (ICA) of the cleaned signal at the
+median recording, at worst 15% and 21%: ASR acts window by window and is not
+linear. Its singular values fall by at least 3·10³ beyond the recorded rank in
+all 512 recordings, so every sidecar rank is right. Projectors onto the
+recording's own null space, the orthogonal stand-in, differ from `M G` by 34%
+(DSS) and 14% (ICA) of the leadfield at the median source.
+
+**Five watershed surfaces were corrected.** On H05, H16, H24, H25 and H28 the
+inner skull crosses the outer skull, which no BEM accepts. The inner skull, the
+surface MEG depends on, is kept; the outer skull is moved out along its normals
+until the inner one lies 1 mm inside, and the scalp likewise where the moved
+skull comes too close. Every subject's BEM sidecar records what moved.
+
+| Subject | Overlap | Outer skull moved (of 10,242 points) | Scalp moved |
+|---|---|---|---|
+| H16 | 0.9 mm | 88, up to 2.0 mm | 0 |
+| H24 | 1.2 mm | 141, up to 2.3 mm | 30, up to 0.3 mm |
+| H25 | 1.5 mm | 56, up to 2.6 mm | 24, up to 0.4 mm |
+| H28 | 2.0 mm | 484, up to 3.1 mm | 147, up to 1.1 mm |
+| H05 | 2.5 mm | 2,132, up to 3.6 mm | 1,190, up to 1.9 mm |
+
+H05's watershed skull is 2.5 mm thick at the median against 5–9 mm in the
+others.
+
+**How each choice was made.** Every alternative was built on all 256 Fast and
+Slow runs, both streams, one factor at a time around a base, in two rounds
+(the second around the winners of the first), and scored per subject (mean
+over runs), paired over the 32:
+
+- *resolution*, from the resolution matrix against the leadfield the data
+  actually carry (`M G`): peak localisation error and spatial spread of the
+  point-spread (PSF) and cross-talk (CTF) functions, median over sources;
+- *whitening*: χ² per degree of freedom of the whitened pre-cue baseline
+  (single trials, so brain activity keeps it above 1; lower is a better noise
+  model);
+- *visual*: the share of the strongest 5% of sources 80–200 ms after the go
+  cue that lie in occipital cortex (weak: about chance under dSPM, the go cue
+  being a small visual event);
+- *motor*: lateralisation of the 16–24 Hz suppression in the 0.5 s before the
+  press and of the evoked field around it, in pre- and postcentral cortex,
+  contralateral against ipsilateral;
+- for the covariance alone, the log-likelihood of the last 30% of the empty
+  room under an estimate from the first 70%.
+
+| Choice | Kept | Evidence | Rejected |
+|---|---|---|---|
+| cleaning in the inverse | `M` | against projectors: whitening 4.0 → 1.9 (DSS, 32 of 32), 4.07 → 4.24 at the median but better in 25 of 32 (ICA); peak error 17.6 → 12.5 mm (DSS), spread smaller in 32 of 32 in both streams; motor within 0.01 | projectors; rank alone |
+| covariance estimator | `diagonal_fixed` | best held-out likelihood in 32 of 32; whitening better than shrunk in 32 of 32 per stream | shrunk, empirical, factor analysis, Ledoit-Wolf, OAS, PCA |
+| BEM | 3 layers | 1-layer leadfields correlate 0.9997 with them; no measure moves | 1 layer |
+| orientation | loose 0.2 | loose 1: motor +0.003 to +0.008 (29–30 of 32) but the visual measure worse in 30 and the CTF peak error worse in 24–29; fixed: spread worse in 29–32 | 0, 1 |
+| depth weighting | 0.8 | none: spread worse in 32 of 32, visual and motor worse | none |
+| λ² | 1 | 1/9 narrows the noise-free spread (32 of 32) but loses on the motor measure (better in 2–9 of 32) | 1/9 |
+| method | sLORETA | against dSPM: no peak error, the same spread and motor, visual share 0.155 against 0.097 (DSS) in 29–30 of 32; eLORETA widens the CTF; MNE favours the surface; LCMV loses a third of the motor lateralisation (0.05 against 0.07–0.09, better in 0–1 of 32) | dSPM, eLORETA, MNE, LCMV |
+
+Method and λ² do not enter the stored operator; the measures above are for the
+stage that applies it.
+
+| Final operator, median subject | DSS | ICA |
+|---|---|---|
+| rank | 246 | 265 |
+| PSF peak error / spread | 12.5 / 42.6 mm | 17.7 / 41.6 mm |
+| CTF peak error / spread | 14.7 / 41.0 mm | 14.9 / 37.2 mm |
+| baseline whitening χ² | 1.9 | 4.2 |
+| motor lateralisation, beta / evoked | 0.072 / 0.37 | 0.087 / 0.40 |
+
+With each stream's cleaning modelled, the DSS stream fits the noise model better
+and localises its peaks better; the ICA stream keeps a narrower cross-talk and
+slightly stronger motor lateralisation.
+
+**What each stream does to the sources.** All 256 Fast and Slow runs, three
+versions of each: the trunk (no cleaning; cleaned plus artifact, the same from
+either stream to 1e-7), DSS and ICA, each through its own final inverse, and
+again all three through the trunk's inverse so that a difference is the data
+alone. Measured on the 68 cortical regions of the subject's own parcellation
+(sign-flipped mean of each region's sources, unnormalised estimate so that dB
+compare across inverses), per subject over its runs, the nine with tonic
+muscle against the other 23. Spectra: `docs/figures/stream_spectra.png` and
+`stream_change.png`.
+
+The neck muscle reaches the sources in the occipital and posterior medial
+cortex: at 65–100 Hz the nine stand 4–5 dB above the 23 in lingual,
+pericalcarine, isthmus cingulate and right lateral occipital cortex, over the
+median region (+4.8 dB against +0.4 dB in the 23).
+
+| Artifact (median subject) | Trunk | DSS | ICA | DSS against ICA |
+|---|---|---|---|---|
+| tonic muscle, those regions 65–100 Hz over the median region, the nine | +4.8 dB | +0.2 | +0.3 | no difference (5 of 9, p 0.36); data alone ICA leaves less, +1.6 against +2.0 (8 of 9, p 0.03) |
+| the same, the 23 | +0.4 dB | −0.1 | −0.1 | |
+| muscle bursts, 110–140 Hz inside annotated muscle, change from trunk | | −6.0 (nine), −4.2 (23) | −7.6, −7.9 | ICA lower in 31 of 31, by 3.1 dB |
+| heartbeat-locked average over random events, all regions | +11.5 dB | +0.3 | +5.5 | DSS lower in 32 of 32 |
+| blink-locked, frontal regions | +11.9 dB | −0.4 | +2.4 | DSS lower in 32 of 32 |
+| saccade-locked, each direction, frontal regions | +6.4 / +5.3 dB | +0.1 / +0.2 | +2.1 / +2.6 | DSS lower in 32 of 32 |
+
+After either stream the nine's posterior high-frequency excess is gone in the
+sources: through each stream's own inverse they sit within 0.3 dB of the 23.
+DSS takes the heart and the eyes to the level of random events; ICA leaves
+5.5 dB of the heartbeat and 2–2.6 dB of the eyes. ICA's muscle bursts end
+3 dB lower: ASR has more to work with after it.
+
+| Cost (median subject) | DSS | ICA |
+|---|---|---|
+| field of a source the cleaning leaves, median region | 86% | 97% |
+| the same, worst regions (temporal pole, medial orbitofrontal, entorhinal) | 74–76% | 78–81% |
+| alpha / beta power in clean time, the 23, data alone | −1.5 / −1.4 dB | −0.6 / −0.8 dB |
+| 65–100 Hz power in clean time, the 23, data alone | +0.8 dB | −0.7 dB |
+| go-locked occipital evoked response, change from trunk, the 23, data alone: signal / noise (± average) | −2.3 / −2.2 dB | −0.6 / −1.1 dB |
+| evoked waveform against the trunk's, the 23 | r 0.89 | r 0.94 |
+
+DSS removes more than ICA everywhere: a quarter of the field of the frontal
+and temporal-pole sources, the regions nearest the eyes, against a fifth for
+ICA; 1.5 dB of alpha and beta where ICA takes 0.6–0.8, part of it the
+heartbeat's energy (the trunk's heartbeat average stands 11.5 dB above
+chance, and the QRS complex lies at 5–25 Hz); 2.3 dB of the occipital evoked
+response, which may hold eye movements locked to the go cue. It also adds
+0.8 dB at 65–100 Hz in people without muscle, the gain the sensor-level check
+found (0.9 dB above 80 Hz). Neither stream changes the go-locked high-gamma
+map in a way the regions can show: the nine's map does not match the 23's
+even before cleaning (r 0.08).
+
+So no stream is better at everything. DSS is the one for the heart and the
+eyes, ICA for muscle bursts and for keeping signal; tonic muscle they remove
+alike.
+
+**Response side 1 is the right hand.** Its presses carry the motor field over
+the left central sensors (MLC against MRC, (left − right)/(left + right) =
++0.21, side 2 −0.21; 31 of 32 subjects) and the stronger left beta
+suppression (30 of 32). The CTF sensor names are fixed by the hardware and the
+source estimates agree with them. Every token jump before the press (3,600 per
+subject at the median) puts its direction-1 response more over the left
+occipital sensors than its direction-2 response in 19 of 32 subjects (p 0.08):
+too close to fixation (±65 px) for a strong hemifield split, but no sign of a
+mirrored display, so target 1 was seen on the right, where the task logs put
+it (`docs/behavior.md`, Response side).
 
 ---
 
@@ -561,7 +755,8 @@ Every entry must be defensible in a methods section.
 | Coregistration | manual fiducials + ICP, visually verified | landmark fit + two-pass ICP, one fit per subject composed to each session | Reproducible rather than hand-placed, and it corrects between-session head-frame drift a single manual fit would absorb as error. |
 | MRI landmarks | picked by hand | by hand for 24 of 30; estimated from `fsaverage` for H22, H27, H29, H30, H31, H32 | No picked set was ever saved for those six. Recorded per subject rather than left silent. |
 | Subject set | 28 | 32 coregistered, 30 on their own anatomy | H06/H20 exclusions could not be reproduced from any MEG-signal criterion. H07/H10 run on scaled `fsaverage`, flagged everywhere. |
-| Noise covariance | baseline [−200, 0] ms | empty-room, shrunk | An empty-room estimate measures sensor noise without task-locked signal leaking into the estimator. |
+| Noise covariance | baseline [−200, 0] ms | empty room through the trunk's temporal steps, `diagonal_fixed` | An empty-room estimate measures sensor noise without task-locked signal leaking into the estimator. `diagonal_fixed` has the best held-out likelihood in all 32 subjects. |
+| Cleaning in the inverse | not stated | forward and noise covariance through each stream's estimated cleaning map | The data hold the cleaned leadfield; modelling it halves the DSS stream's whitened baseline (4.0 to 1.9) and cuts its peak error from 17.6 to 12.5 mm against orthogonal projectors. |
 | Trial classes | chosen-target `nProb` | corrected correct-target design profile | The paper's frame is response-confounded; see `docs/behavior.md`. |
 
 ---
