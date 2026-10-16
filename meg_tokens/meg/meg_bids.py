@@ -109,6 +109,11 @@ def epoched_meg_runs(
     :data:`RAW_MEG_RUNS` grid, so the property holds all the way down the
     chain: a run absent from the source stage is a named run that failed to
     epoch, not an entry the discovery quietly never produced.
+
+    A run whose rejection kept no epoch (16 files, all H10's) is not returned:
+    its file and sidecar stay as the record of why, but MNE reads an empty
+    epoch file back without its metadata columns, so there is nothing an
+    analysis could take from it.
     """
     runs = []
     for condition, run in RAW_MEG_RUNS:
@@ -119,7 +124,7 @@ def epoched_meg_runs(
             alignment=alignment,
             stream=stream,
         )
-        if path.is_file():
+        if path.is_file() and json.loads(path.with_suffix(".json").read_text(encoding="utf-8"))["n_epochs"]:
             runs.append(
                 (RunSpec(subject=subject, run=str(run), condition=condition), path)
             )

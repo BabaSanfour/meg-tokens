@@ -103,6 +103,9 @@ magnetometer's log peak-to-peak over its analysis window exceeds that sensor's
 cohort threshold for the stream and lock. The sidecar records the window, the
 padding, `outlier_sd`, the counts, the epochs with a short margin, the go cues
 reconstructed, trials excluded or truncated, and the dropped epochs by reason.
+A file whose rejection kept no epoch (16 of 2,048, all H10's) is still written
+with its sidecar (`n_epochs` 0) as the record of why; MNE reads it back without
+its metadata columns, and `epoched_meg_runs` does not return it.
 
 The thresholds come from two derivatives built before any epoch is written.
 Per subject and stream, every epoch the marks keep, one row each (`condition`,

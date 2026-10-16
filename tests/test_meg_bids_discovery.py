@@ -1,6 +1,9 @@
+import json
+
 import pytest
 
-from meg_tokens.meg.meg_bids import nearest_emptyroom
+from meg_tokens.io import DerivativeLayout
+from meg_tokens.meg.meg_bids import epoched_meg_runs, nearest_emptyroom
 
 
 def _scans(path, rows):
@@ -40,3 +43,16 @@ def test_nearest_emptyroom_takes_the_nearest_day_when_the_day_has_none(tmp_path)
     path, hours = nearest_emptyroom(tmp_path, "H05")
     assert path == noise
     assert hours == pytest.approx(22 + 53 / 60)
+
+
+def test_a_run_that_kept_no_epoch_is_not_discovered(tmp_path):
+    layout = DerivativeLayout(tmp_path)
+    for run, n_epochs in ((1, 60), (2, 0)):
+        path = layout.epochs(subject="H10", run=str(run), condition="Fast", alignment="go", stream="dss")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"")
+        path.with_suffix(".json").write_text(json.dumps({"n_epochs": n_epochs}), encoding="utf-8")
+
+    runs = epoched_meg_runs(layout, "H10", alignment="go", stream="dss")
+
+    assert [(spec.condition, spec.run) for spec, _ in runs] == [("Fast", "1")]
