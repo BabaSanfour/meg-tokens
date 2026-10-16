@@ -18,7 +18,11 @@ from meg_tokens.meg.sources import (
     DEPTH,
     LOOSE,
     SPACING,
+    VOLUME_SPACING_MM,
+    beamformer,
     cleaning_operator,
+    deep_leakage,
+    deep_structures,
     forward,
     head_model,
     inverse,
@@ -56,7 +60,15 @@ def source_models(
         mne.write_bem_solution(paths["bem"], bem, overwrite=True, verbose=False)
         src.save(paths["src"], overwrite=True, verbose=False)
         save_sidecar(paths["bem"], bem_record)
-        save_sidecar(paths["src"], {"spacing": SPACING, "n_sources": int(sum(s["nuse"] for s in src))})
+        save_sidecar(paths["src"], {
+            "spacing": SPACING,
+            "volume_spacing_mm": VOLUME_SPACING_MM,
+            "n_sources": int(sum(space["nuse"] for space in src)),
+            "n_cortical_sources": int(src[0]["nuse"] + src[1]["nuse"]),
+            "n_deep_sources": {
+                name: int(where.size) for name, where in deep_structures(src, subjects_dir).items()
+            },
+        })
 
         inputs.append(emptyroom)
         outputs.extend(paths.values())
@@ -115,8 +127,14 @@ def source_operators(
         operator = inverse(raw.info, fwd, cov, cleaning, rank)
         inv_path = destination.inverse(**entities, stream=stream)
         mne.minimum_norm.write_inverse_operator(inv_path, operator, overwrite=True, verbose=False)
-        save_sidecar(inv_path, {**record, "stream": stream, "loose": LOOSE, "depth": DEPTH})
-        outputs.append(inv_path)
+        save_sidecar(inv_path, {
+            **record, "stream": stream, "loose": LOOSE, "depth": DEPTH,
+            "deep_leakage": deep_leakage(raw.info, operator, fwd, cleaning, _subjects_dir(project)),
+        })
+        data_cov = mne.compute_raw_covariance(raw, picks="mag", reject_by_annotation=True, verbose=False)
+        lcmv_path = destination.beamformer(**entities, stream=stream)
+        beamformer(raw.info, fwd, cov, data_cov, cleaning, rank).save(lcmv_path, overwrite=True, verbose=False)
+        outputs.extend([inv_path, lcmv_path])
 
     return WorkflowResult(
         stage="source_operators",

@@ -2,7 +2,7 @@
 operators. Specification and rationale: ``docs/meg.md``.
 
     empty room -> trunk's temporal steps -> noise covariance     (per subject)
-    BEM, source space                                             (per subject)
+    BEM, source space: cortex and deep structures                 (per subject)
     forward                                                       (per run)
     stream's cleaning map, estimated -> inverse                  (per run and stream)
 
@@ -37,9 +37,24 @@ BEM_CONDUCTIVITY = (0.3, 0.006, 0.3)
 BEM_ICO = 4
 BEM_GAP_MM = 1.0
 SPACING = "oct6"
+# The deep structures of the paper's mixed source space, from FreeSurfer 6's
+# aseg, on a 5 mm grid: its speed-accuracy effects were found there.
+VOLUME_LABELS = (
+    "Left-Accumbens-area", "Left-Pallidum", "Left-Caudate", "Left-Putamen", "Left-Amygdala",
+    "Left-Hippocampus", "Left-Thalamus-Proper", "Left-Cerebellum-Cortex", "Brain-Stem",
+    "Right-Accumbens-area", "Right-Pallidum", "Right-Caudate", "Right-Putamen", "Right-Amygdala",
+    "Right-Hippocampus", "Right-Thalamus-Proper", "Right-Cerebellum-Cortex",
+)
+VOLUME_SPACING_MM = 5.0
 MINDIST_MM = 5.0
-LOOSE = 0.2
+# A volume source has no surface to be normal to, so its orientation is free.
+LOOSE = {"surface": 0.2, "volume": 1.0}
 DEPTH = 0.8
+# How analyses apply the operator (docs/meg.md, Decisions), and so how the
+# deep structures' leakage is measured.
+METHOD = "sLORETA"
+LAMBDA2 = 1.0
+BEAMFORMER_REG = 0.05
 
 
 def noise_covariance(path: str | Path, *, method: str = COVARIANCE_METHOD) -> tuple[mne.Covariance, dict]:
@@ -107,7 +122,14 @@ def head_model(
     conductivity: tuple[float, ...] = BEM_CONDUCTIVITY,
     spacing: str = SPACING,
 ) -> tuple[mne.bem.ConductorModel, mne.SourceSpaces, dict]:
-    """The subject's BEM solution and cortical source space.
+    """The subject's BEM solution and mixed source space: the cortex and the
+    deep structures of :data:`VOLUME_LABELS`, within the inner skull.
+
+    The structures form one volume source space: MNE writes a block the size
+    of the MRI grid for each volume space, 67 MB, so seventeen of them would
+    make every forward and inverse 1.2 GB. Which structure a source lies in is
+    read back from the aseg (:func:`deep_structures`), so the volume needs no
+    interpolator onto the MRI grid.
 
     The watershed surfaces of five subjects (H05, H16, H24, H25, H28) let the
     inner skull cross the outer skull by up to 2.5 mm, which no BEM accepts.
@@ -127,9 +149,35 @@ def head_model(
             moved, shift = _clear_of(surface, within, BEM_GAP_MM)
             record.update({f"{name}_moved": moved, f"{name}_moved_max_mm": round(shift, 2)})
     ids = [FIFF.FIFFV_BEM_SURF_ID_BRAIN, FIFF.FIFFV_BEM_SURF_ID_SKULL, FIFF.FIFFV_BEM_SURF_ID_HEAD][: len(surfaces)]
-    model = _surfaces_to_bem(surfaces, ids, list(conductivity), ico=BEM_ICO)
+    bem = mne.make_bem_solution(_surfaces_to_bem(surfaces, ids, list(conductivity), ico=BEM_ICO), verbose=False)
     src = mne.setup_source_space(subject, spacing=spacing, add_dist=False, subjects_dir=subjects_dir, verbose=False)
-    return mne.make_bem_solution(model, verbose=False), src, record
+    src += mne.setup_volume_source_space(
+        subject, pos=VOLUME_SPACING_MM, mri="aseg.mgz", bem=bem, volume_label=list(VOLUME_LABELS),
+        subjects_dir=subjects_dir, single_volume=True, add_interpolator=False, verbose=False,
+    )
+    return bem, src, record
+
+
+def deep_structures(
+    src: mne.SourceSpaces, subjects_dir: str | Path, *, mri_head_t: mne.transforms.Transform | None = None,
+) -> dict[str, np.ndarray]:
+    """For each deep structure, the positions of its sources among the volume's, by the subject's aseg.
+
+    A forward's or inverse's source space is in head coordinates; its
+    ``mri_head_t`` takes the positions back to the MRI.
+    """
+    import nibabel
+
+    volume = src[-1]
+    positions = volume["rr"][volume["vertno"]]
+    if volume["coord_frame"] == FIFF.FIFFV_COORD_HEAD:
+        positions = mne.transforms.apply_trans(mne.transforms.invert_transform(mri_head_t), positions)
+    aseg = nibabel.load(Path(subjects_dir) / volume["subject_his_id"] / "mri" / "aseg.mgz")
+    to_voxel = np.linalg.inv(aseg.header.get_vox2ras_tkr())
+    voxels = np.round(mne.transforms.apply_trans(to_voxel, 1000 * positions)).astype(int)
+    codes = np.asarray(aseg.dataobj)[tuple(voxels.T)]
+    lut, _ = mne.read_freesurfer_lut()
+    return {name: np.flatnonzero(codes == lut[name]) for name in VOLUME_LABELS}
 
 
 def forward(info: mne.Info, trans: str | Path, src: mne.SourceSpaces, bem: mne.bem.ConductorModel) -> mne.Forward:
@@ -170,6 +218,29 @@ def cleaning_operator(cleaned: mne.io.BaseRaw, artifact: mne.io.BaseRaw, rank: i
     }
 
 
+def _magnetometers(info: mne.Info) -> list[str]:
+    return [info.ch_names[pick] for pick in mne.pick_types(info, meg="mag", ref_meg=False, exclude=[])]
+
+
+def cleaned_forward(info: mne.Info, fwd: mne.Forward, operator: np.ndarray) -> mne.Forward:
+    """The forward the stream's output carries, ``M G``."""
+    names = _magnetometers(info)
+    fwd = fwd.copy()
+    rows = [fwd["sol"]["row_names"].index(name) for name in names]
+    gain = fwd["sol"]["data"].copy()
+    gain[rows] = operator @ gain[rows]
+    fwd["sol"]["data"] = gain
+    return fwd
+
+
+def cleaned_noise(info: mne.Info, cov: mne.Covariance, operator: np.ndarray) -> mne.Covariance:
+    """The noise covariance the stream's output carries, ``M C M^T``."""
+    names = _magnetometers(info)
+    order = [cov.ch_names.index(name) for name in names]
+    noise = operator @ cov.data[np.ix_(order, order)] @ operator.T
+    return mne.Covariance(noise, names, [], [], cov["nfree"], method=cov.get("method"))
+
+
 def inverse(
     info: mne.Info,
     fwd: mne.Forward,
@@ -177,7 +248,7 @@ def inverse(
     operator: np.ndarray,
     rank: int,
     *,
-    loose: float = LOOSE,
+    loose: dict[str, float] = LOOSE,
     depth: float | None = DEPTH,
 ) -> mne.minimum_norm.InverseOperator:
     """Minimum-norm inverse of what the stream left: forward and noise both through its map.
@@ -186,21 +257,107 @@ def inverse(
     forward ``M G`` and the noise covariance ``M C M^T``, in the ``rank``
     dimensions the stream kept.
     """
-    names = [info.ch_names[pick] for pick in mne.pick_types(info, meg="mag", ref_meg=False, exclude=[])]
-    fwd = fwd.copy()
-    rows = [fwd["sol"]["row_names"].index(name) for name in names]
-    gain = fwd["sol"]["data"].copy()
-    gain[rows] = operator @ gain[rows]
-    fwd["sol"]["data"] = gain
-    order = [cov.ch_names.index(name) for name in names]
-    noise = operator @ cov.data[np.ix_(order, order)] @ operator.T
-    cov = mne.Covariance(noise, names, [], [], cov["nfree"], method=cov.get("method"))
     return mne.minimum_norm.make_inverse_operator(
-        info, fwd, cov, loose=loose, depth=depth, rank={"mag": rank}, verbose=False,
+        info, cleaned_forward(info, fwd, operator), cleaned_noise(info, cov, operator),
+        loose=loose, depth=depth, rank={"mag": rank}, verbose=False,
     )
 
 
+def beamformer(
+    info: mne.Info,
+    fwd: mne.Forward,
+    cov: mne.Covariance,
+    data_cov: mne.Covariance,
+    operator: np.ndarray,
+    rank: int,
+) -> mne.beamformer.Beamformer:
+    """LCMV filters through the same map, the check a deep result is held to.
+
+    A beamformer estimates each location on its own, from the data's own
+    covariance, so cortical activity does not spread into the deep structures
+    the way a minimum-norm estimate spreads it (Andersen et al., 2020). Three
+    orientations per source, unit-noise-gain normalised so that depth does not
+    set the scale.
+    """
+    return mne.beamformer.make_lcmv(
+        info, cleaned_forward(info, fwd, operator), data_cov, reg=BEAMFORMER_REG,
+        noise_cov=cleaned_noise(info, cov, operator), pick_ori="vector",
+        weight_norm="unit-noise-gain-invariant", rank={"mag": rank}, verbose=False,
+    )
+
+
+def deep_leakage(
+    info: mne.Info,
+    inv: mne.minimum_norm.InverseOperator,
+    fwd: mne.Forward,
+    operator: np.ndarray,
+    subjects_dir: str | Path,
+) -> dict[str, dict[str, float]]:
+    """How far each deep structure's sLORETA estimate is its own, from the resolution matrix.
+
+    True sources are the cortex's normal components and the deep sources'
+    three, through the map the data carry (``M G``); estimates are the three
+    components of every source, at the λ² analyses use. Per structure:
+    ``own``, ``cortex`` and ``other_deep``, the shares of its estimate's
+    cross-talk energy from each; ``found``, the share of its sources whose
+    point-spread peaks inside it; ``ghosts``, the cortical sources whose
+    point-spread peaks inside it.
+    """
+    names = list(inv["eigen_fields"]["col_names"])
+    picks = mne.pick_types(info, meg=True, ref_meg=True, exclude=[])
+    sub = mne.pick_info(info, picks)
+    sub["bads"] = []
+    identity = np.zeros((len(sub.ch_names), len(names)))
+    identity[[sub.ch_names.index(name) for name in names], np.arange(len(names))] = 1.0
+    kernel = mne.minimum_norm.apply_inverse(
+        mne.EvokedArray(identity, sub, verbose=False), inv, LAMBDA2, METHOD, pick_ori="vector", verbose=False,
+    ).data  # sources x 3 x sensors
+
+    carried = mne.convert_forward_solution(cleaned_forward(info, fwd, operator), surf_ori=True, verbose=False)
+    rows = [carried["sol"]["row_names"].index(name) for name in names]
+    gain = carried["sol"]["data"][rows]
+    n_cortex = carried["src"][0]["nuse"] + carried["src"][1]["nuse"]
+    n_sources = kernel.shape[0]
+    columns = np.r_[3 * np.arange(n_cortex) + 2, np.arange(3 * n_cortex, 3 * n_sources)]
+    true_source = np.r_[np.arange(n_cortex), n_cortex + np.arange(3 * (n_sources - n_cortex)) // 3]
+
+    structures = deep_structures(carried["src"], subjects_dir, mri_head_t=carried["mri_head_t"])
+    region = np.full(n_sources, -1)
+    for index, where in enumerate(structures.values()):
+        region[n_cortex + where] = index
+    energy = np.zeros((len(structures), len(structures) + 1))  # estimate structure x (structures..., cortex)
+    peak = np.empty(columns.size, dtype=int)
+    flat = kernel.reshape(-1, kernel.shape[2])
+    for start in range(0, columns.size, 1000):
+        block = (flat @ gain[:, columns[start : start + 1000]]).reshape(n_sources, 3, -1)
+        size = (block ** 2).sum(axis=1)  # estimate source x true column
+        peak[start : start + size.shape[1]] = size.argmax(axis=0)
+        true_region = region[true_source[start : start + size.shape[1]]]
+        for index in range(len(structures)):
+            mine = size[region == index]
+            for target in range(len(structures)):
+                energy[index, target] += mine[:, true_region == target].sum()
+            energy[index, -1] += mine[:, true_region == -1].sum()
+
+    record = {}
+    for index, name in enumerate(structures):
+        total = energy[index].sum()
+        deep_columns = true_source >= n_cortex
+        own_columns = deep_columns & (region[true_source] == index)
+        record[name] = {
+            "own": round(float(energy[index, index] / total), 4),
+            "cortex": round(float(energy[index, -1] / total), 4),
+            "other_deep": round(float((total - energy[index, index] - energy[index, -1]) / total), 4),
+            "found": round(float(np.mean(region[peak[own_columns]] == index)), 4),
+            "found_in_cortex": round(float(np.mean(region[peak[own_columns]] == -1)), 4),
+            "ghosts": int(np.sum(region[peak[~deep_columns]] == index)),
+        }
+    return record
+
+
 __all__ = [
-    "COVARIANCE_METHOD", "BEM_CONDUCTIVITY", "SPACING", "LOOSE", "DEPTH",
-    "noise_covariance", "head_model", "forward", "cleaning_operator", "inverse",
+    "COVARIANCE_METHOD", "BEM_CONDUCTIVITY", "SPACING", "VOLUME_LABELS", "VOLUME_SPACING_MM", "LOOSE", "DEPTH",
+    "METHOD", "LAMBDA2", "BEAMFORMER_REG",
+    "noise_covariance", "head_model", "deep_structures", "forward", "cleaning_operator",
+    "cleaned_forward", "cleaned_noise", "inverse", "beamformer", "deep_leakage",
 ]

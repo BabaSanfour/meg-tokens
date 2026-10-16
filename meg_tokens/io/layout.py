@@ -344,6 +344,12 @@ class DerivativeLayout:
             subject=subject, run=run, condition=condition, processing=stream, suffix="inv", extension=".fif",
         )
 
+    def beamformer(self, *, subject: str, run: str, condition: str, stream: str) -> Path:
+        """One recording's LCMV filters for one stream, the check on deep-structure results."""
+        return self.source(
+            subject=subject, run=run, condition=condition, processing=stream, suffix="lcmv", extension=".h5",
+        )
+
     def find_source_manifest(
         self,
         *,

@@ -125,10 +125,11 @@ derivatives/sub-group/meg/sub-group_task-tokens_proc-dss_desc-epochthresholds_me
 
 ## Source derivatives
 
-Per subject, the noise covariance, BEM solution and source space; per staged
+Per subject, the noise covariance, BEM solution and source space (the cortex
+and 17 deep structures, one volume); per staged
 Fast and Slow run, the forward model; per run and stream, the inverse
-operator. No source estimate is stored: analyses apply the operator to the
-epochs.
+operator and the LCMV filters that check a deep-structure result. No source
+estimate is stored: analyses apply the operator to the epochs.
 
 ```
 derivatives/sub-H01/meg/sub-H01_task-tokens_desc-noise_cov.fif
@@ -136,14 +137,21 @@ derivatives/sub-H01/meg/sub-H01_task-tokens_bem.fif
 derivatives/sub-H01/meg/sub-H01_task-tokens_space-subject_src.fif
 derivatives/sub-H01/meg/sub-H01_task-tokens_run-1_desc-fast_fwd.fif
 derivatives/sub-H01/meg/sub-H01_task-tokens_run-1_proc-dss_desc-fast_inv.fif
+derivatives/sub-H01/meg/sub-H01_task-tokens_run-1_proc-dss_desc-fast_lcmv.h5
 ```
 
 The covariance sidecar names the empty room, its acquired compensation grade,
 flux jumps, seconds used, estimator and `hours_from_recording`; the BEM sidecar
 the conductivities and the outer-skull and scalp points moved to clear the
-inner skull (`*_moved`, `*_moved_max_mm`); the source-space sidecar the spacing
-and source count; the inverse sidecar the stream, `rank`, `operator_residual`,
-`operator_rank_gap`, `loose` and `depth`.
+inner skull (`*_moved`, `*_moved_max_mm`); the source-space sidecar the cortical
+spacing, the volume grid (`volume_spacing_mm`), `n_sources`,
+`n_cortical_sources` and `n_deep_sources` per `aseg` structure; the inverse
+sidecar the stream, `rank`, `operator_residual`, `operator_rank_gap`, `loose`
+(cortex and volume), `depth` and `deep_leakage`: per deep structure, the shares
+of its sLORETA estimate's cross-talk from itself, the cortex and the other
+structures (`own`, `cortex`, `other_deep`), the shares of its sources whose
+point-spread peaks inside it and in the cortex (`found`, `found_in_cortex`),
+and the cortical sources whose point-spread peaks inside it (`ghosts`).
 
 ## Stage 0: Raw BIDSification
 

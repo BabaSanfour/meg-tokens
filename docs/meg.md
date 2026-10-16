@@ -31,9 +31,11 @@ the workflow (§4, Preprocessing).
 **Epoching — complete.** All 256 Fast and Slow recordings, both streams, four
 locks, with the cohort outlier rule (§4, Epoching).
 
-**Source reconstruction — complete.** 32 subject models, 256 forward models
-and 512 inverse operators (both streams), through the workflow (§4, Source
-reconstruction). Zero features.
+**Source reconstruction — to rerun with the deep structures.** The cortical
+stage ran on the cohort (32 subject models, 256 forward models, 512 inverse
+operators, both streams); the source space now adds the paper's 17 deep
+structures (§4, Source reconstruction), and every model, forward and inverse
+is rebuilt. Zero features.
 
 **Downstream helpers with no callers.** `psd_description`
 (`workflows/spectral.py`), `run_batch_dpca` (`workflows/decomposition.py`),
@@ -65,7 +67,7 @@ Thiery, Rainville, Cisek, Jerbi (2022),
 | Epoch windows | −500/+1000 token; −1500/+2000 press/fb/DT | per-lock, matching |
 | Noise covariance | baseline [−200, 0] ms, shrunk | empty-room through the trunk's temporal steps, `diagonal_fixed`, passed through each stream's cleaning map |
 | BEM | 3-layer, [0.3, 0.006, 0.3] | same |
-| Source space | ~8196 vertices | `oct6` = 8196 |
+| Source space | ~8196 vertices; its code adds 17 `aseg` structures on a 5 mm grid for the subcortical analysis (1-layer BEM, free orientation, no depth weighting, data at 200 Hz) | `oct6` = 8196, and the same 17 structures, 5 mm, free orientation, in the 3-layer BEM with depth weighting |
 | Inverse | dSPM, λ² = 1, single-trial | operator stored per run and stream; method and λ² chosen where it is applied (sLORETA measured best) |
 | Bands | FOOOF: θ5–8, α9–13, β16–24, γ30–60, hγ60–90 | same |
 | Power | FIR1 order 3 + Hilbert, 500 ms / 50 ms step | Hilbert, same windowing |
@@ -107,6 +109,9 @@ HCP multimodal parcellation (HCP-MMP1.0, `HCPMMP1`) morphed onto each
 subject's own cortex, one sign-flipped time course per region. 360 regions
 exceed the data's rank (246 DSS, 265 ICA), so neighbouring regions are not
 independent and region-level statistics must not count them as if they were.
+The 17 deep structures have no surface to be normal to: their orientation is
+free, band power there is the sum of the three orientations' envelopes, and
+each structure is one region, its sources found in the subject's own `aseg`.
 
 **Storage → no single-trial source estimates.** An inverse operator is one
 matrix per run and stream (512 files); each analysis applies it to the epochs,
@@ -604,12 +609,49 @@ reference sensors recovers under one percentage point more.
 |---|---|---|
 | noise covariance | subject | the empty room nearest the subject's first run (the same day for 31, the next day for H05); raised to grade 3, flux jumps repaired, ZapLine, 0.5–150 Hz, 600 Hz, all 68 s; `diagonal_fixed` |
 | BEM | subject | 3 layers (0.3, 0.006, 0.3), ico 4 |
-| source space | subject | `oct6`, 8,196 sources |
+| source space | subject | `oct6`, 8,196 sources; and 17 deep structures of the subject's `aseg` on a 5 mm grid, one volume (1,700 sources in H02) |
 | forward | run | the run's own transform; grade-3 compensation through the 29 reference sensors; sources 5 mm inside the inner skull |
-| inverse | run × stream | forward and noise covariance passed through the stream's cleaning map, in the rank its sidecar records; loose 0.2, depth 0.8; all 270 sensors |
+| inverse | run × stream | forward and noise covariance passed through the stream's cleaning map, in the rank its sidecar records; loose 0.2 on the cortex, free in the volume, depth 0.8; all 270 sensors; the deep structures' leakage in its sidecar |
+| beamformer | run × stream | LCMV through the same map, the stream's own data covariance (the cleaned recording outside the marks), regularisation 0.05, three orientations, unit-noise-gain (rotation-invariant) |
 
 No source estimate is stored (§2). Method, λ², orientation, morphing to
 `fsaverage` and parcels are chosen where the operator is applied.
+
+**The deep structures are those of the paper's code.** Its speed-accuracy
+result, a Fast/Slow shift in β, γ and high-γ power present before the trial
+starts, was placed in the cerebellum, pallidum, caudate, amygdala and
+thalamus, through a mixed source space its Methods do not describe: the
+cortex and 17 structures of FreeSurfer's `aseg` (accumbens, pallidum,
+caudate, putamen, amygdala, hippocampus, thalamus and cerebellar cortex on
+each side, and the brainstem) on a 5 mm grid (`04_compute_sources.py`). The
+same 17 are added here, so the result can be tested where it was found. The
+cerebellum and brainstem are the sources nearest the neck muscles, so the
+tonic muscle the paper's cleaning left (§4, Preprocessing) would reach them
+first. FreeSurfer 6 names the thalamus `Thalamus-Proper`; H07's and H10's
+template `aseg` is scaled with their surfaces. The structures form one volume
+source space: MNE writes a block the size of the MRI grid for every volume
+space (67 MB), so one space per structure would make each forward and
+inverse 1.2 GB. Which structure a source belongs to is read back from the
+`aseg` at its position, and the source-space sidecar records the count per
+structure.
+
+**A deep result is held to two checks.** A minimum-norm estimate explains a
+deep field with cortical currents almost as well as with the deep source (a
+thalamic pattern at 98.5%; Krishnaswamy et al., 2017), and noise-normalised
+methods add spurious deep peaks, more for sLORETA than for dSPM (Attal and
+Schwartz, 2013). The inverse sidecar therefore records, from the resolution
+matrix against the leadfield the data carry, how much of each structure's
+estimate is its own, the cortex's and the other structures'; where its
+sources' point-spreads peak; and how many cortical sources peak inside it. A
+beamformer estimates each location from the data's own covariance and is the
+method recommended where artifacts may be reconstructed as cerebellar
+sources (Andersen et al., 2020): an LCMV filter per run and stream is stored
+beside the inverse, and a deep-structure result must hold through it. The
+cerebellum from `aseg` is a volume, not its folded surface, which
+overestimates its net signal (Samuelsson et al., 2020); its magnitudes are
+upper bounds. The choices below were measured on the cortex-only operator; the
+volume adds sources that share the data's rank, and the cortical figures are
+not yet re-measured on the final operator.
 
 **The empty room is taken through the trunk's temporal steps.** All 26 empty
 rooms were acquired at grade 0, unfiltered, at 1200 Hz; the cleaned

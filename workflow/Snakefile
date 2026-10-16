@@ -37,6 +37,7 @@ RUN_DERIVATIVE = str(DERIVATIVES / "sub-{subject}" / "meg" / "sub-{subject}_task
 TRANS_PATTERN = RUN_DERIVATIVE + "_desc-{condition}_trans.fif"
 FORWARD_PATTERN = RUN_DERIVATIVE + "_desc-{condition}_fwd.fif"
 INVERSE_PATTERN = RUN_DERIVATIVE + "_proc-{stream}_desc-{condition}_inv.fif"
+BEAMFORMER_PATTERN = RUN_DERIVATIVE + "_proc-{stream}_desc-{condition}_lcmv.h5"
 SUBJECT_DERIVATIVE = str(DERIVATIVES / "sub-{subject}" / "meg" / "sub-{subject}_task-tokens")
 SOURCE_MODELS = {
     "cov": SUBJECT_DERIVATIVE + "_desc-noise_cov.fif",
@@ -385,6 +386,7 @@ rule source:
     output:
         fwd=FORWARD_PATTERN,
         inv=expand(INVERSE_PATTERN, stream=STREAMS, allow_missing=True),
+        lcmv=expand(BEAMFORMER_PATTERN, stream=STREAMS, allow_missing=True),
     params:
         streams=" ".join(STREAMS),
     shell:

@@ -54,3 +54,38 @@ def test_an_outer_surface_is_cleared_of_the_inner_one_only_where_they_meet():
     far = sphere["rr"][:, 2] < 0.8
     assert moved > 0 and (distance[far] == 0).all()
     assert 2.0 < shift < 6.0
+
+
+def test_every_deep_structure_is_named_as_freesurfer_6_names_it():
+    from meg_tokens.meg.sources import VOLUME_LABELS
+
+    lut, _ = mne.read_freesurfer_lut()
+    assert set(VOLUME_LABELS) <= set(lut)
+
+
+def test_a_deep_source_belongs_to_the_structure_the_aseg_puts_it_in(tmp_path):
+    import nibabel
+
+    from meg_tokens.meg.sources import deep_structures
+
+    lut, _ = mne.read_freesurfer_lut()
+    codes = np.zeros((32, 32, 32), dtype=np.int32)
+    codes[:16] = lut["Brain-Stem"]
+    codes[16:, :16] = lut["Left-Cerebellum-Cortex"]
+    aseg = nibabel.MGHImage(codes, np.eye(4))
+    (tmp_path / "S" / "mri").mkdir(parents=True)
+    nibabel.save(aseg, tmp_path / "S" / "mri" / "aseg.mgz")
+    to_surface_ras = aseg.header.get_vox2ras_tkr()
+    voxels = np.array([[4, 4, 4], [20, 4, 4], [20, 20, 4], [8, 30, 30]])
+    volume = {
+        "subject_his_id": "S",
+        "coord_frame": mne.io.constants.FIFF.FIFFV_COORD_MRI,
+        "rr": mne.transforms.apply_trans(to_surface_ras, voxels) / 1000,
+        "vertno": np.array([0, 1, 3]),
+    }
+
+    found = deep_structures([volume], tmp_path)
+
+    assert found["Brain-Stem"].tolist() == [0, 2]
+    assert found["Left-Cerebellum-Cortex"].tolist() == [1]
+    assert found["Right-Cerebellum-Cortex"].size == 0
