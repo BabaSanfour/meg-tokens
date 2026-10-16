@@ -372,27 +372,39 @@ jump came out identical in every sidecar field after it.
 - *Unexplained.* `MZF02` correlates with its neighbours at about 0.65 in 13
   subjects, with normal power.
 
-**Open.**
+**Evoked response on the occipital rim.** The tonic muscle stages shrink it
+in the nine people with tonic muscle (see Streams). Every Fast and Slow run of
+all 32 people was rebuilt with and without the stage, head movement regressed
+from both (the rebuild reproduces the final files to 1e-7 in all 256 runs),
+and cut at the final go-locked epochs' events: 40 Hz low-pass, baseline −0.2
+to 0 s, 0–0.5 s analysed, all of a person's trials pooled. Noise is measured
+by the ±average (alternate trials sign-flipped), signal as evoked minus noise
+power. Whether what the stage removes is the evoked response is measured along
+the response's own shape: the removed average projected on the kept one, each
+from an independent half of the trials, as a share of the kept one ("along").
+It is measured on the 16 rim sensors and, in the space the analyses use, on
+the occipital regions (lingual, pericalcarine, cuneus, lateral occipital)
+through the stream's final inverse, one kernel for both versions.
 
-- **Evoked response on the occipital rim.** The tonic muscle stages shrink it
-  in the nine people with tonic muscle (see Streams). Rebuilt before and after
-  the stage on all 72 Fast and Slow runs of the nine, head movement regressed
-  from both (the rebuild reproduces the final files to 4e-8 and the same
-  component counts), on the final go-locked epochs, 40 Hz low-pass, rim over
-  0–0.5 s, with the noise measured by the ±average (half the trials
-  sign-flipped). DSS stream: what the stage removes is noise. The evoked power
-  falls 1.0 dB and its noise 2.3 dB (medians); summed over the nine the noise
-  is all of the evoked power removed, and the signal moves by +2% of the
-  evoked power at the median (it falls in 4 of 9, Wilcoxon p 0.57). Signal
-  over noise improves in all nine. ICA stream: the evoked power falls 1.4 dB
-  and its noise 2.5 dB; noise is 64% of what is removed and the signal falls
-  in 7 of 9, by 11% of the evoked power at the median (p 0.25), most in H21
-  (24%), H03 (16%) and H29 (16%). On the epochs before the outlier rule H18
-  lost 31%; the regression does not change that, the epochs the outlier rule
-  drops carried it. The ICA tonic stage likely takes some evoked signal from
-  the rim in these people; the DSS stage does not. Rim waveforms differ too
-  much between people (the 23 match each other at 0.23–0.27) for the shape to
-  tell.
+| Medians | DSS, the nine | DSS, the 23 | ICA, the nine | ICA, the 23 |
+|---|---|---|---|---|
+| rim: evoked / noise power | −1.1 / −2.1 dB | 0.0 / −0.1 dB | −1.5 / −2.8 dB | −0.1 / −0.1 dB |
+| rim: signal change | −3% (falls in 5 of 9, p 0.91) | 0% | −26% (7 of 9, p 0.5) | −3% (17 of 23, p 0.01) |
+| rim: removed along the response | +3% (p 0.3) | 0% | +13% (7 of 9, p 0.16) | +2% (18 of 23, p 0.002) |
+| occipital regions: signal change | +1% | 0% | +1% | 0% |
+| occipital regions: removed along the response | 0% | 0% | +1% | 0% |
+
+The DSS stage removes noise: on the rim it takes 2.1 dB of noise for 1.1 dB of
+evoked power and nothing along the response. The ICA stage takes a little of
+the response from the rim sensors, 2% even in people without muscle and 13% in
+the nine, most in H29 (48%), H21 (30%), H24 (21%) and H03 (20%). In the
+regions it barely shows: at most 1% at the median in either stream, with H02
+(−25% signal, 13% along) and H03 (−12%, 7%) the exceptions, both ICA. What
+the stages remove repeats across halves of the trials in 7–8 of the nine
+(split-half r 0.1–0.2, p 0.01–0.04) without following the response's shape:
+some go-locked activity other than the evoked response leaves with the muscle.
+A rim-sensor evoked result in the ICA stream is read with the nine flagged, a
+source-level one with H02 and H03 flagged.
 
 ### Epoching · `run on the cohort`
 
@@ -734,6 +746,68 @@ even before cleaning (r 0.08).
 So no stream is better at everything. DSS is the one for the heart and the
 eyes, ICA for muscle bursts and for keeping signal; tonic muscle they remove
 alike.
+
+**The saccadic spike reaches gamma; ICA keeps it, DSS halves it.** All 256
+Fast and Slow runs, each stream and the trunk through the stream's final
+inverse (sLORETA, λ² = 1, normal orientation, the 68 regions of the subject's
+own parcellation): band-pass, Hilbert envelope, averaged around each
+horizontal saccade (the events the cleaning uses, windows clear of every mark)
+and around 1,000 random times, per subject over its runs. The excess peaks
+62–68 ms before the peak of the 0.5–7 Hz EOG deflection, at saccade onset, in
+lateral and medial orbitofrontal cortex, pars orbitalis and the right insula.
+Mean over ±25 ms of the peak, the 10 strongest regions, each saccade
+direction:
+
+| Saccade-locked over random (dB) | γ 30–60 Hz | high γ 60–90 Hz | high γ a saccade adds, in ms of mean power |
+|---|---|---|---|
+| trunk | +0.34 / +0.22 | +0.44 / +0.29 | |
+| DSS | +0.18 / +0.15 | +0.22 / +0.15 | 12 |
+| ICA | +0.34 / +0.23 | +0.45 / +0.31 | 25 |
+
+ICA is higher than DSS in 28 of 32 (p ≤ 3e-6 in either band); both streams stay
+above zero in 30–31 of 32. These are the saccades large enough to cross the
+event threshold, about 0.25 a second. They matter for a task result only where
+their rate differs between conditions or follows the lock. Around the go cue
+the rate is the same in Fast and Slow (0.07–0.13 a second), and so over the
+whole run (0.24 against 0.25, p 0.3); 0.5–1.0 s after the press Fast has 0.2 a
+second more (0.44 against 0.23, p < 0.001), and Slow more 1.75 s after it.
+At 25 ms of mean power per saccade that predicts 0.02 dB of Fast-minus-Slow
+high gamma in orbitofrontal cortex there. Measured, orbitofrontal high gamma
+after the press rises in Fast against Slow by +0.06 dB in the DSS stream
+(p 0.02) and +0.08 dB in the ICA stream (p 0.20): the same in both, so the
+saccade residue ICA keeps leaves no mark of its own. ICA gamma needs DSS
+replication for orbitofrontal results after the press, as every result is
+read in both streams; elsewhere the saccadic spike does not set the streams
+apart.
+
+**Tonic muscle and the high-gamma result.** On the same 256 runs and both
+streams: the 30–60 and 60–90 Hz envelope of each region, filtered over each
+epoch's recorded span, margins trimmed, in 50 ms bins of the four locks'
+analysis windows; Fast minus Slow over the window, and the response to the
+lock (change from the window's first 0.5 s), each computed with all 32,
+without the nine, through an inverse rebuilt without the 16 rim sensors, and
+with each person's rim excess (65–100 Hz, rim over the median sensor, in the
+kept epochs: the nine +2.0 dB in either stream, the 23 −0.4 dB DSS and +0.5 dB
+ICA) as a covariate.
+
+- *Response to the lock.* The nine do not move it. Without them the map of
+  group t over regions and bins correlates with the full map at 0.87–0.93
+  (high γ) and 0.94–0.98 (γ); the nine differ from the 23 in 3–7% of region
+  and bin cells, about chance; in posterior cortex they differ by at most
+  0.05 dB. Without the rim sensors the maps correlate with the full ones at
+  0.73–0.85 (high γ) and more cells reach significance, not fewer.
+- *Fast minus Slow.* There is none to drive: 0–2 of 68 regions at p < 0.05
+  in either stream, band, lock or variant, as chance gives, and the nine do
+  not differ from the 23 in posterior cortex (p 0.43–0.93).
+- *Rim excess as covariate.* In the ICA stream a person's Fast-minus-Slow
+  high gamma falls with their rim excess, in 19–21 of 68 regions (r about
+  −0.4, strongest in left pars orbitalis, pars triangularis, inferior
+  temporal, lateral orbitofrontal and temporal pole; over the whole cortex r
+  −0.36 to −0.38, p 0.03–0.04). The relation holds within the 23 alone
+  (16 regions, rank correlation) and in 5 or more regions without any one
+  person (5 without H02). In the DSS stream it is absent (1–3 regions). A
+  Fast-minus-Slow gamma result in the ICA stream carries the rim excess as a
+  covariate.
 
 **Response side 1 is the right hand.** Its presses carry the motor field over
 the left central sensors (MLC against MRC, (left − right)/(left + right) =
