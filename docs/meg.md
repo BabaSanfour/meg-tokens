@@ -31,9 +31,9 @@ the workflow (§4, Preprocessing).
 **Epoching — complete.** All 256 Fast and Slow recordings, both streams, four
 locks, with the cohort outlier rule (§4, Epoching).
 
-**Source reconstruction — implemented and benchmarked on the cohort** (§4,
-Source reconstruction). Inverse operators not yet produced by the workflow;
-zero features.
+**Source reconstruction — complete.** 32 subject models, 256 forward models
+and 512 inverse operators (both streams), through the workflow (§4, Source
+reconstruction). Zero features.
 
 **Downstream helpers with no callers.** `psd_description`
 (`workflows/spectral.py`), `run_batch_dpca` (`workflows/decomposition.py`),
@@ -95,6 +95,18 @@ not; ICA, followed by ASR, leaves fewer muscle bursts, keeps more of the
 sources' field and adds no high-frequency power; tonic muscle they remove
 alike (§4, Source reconstruction). A result that holds in one stream only is
 read against that stream's weakness.
+
+**Applying the inverse → sLORETA, λ² = 1, normal orientation, two spaces.**
+Each analysis applies the stored operator with sLORETA (no peak error, the
+spread and motor lateralisation of dSPM, the stronger visual response; §4,
+Source reconstruction) at λ² = 1, the paper's value, which the motor measure
+favours over 1/9. The normal component keeps the sign, so band-pass and
+Hilbert envelope are valid on it. Every result is computed in both spaces:
+the 8,196 sources morphed to `fsaverage` (`oct6`), and the 360 regions of the
+HCP multimodal parcellation (HCP-MMP1.0, `HCPMMP1`) morphed onto each
+subject's own cortex, one sign-flipped time course per region. 360 regions
+exceed the data's rank (246 DSS, 265 ICA), so neighbouring regions are not
+independent and region-level statistics must not count them as if they were.
 
 **Storage → no single-trial source estimates.** An inverse operator is one
 matrix per run and stream (512 files); each analysis applies it to the epochs,
@@ -574,7 +586,7 @@ coordinates, since the files carry no digitised head points. It uses the 270
 sensors alone and ignores the compensation grade; accounting for the
 reference sensors recovers under one percentage point more.
 
-### Source reconstruction · `benchmarked on the cohort`
+### Source reconstruction · `run on the cohort`
 
 | Step | Per | What |
 |---|---|---|
@@ -619,6 +631,7 @@ skull comes too close. Every subject's BEM sidecar records what moved.
 | H25 | 1.5 mm | 56, up to 2.6 mm | 24, up to 0.4 mm |
 | H28 | 2.0 mm | 484, up to 3.1 mm | 147, up to 1.1 mm |
 | H05 | 2.5 mm | 2,132, up to 3.6 mm | 1,190, up to 1.9 mm |
+| H09, H14, H20, H26 | none, within 1 mm | 21–37, up to 0.5 mm | 0 |
 
 H05's watershed skull is 2.5 mm thick at the median against 5–9 mm in the
 others.
