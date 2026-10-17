@@ -5,6 +5,8 @@
 #
 #   sbatch --array=0-2559%400 scripts/band_power_array.sh tokens.toml [fsaverage_root]
 #
+# Run scripts/band_power_prepare.sh first (this array with
+# --dependency=afterok on it): every task reads the morph maps it builds.
 # Task i takes line i of `meg band-power-tasks`. Each task writes only its own
 # part files; requeue a failed task with the same index. Assemble afterwards
 # with scripts/band_power_merge_array.sh (submitted with --dependency=afterok

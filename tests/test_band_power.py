@@ -58,3 +58,13 @@ def test_power_is_squared_magnitude_and_a_vector_sums_its_three_orientations():
     power = bp._power(vector)
     assert isinstance(power, mne.VolSourceEstimate)
     assert np.allclose(power.data, (np.abs(volume) ** 2).sum(axis=1))
+
+
+def test_a_part_needs_its_morph_map_built_beforehand(tmp_path):
+    import pytest
+
+    with pytest.raises(FileNotFoundError, match="band-power-prepare"):
+        bp.morph_map("H01", tmp_path)
+    (tmp_path / "morph-maps").mkdir()
+    (tmp_path / "morph-maps" / "fsaverage-H01-morph.fif").touch()
+    assert bp.morph_map("H01", tmp_path).name == "fsaverage-H01-morph.fif"

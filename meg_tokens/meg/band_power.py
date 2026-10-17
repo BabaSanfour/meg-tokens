@@ -103,6 +103,28 @@ def window(sfreq: float, lock: str) -> np.ndarray:
     return np.arange(int(round(tmin * sfreq)), int(round(tmax * sfreq)) + 1)
 
 
+def morph_map(subject: str, subjects_dir: str | Path) -> Path:
+    """The subject's morph map with ``fsaverage``, which must already exist.
+
+    MNE writes a missing map into ``subjects_dir`` on first use, and many jobs
+    starting at once for one subject would write and read it at the same time.
+    :func:`prepare_morph_map` builds it beforehand, once.
+    """
+    folder = Path(subjects_dir) / "morph-maps"
+    for name in (f"{subject}-fsaverage-morph.fif", f"fsaverage-{subject}-morph.fif"):
+        if (folder / name).is_file():
+            return folder / name
+    raise FileNotFoundError(
+        f"No morph map between {subject} and fsaverage in {folder}; run `meg band-power-prepare` first"
+    )
+
+
+def prepare_morph_map(subject: str, subjects_dir: str | Path) -> Path:
+    """Build the subject's morph map with ``fsaverage`` if it is missing (MNE writes it)."""
+    mne.read_morph_map(subject, "fsaverage", subjects_dir=subjects_dir, verbose=False)
+    return morph_map(subject, subjects_dir)
+
+
 def hcp_labels(subject: str, subjects_dir: str | Path) -> list[mne.Label]:
     """The 360 HCP-MMP1 regions, from ``fsaverage`` onto the subject's cortex.
 
@@ -198,5 +220,5 @@ def trial_power(
 __all__ = [
     "BANDS", "TRANSITIONS", "LOCKS", "PARCELLATION", "INVALID_NEAR",
     "half_length", "analytic", "invalid_samples", "window",
-    "hcp_labels", "deep_labels", "fsaverage_morph", "trial_power",
+    "morph_map", "prepare_morph_map", "hcp_labels", "deep_labels", "fsaverage_morph", "trial_power",
 ]

@@ -26,6 +26,7 @@ from meg_tokens.meg.band_power import (
     half_length,
     hcp_labels,
     invalid_samples,
+    morph_map,
     trial_power,
     window,
 )
@@ -85,6 +86,7 @@ def band_power_part(
     inv = mne.minimum_norm.read_inverse_operator(inv_path, verbose=False)
     src = inv["src"]
     anatomy = src[0]["subject_his_id"]
+    morph_map(anatomy, subjects_dir)
     labels = hcp_labels(anatomy, subjects_dir)
     deep = deep_labels(anatomy, subjects_dir)
     morph = None if fsaverage_root is None else fsaverage_morph(src, subjects_dir)

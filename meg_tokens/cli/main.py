@@ -299,6 +299,12 @@ def build_parser() -> argparse.ArgumentParser:
         "empty for none",
     )
 
+    band_power_prepare = meg_commands.add_parser(
+        "band-power-prepare",
+        help="Build each subject's morph map with fsaverage, once, before the band-power jobs.",
+    )
+    band_power_prepare.add_argument("--subjects", nargs="+", help="default: every staged subject")
+
     band_power_tasks = meg_commands.add_parser(
         "band-power-tasks",
         help="Print one line per band-power job (subject run condition stream band), for Slurm arrays.",
@@ -915,6 +921,15 @@ def _meg_band_power(project: ProjectConfig, args: argparse.Namespace) -> object:
     )
 
 
+def _meg_band_power_prepare(project: ProjectConfig, args: argparse.Namespace) -> object:
+    from meg_tokens.meg.band_power import prepare_morph_map
+    from meg_tokens.meg.meg_bids import staged_subjects
+
+    for subject in args.subjects or staged_subjects(project.bids_root):
+        print(prepare_morph_map(subject, project.subjects_dir))
+    return None
+
+
 def _meg_band_power_tasks(project: ProjectConfig, args: argparse.Namespace) -> object:
     from meg_tokens.meg.band_power import BANDS
     from meg_tokens.meg.epoching import EPOCH_CONDITIONS
@@ -1424,6 +1439,7 @@ _HANDLERS: dict[tuple[str, str], Handler] = {
     ("meg", "band-power"): _meg_band_power,
     ("meg", "band-power-merge"): _meg_band_power_merge,
     ("meg", "band-power-tasks"): _meg_band_power_tasks,
+    ("meg", "band-power-prepare"): _meg_band_power_prepare,
     ("features", "erp"): _features_erp,
     ("features", "power"): _features_power,
     ("features", "spectral"): _features_spectral,
