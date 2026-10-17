@@ -293,6 +293,7 @@ def build_parser() -> argparse.ArgumentParser:
     band_power.add_argument("--band", required=True, help="theta, alpha, beta, gamma or highgamma")
     band_power.add_argument("--locks", nargs="+", choices=EPOCH_LOCKS, help="default: go, decision, enter")
     band_power.add_argument("--n-jobs", type=int, default=1, help="cores for filtering")
+    band_power.add_argument("--output-root", help="write the region part under this root instead of the BIDS root")
     band_power.add_argument(
         "--fsaverage-root",
         help="also write every trial's power on fsaverage under this root (about 24 TB for the cohort); "
@@ -917,7 +918,7 @@ def _meg_band_power(project: ProjectConfig, args: argparse.Namespace) -> object:
     return band_power_part(
         project, RunSpec(subject=args.subjects[0], run=args.run, condition=args.condition),
         stream=args.stream, band=args.band, locks=args.locks or LOCKS,
-        fsaverage_root=args.fsaverage_root or None, n_jobs=args.n_jobs,
+        fsaverage_root=args.fsaverage_root or None, output_root=args.output_root, n_jobs=args.n_jobs,
     )
 
 
