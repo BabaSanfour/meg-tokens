@@ -227,3 +227,79 @@ def band_power_merge(
         outputs=tuple(outputs),
         settings={"subject": subject, "stream": stream, "locks": list(locks)},
     )
+
+
+QUANTILES = 5
+
+
+def band_power_means(
+    project: ProjectConfig,
+    subject: str,
+    *,
+    stream: str,
+    locks: Sequence[str] = LOCKS,
+    output_root: Optional[str | Path] = None,
+) -> WorkflowResult:
+    """A subject's mean band power per condition and per decision-time quintile, per lock.
+
+    Averages the assembled single-trial power (linear, NaN ignored) over the
+    trials of each of the twelve conditions, and over Fast and Slow trials in
+    each fifth of the subject's own decision times in that condition (the
+    quantile-matched bins of the time-scaling test). Writes one HDF5 file per
+    lock: ``condition_power`` (12 x bands x sources x times), ``quantile_power``
+    (Fast q1-q5, Slow q1-q5 x bands x sources x times), their trial counts and
+    the quantiles' mean decision times.
+    """
+    from meg_tokens.meg.evoked import CONDITIONS, condition_masks
+
+    destination = DerivativeLayout(output_root or project.bids_root, task=project.task)
+    inputs, outputs = [], []
+    for lock in locks:
+        power_path = require_file(
+            destination.band_power(subject=subject, stream=stream, lock=lock, space=PARCELLATION),
+            purpose=f"{subject} {stream} {lock} band power; run `meg band-power-merge` first",
+        )
+        trials = pd.read_csv(destination.band_power_trials(subject=subject, stream=stream, lock=lock), sep="\t")
+        inputs.append(power_path)
+        groups = {name: np.flatnonzero(mask) for name, mask in condition_masks(trials).items()}
+        quantiles = {}
+        for speed in ("Fast", "Slow"):
+            rows = trials.index[(trials["condition"] == speed) & trials["dt_ms"].notna()]
+            bins = pd.qcut(trials.loc[rows, "dt_ms"].rank(method="first"), QUANTILES, labels=False)
+            for q in range(QUANTILES):
+                quantiles[f"{speed.lower()}-q{q + 1}"] = rows[bins.to_numpy() == q].to_numpy()
+
+        with h5py.File(power_path, "r") as source:
+            power = source["power"]
+            shape = power.shape[1:]
+
+            def mean(indices: np.ndarray) -> np.ndarray:
+                if not indices.size:
+                    return np.full(shape, np.nan, dtype=np.float32)
+                return np.nanmean(power[np.sort(indices)], axis=0).astype(np.float32)
+
+            condition_power = np.stack([mean(groups[name]) for name in CONDITIONS])
+            quantile_power = np.stack([mean(indices) for indices in quantiles.values()])
+            meta = {key: source[key][:] for key in ("times", "bands", "band_edges_hz", "sources", "n_sources")}
+
+        path = destination.band_power_means(subject=subject, stream=stream, lock=lock)
+        with h5py.File(path, "w") as handle:
+            handle.create_dataset("condition_power", data=condition_power)
+            handle.create_dataset("condition_n", data=np.array([groups[name].size for name in CONDITIONS]))
+            handle.create_dataset("conditions", data=np.array(CONDITIONS, dtype="S"))
+            handle.create_dataset("quantile_power", data=quantile_power)
+            handle.create_dataset("quantile_n", data=np.array([indices.size for indices in quantiles.values()]))
+            handle.create_dataset("quantiles", data=np.array(list(quantiles), dtype="S"))
+            handle.create_dataset("quantile_dt_ms", data=np.array([
+                trials.loc[indices, "dt_ms"].mean() if indices.size else np.nan for indices in quantiles.values()
+            ]))
+            for key, value in meta.items():
+                handle.create_dataset(key, data=value)
+            handle.attrs.update({"subject": subject, "stream": stream, "lock": lock, "power": "linear |z|^2, mean of trials"})
+        outputs.append(path)
+    return WorkflowResult(
+        stage="band_power_means",
+        inputs=tuple(inputs),
+        outputs=tuple(outputs),
+        settings={"subject": subject, "stream": stream, "locks": list(locks)},
+    )

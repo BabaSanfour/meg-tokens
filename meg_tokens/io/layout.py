@@ -358,6 +358,12 @@ class DerivativeLayout:
             description=_description(_condition(condition or inferred), band), suffix="power", extension=".h5",
         )
 
+    def band_power_means(self, *, subject: str, stream: str, lock: str) -> Path:
+        """A subject's mean band power per condition and per decision-time quintile, around one lock."""
+        return self.path(
+            subject=subject, processing=stream, space="HCPMMP1", description=lock, suffix="powermeans", extension=".h5",
+        )
+
     def band_power_trials(self, *, subject: str, stream: str, lock: str) -> Path:
         """The trials of a subject's band power, in its order: one row per trial, both spaces."""
         return self.path(
