@@ -3,7 +3,7 @@
 from pathlib import Path
 
 from meg_tokens.io import DerivativeLayout
-from meg_tokens.meg.band_power import LOCKS as BAND_POWER_LOCKS, PARCELLATION
+from meg_tokens.meg.band_power import BANDS, LOCKS as BAND_POWER_LOCKS, PARCELLATION
 from meg_tokens.meg.epoching import EPOCH_CONDITIONS
 from meg_tokens.meg.meg_bids import raw_meg_path, raw_meg_sessions
 from meg_tokens.behavior.analyses.sequential_sampling import ROBUSTNESS_CONFIGURATIONS
@@ -67,17 +67,32 @@ SOURCE_TARGETS = [
     if spec.condition in EPOCH_CONDITIONS
     for stream in STREAMS
 ]
-# Band power: the regions on the derivatives; every trial on fsaverage, about
-# 24 TB for the cohort, only where `band_power.fsaverage_root` names a place.
-FSAVERAGE_POWER_ROOT = config.get("band_power", {}).get("fsaverage_root")
-BAND_POWER_PATTERN = SUBJECT_DERIVATIVE + "_proc-{stream}_space-{space}_desc-{lock}_power.h5"
-BAND_POWER_TRIALS_PATTERN = SUBJECT_DERIVATIVE + "_proc-{stream}_desc-{lock}_trials.tsv"
-FSAVERAGE_POWER_PATTERN = (
+# Band power: one job per run, stream and band (every lock), submitted as an
+# array, then one per subject and stream assembling the regions per lock. The
+# regions live on the derivatives; every trial on fsaverage, about 24 TB for
+# the cohort, only where `band_power.fsaverage_root` names a BIDS-like root.
+BAND_POWER = config.get("band_power", {})
+FSAVERAGE_POWER_ROOT = BAND_POWER.get("fsaverage_root")
+BAND_POWER_THREADS = BAND_POWER.get("threads", 8)
+BAND_POWER_PART = RUN_DERIVATIVE + "_proc-{stream}_space-" + PARCELLATION + "_desc-{condition}-{band}_power.h5"
+FSAVERAGE_POWER_PART = (
     None if FSAVERAGE_POWER_ROOT is None
     else str(Path(FSAVERAGE_POWER_ROOT) / "derivatives" / "sub-{subject}" / "meg"
-             / "sub-{subject}_task-tokens_proc-{stream}_space-fsaverage_desc-{lock}_power.h5")
+             / "sub-{subject}_task-tokens_run-{run_number}_proc-{stream}_space-fsaverage_desc-{condition}-{band}_power.h5")
 )
-BAND_POWER_TARGETS = expand(BAND_POWER_TRIALS_PATTERN, subject=SUBJECTS, stream=STREAMS, lock=BAND_POWER_LOCKS)
+BAND_POWER_PATTERN = SUBJECT_DERIVATIVE + "_proc-{stream}_space-" + PARCELLATION + "_desc-{lock}_power.h5"
+BAND_POWER_TRIALS_PATTERN = SUBJECT_DERIVATIVE + "_proc-{stream}_desc-{lock}_trials.tsv"
+BAND_POWER_TARGETS = expand(BAND_POWER_TRIALS_PATTERN, subject=SUBJECTS, stream=STREAMS, lock=BAND_POWER_LOCKS) + (
+    [] if FSAVERAGE_POWER_PART is None else [
+        FSAVERAGE_POWER_PART.format(subject=subject, run_number=spec.run, stream=stream,
+                                    condition=spec.condition.lower(), band=band)
+        for subject in SUBJECTS
+        for spec, _ in raw_meg_sessions(BIDS_ROOT, subject)
+        if spec.condition in EPOCH_CONDITIONS
+        for stream in STREAMS
+        for band in BANDS
+    ]
+)
 # The behavioral stages each write many tables or figures, named inside the
 # package. The DAG tracks them by one marker per job under the workflow state.
 SSM = config.get("ssm", {})
@@ -416,37 +431,57 @@ rule source:
         """
 
 
-def subject_inverses(wildcards):
+def subject_band_power_parts(wildcards):
     return [
-        str(LAYOUT.inverse(subject=wildcards.subject, run=spec.run, condition=spec.condition, stream=stream))
+        BAND_POWER_PART.format(subject=wildcards.subject, run_number=spec.run, stream=wildcards.stream,
+                               condition=spec.condition.lower(), band=band)
         for spec, _ in raw_meg_sessions(BIDS_ROOT, wildcards.subject)
         if spec.condition in EPOCH_CONDITIONS
-        for stream in STREAMS
+        for band in BANDS
     ]
 
 
-rule band_power:
+rule band_power_part:
     input:
         epochs=str(EPOCHS_STATE),
-        inv=subject_inverses,
+        raw=CLEAN_PATTERN,
+        inv=INVERSE_PATTERN,
     output:
-        regions=expand(BAND_POWER_PATTERN, stream=STREAMS, space=PARCELLATION, lock=BAND_POWER_LOCKS, allow_missing=True),
-        trials=expand(BAND_POWER_TRIALS_PATTERN, stream=STREAMS, lock=BAND_POWER_LOCKS, allow_missing=True),
-        fsaverage=(
-            expand(FSAVERAGE_POWER_PATTERN, stream=STREAMS, lock=BAND_POWER_LOCKS, allow_missing=True)
-            if FSAVERAGE_POWER_PATTERN else []
-        ),
+        regions=temp(BAND_POWER_PART),
+        fsaverage=[FSAVERAGE_POWER_PART] if FSAVERAGE_POWER_PART else [],
+    threads: BAND_POWER_THREADS
     params:
-        streams=" ".join(STREAMS),
         locks=" ".join(BAND_POWER_LOCKS),
         fsaverage=f"--fsaverage-root {FSAVERAGE_POWER_ROOT}" if FSAVERAGE_POWER_ROOT else "",
     shell:
         """
+        export OMP_NUM_THREADS={threads} OPENBLAS_NUM_THREADS={threads} MKL_NUM_THREADS={threads}
         meg-tokens --config {PROJECT_CONFIG:q} meg band-power \
           --subjects {wildcards.subject:q} \
-          --streams {params.streams} \
+          --run {wildcards.run_number:q} \
+          --condition {wildcards.condition:q} \
+          --stream {wildcards.stream:q} \
+          --band {wildcards.band:q} \
           --locks {params.locks} \
+          --n-jobs {threads} \
           {params.fsaverage}
+        """
+
+
+rule band_power_merge:
+    input:
+        subject_band_power_parts,
+    output:
+        power=expand(BAND_POWER_PATTERN, lock=BAND_POWER_LOCKS, allow_missing=True),
+        trials=expand(BAND_POWER_TRIALS_PATTERN, lock=BAND_POWER_LOCKS, allow_missing=True),
+    params:
+        locks=" ".join(BAND_POWER_LOCKS),
+    shell:
+        """
+        meg-tokens --config {PROJECT_CONFIG:q} meg band-power-merge \
+          --subjects {wildcards.subject:q} \
+          --streams {wildcards.stream:q} \
+          --locks {params.locks}
         """
 
 

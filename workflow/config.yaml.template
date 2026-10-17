@@ -43,6 +43,8 @@ preprocessing:
   streams: [dss, ica]
 
 band_power:
+  # Cores per run x stream x band job.
+  threads: 8
   # Every trial's power on fsaverage (about 24 TB for the cohort) is written
-  # under this root; leave it out to write only the regions.
-  # fsaverage_root: /project/<allocation>/<user>/meg-tokens
+  # under this BIDS-like root; leave it out to write only the regions.
+  # fsaverage_root: /project/<allocation>/<user>/meg-tokens/BIDS

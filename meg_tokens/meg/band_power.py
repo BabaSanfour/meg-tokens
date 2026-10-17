@@ -34,7 +34,7 @@ BANDS = {
     "alpha": (9.0, 13.0),
     "beta": (16.0, 24.0),
     "gamma": (30.0, 60.0),
-    "high_gamma": (60.0, 90.0),
+    "highgamma": (60.0, 90.0),
 }
 # Transition widths below and above each band, in Hz. A zero-phase FIR is down
 # 6 dB half a transition outside the band, so neighbouring bands meet without
@@ -46,7 +46,7 @@ TRANSITIONS = {
     "alpha": (1.0, 2.0),
     "beta": (2.0, 4.0),
     "gamma": (4.0, 2.0),
-    "high_gamma": (2.0, 5.0),
+    "highgamma": (2.0, 5.0),
 }
 LOCKS = ("go", "decision", "enter")
 PARCELLATION = "HCPMMP1"
@@ -69,12 +69,12 @@ def half_length(sfreq: float, band: str) -> int:
     return mne.filter.create_filter(None, sfreq, **_filter_kwargs(band), verbose=False).size // 2
 
 
-def analytic(raw: mne.io.BaseRaw, band: str) -> mne.io.BaseRaw:
+def analytic(raw: mne.io.BaseRaw, band: str, *, n_jobs: int = 1) -> mne.io.BaseRaw:
     """The magnetometers' band-passed analytic signal, as a complex Raw."""
     return (
         raw.copy().pick("mag")
-        .filter(**_filter_kwargs(band), pad="reflect_limited", verbose=False)
-        .apply_hilbert(envelope=False, verbose=False)
+        .filter(**_filter_kwargs(band), pad="reflect_limited", n_jobs=n_jobs, verbose=False)
+        .apply_hilbert(envelope=False, n_jobs=n_jobs, verbose=False)
     )
 
 

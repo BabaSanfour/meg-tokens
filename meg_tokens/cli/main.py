@@ -284,15 +284,27 @@ def build_parser() -> argparse.ArgumentParser:
 
     band_power = meg_commands.add_parser(
         "band-power",
-        help="Single-trial band power in source space, per subject, stream and lock.",
+        help="Single-trial band power in source space for one run, stream and band, every lock.",
     )
-    band_power.add_argument("--subjects", nargs="+", required=True)
-    band_power.add_argument("--streams", nargs="+", choices=STREAMS, default=list(STREAMS))
+    band_power.add_argument("--subjects", nargs=1, required=True)
+    band_power.add_argument("--run", required=True)
+    band_power.add_argument("--condition", required=True)
+    band_power.add_argument("--stream", choices=STREAMS, required=True)
+    band_power.add_argument("--band", required=True, help="theta, alpha, beta, gamma or highgamma")
     band_power.add_argument("--locks", nargs="+", choices=EPOCH_LOCKS, help="default: go, decision, enter")
+    band_power.add_argument("--n-jobs", type=int, default=1, help="cores for filtering")
     band_power.add_argument(
         "--fsaverage-root",
         help="also write every trial's power on fsaverage under this root (about 24 TB for the cohort)",
     )
+
+    band_power_merge = meg_commands.add_parser(
+        "band-power-merge",
+        help="Assemble a subject's band power per stream and lock from its run and band parts.",
+    )
+    band_power_merge.add_argument("--subjects", nargs="+", required=True)
+    band_power_merge.add_argument("--streams", nargs="+", choices=STREAMS, default=list(STREAMS))
+    band_power_merge.add_argument("--locks", nargs="+", choices=EPOCH_LOCKS, help="default: go, decision, enter")
 
     features = domains.add_parser("features", help="Neural feature extraction.")
     feature_commands = features.add_subparsers(dest="feature_command", required=True)
@@ -883,14 +895,26 @@ def _meg_source(project: ProjectConfig, args: argparse.Namespace) -> object:
 
 
 def _meg_band_power(project: ProjectConfig, args: argparse.Namespace) -> object:
+    from meg_tokens.meg.band_power import BANDS, LOCKS
+    from meg_tokens.workflows.band_power import band_power_part
+
+    if args.band not in BANDS:
+        raise SystemExit(f"--band must be one of {', '.join(BANDS)}")
+    return band_power_part(
+        project, RunSpec(subject=args.subjects[0], run=args.run, condition=args.condition),
+        stream=args.stream, band=args.band, locks=args.locks or LOCKS,
+        fsaverage_root=args.fsaverage_root, n_jobs=args.n_jobs,
+    )
+
+
+def _meg_band_power_merge(project: ProjectConfig, args: argparse.Namespace) -> object:
     from meg_tokens.meg.band_power import LOCKS
-    from meg_tokens.workflows.band_power import band_power_subject
+    from meg_tokens.workflows.band_power import band_power_merge
 
     return [
-        band_power_subject(
-            project, subject, streams=args.streams, locks=args.locks or LOCKS, fsaverage_root=args.fsaverage_root,
-        )
+        band_power_merge(project, subject, stream=stream, locks=args.locks or LOCKS)
         for subject in args.subjects
+        for stream in args.streams
     ]
 
 
@@ -1375,6 +1399,7 @@ _HANDLERS: dict[tuple[str, str], Handler] = {
     ("meg", "source-models"): _meg_source_models,
     ("meg", "source"): _meg_source,
     ("meg", "band-power"): _meg_band_power,
+    ("meg", "band-power-merge"): _meg_band_power_merge,
     ("features", "erp"): _features_erp,
     ("features", "power"): _features_power,
     ("features", "spectral"): _features_spectral,

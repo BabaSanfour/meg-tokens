@@ -350,6 +350,14 @@ class DerivativeLayout:
             subject=subject, processing=stream, space=space, description=lock, suffix="power", extension=".h5",
         )
 
+    def band_power_part(self, *, subject: str, run: str, condition: str, stream: str, band: str, space: str) -> Path:
+        """One run's band power in one band, every lock: a part of the subject's band power."""
+        run_number, inferred = parse_run_label(run)
+        return self.path(
+            subject=subject, run=run_number, processing=stream, space=space,
+            description=_description(_condition(condition or inferred), band), suffix="power", extension=".h5",
+        )
+
     def band_power_trials(self, *, subject: str, stream: str, lock: str) -> Path:
         """The trials of a subject's band power, in its order: one row per trial, both spaces."""
         return self.path(

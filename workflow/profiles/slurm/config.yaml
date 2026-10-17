@@ -2,6 +2,8 @@ jobs: 320
 latency-wait: 120
 printshellcmds: true
 rerun-incomplete: true
+# Many small jobs of one rule go to Slurm as one array.
+slurm-array-jobs: "band_power_part,band_power_merge"
 # Snakemake >= 8 submits through snakemake-executor-plugin-slurm: threads,
 # mem_mb and runtime become --cpus-per-task, --mem and --time on their own.
 executor: slurm
@@ -90,10 +92,13 @@ set-resources:
     slurm_partition: cpubase_bycore_b1
     mem_mb: 16000
     runtime: 60
-  # One subject: eight runs, both streams, three locks. Measured locally: a run
-  # takes about 4.5 min per stream for the regions; fsaverage adds about
-  # 750 GB of writes per subject.
-  band_power:
-    slurm_partition: cpubase_bycore_b2
-    mem_mb: 32000
-    runtime: 600
+  # One run, stream and band, every lock: about 20 min on one core of fir for
+  # the MNE route (apply_inverse_epochs at 7 s a trial), less with threads.
+  band_power_part:
+    slurm_partition: cpubase_bycore_b1
+    mem_mb: 16000
+    runtime: 120
+  band_power_merge:
+    slurm_partition: cpubase_bycore_b1
+    mem_mb: 8000
+    runtime: 60

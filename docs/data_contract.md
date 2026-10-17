@@ -152,28 +152,35 @@ and the cortical sources whose point-spread peaks inside it (`ghosts`).
 
 ## Band-power derivatives
 
-Per subject, stream and lock (`go`, `decision`, `enter`): every kept trial of
-the eight Fast and Slow runs, in run order, with one table of its trials.
+Computed per run, stream and band (every lock), then assembled per subject,
+stream and lock (`go`, `decision`, `enter`): every kept trial of the eight
+Fast and Slow runs, in run order, with one table of its trials.
 
 ```
+derivatives/sub-H01/meg/sub-H01_task-tokens_run-1_proc-dss_space-HCPMMP1_desc-fast-alpha_power.h5   (part, removed once assembled)
 derivatives/sub-H01/meg/sub-H01_task-tokens_proc-dss_space-HCPMMP1_desc-go_power.h5
 derivatives/sub-H01/meg/sub-H01_task-tokens_proc-dss_desc-go_trials.tsv
-<fsaverage_root>/derivatives/sub-H01/meg/sub-H01_task-tokens_proc-dss_space-fsaverage_desc-go_power.h5
+<fsaverage_root>/derivatives/sub-H01/meg/sub-H01_task-tokens_run-1_proc-dss_space-fsaverage_desc-fast-alpha_power.h5
 ```
 
-Each HDF5 file holds `power`, trials x bands x sources x times, float32,
+An assembled file holds `power`, trials x bands x sources x times, float32,
 linear (|z|² of the sLORETA estimate at λ² = 1), at 600 Hz over the lock's
 analysis window, chunked one trial and band at a time; `times` (s from the
-lock), `bands`, `band_edges_hz` and `sources`. In `space-HCPMMP1` the sources
-are the 360 HCP-MMP1 regions (left then right, as the annotation orders them)
-followed by the 17 deep structures in `VOLUME_LABELS` order, and `n_sources`
-gives how many of the subject's sources each averages; in `space-fsaverage`
-they are the 8,196 `oct6` sources, left then right. A sample whose filter
-reaches a flux jump or the recording's end is NaN, as is a region with no
-source. Row `i` of `power` is row `i` of the trials table: the epoch metadata
-plus `subject`, `condition`, `run` and `epoch` (the epoch's index in its run's
-drop log). The sidecar names the method, λ², orientations, bands, transition
-widths, `invalid_near`, `n_trials` and `empty_sources`.
+lock), `bands` (`theta`, `alpha`, `beta`, `gamma`, `highgamma`),
+`band_edges_hz`, `sources` and `n_sources`. The sources are the 360 HCP-MMP1
+regions (left then right, as the annotation orders them) followed by the 17
+deep structures in `VOLUME_LABELS` order; `n_sources` gives how many of the
+subject's sources each averages. A sample whose filter reaches a flux jump or
+the recording's end is NaN, as is a region with no source. Row `i` of `power`
+is row `i` of the trials table: the epoch metadata plus `subject`,
+`condition`, `run` and `epoch` (the epoch's index in its run's drop log). The
+sidecar names the method, λ², orientations, bands, transition widths,
+`invalid_near`, `n_trials` and `empty_sources`.
+
+The `fsaverage` power, about 24 TB for the cohort, stays one file per run,
+stream and band under its own BIDS-like root (`band_power.fsaverage_root`):
+per lock, `<lock>/power`, trials x 8,196 `oct6` sources (left then right) x
+times, and `<lock>/times`, in the order of the lock's epoch file.
 
 ## Stage 0: Raw BIDSification
 
