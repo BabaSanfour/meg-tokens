@@ -2,12 +2,6 @@ jobs: 320
 latency-wait: 120
 printshellcmds: true
 rerun-incomplete: true
-# Many small jobs of one rule go to Slurm as arrays. The plugin submits an
-# array once a chunk of `slurm-array-limit` jobs is ready, and Snakemake hands
-# it at most `jobs` at a time, so the chunk must fit inside `jobs`: with the
-# plugin's default of 1,000 it waits for jobs that never arrive.
-slurm-array-jobs: "band_power_part,band_power_merge"
-slurm-array-limit: 300
 # Snakemake >= 8 submits through snakemake-executor-plugin-slurm: threads,
 # mem_mb and runtime become --cpus-per-task, --mem and --time on their own.
 executor: slurm

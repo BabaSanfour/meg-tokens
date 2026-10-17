@@ -25,6 +25,8 @@ SCRIPTS = Path(__file__).parents[1] / "scripts"
 CHOICE_VALUES = {
     "--rule": "complete_token_log_alignment",
     "--configuration": "tau_slow",
+    "--stream": "dss",
+    "--streams": "dss",
 }
 
 

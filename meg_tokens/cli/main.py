@@ -295,8 +295,16 @@ def build_parser() -> argparse.ArgumentParser:
     band_power.add_argument("--n-jobs", type=int, default=1, help="cores for filtering")
     band_power.add_argument(
         "--fsaverage-root",
-        help="also write every trial's power on fsaverage under this root (about 24 TB for the cohort)",
+        help="also write every trial's power on fsaverage under this root (about 24 TB for the cohort); "
+        "empty for none",
     )
+
+    band_power_tasks = meg_commands.add_parser(
+        "band-power-tasks",
+        help="Print one line per band-power job (subject run condition stream band), for Slurm arrays.",
+    )
+    band_power_tasks.add_argument("--subjects", nargs="+", help="default: every staged subject")
+    band_power_tasks.add_argument("--streams", nargs="+", choices=STREAMS, default=list(STREAMS))
 
     band_power_merge = meg_commands.add_parser(
         "band-power-merge",
@@ -903,8 +911,23 @@ def _meg_band_power(project: ProjectConfig, args: argparse.Namespace) -> object:
     return band_power_part(
         project, RunSpec(subject=args.subjects[0], run=args.run, condition=args.condition),
         stream=args.stream, band=args.band, locks=args.locks or LOCKS,
-        fsaverage_root=args.fsaverage_root, n_jobs=args.n_jobs,
+        fsaverage_root=args.fsaverage_root or None, n_jobs=args.n_jobs,
     )
+
+
+def _meg_band_power_tasks(project: ProjectConfig, args: argparse.Namespace) -> object:
+    from meg_tokens.meg.band_power import BANDS
+    from meg_tokens.meg.epoching import EPOCH_CONDITIONS
+    from meg_tokens.meg.meg_bids import raw_meg_sessions, staged_subjects
+
+    for subject in args.subjects or staged_subjects(project.bids_root):
+        for run, _ in raw_meg_sessions(project.bids_root, subject, task=project.task):
+            if run.condition not in EPOCH_CONDITIONS:
+                continue
+            for stream in args.streams:
+                for band in BANDS:
+                    print(subject, run.run, run.condition.lower(), stream, band)
+    return None
 
 
 def _meg_band_power_merge(project: ProjectConfig, args: argparse.Namespace) -> object:
@@ -1400,6 +1423,7 @@ _HANDLERS: dict[tuple[str, str], Handler] = {
     ("meg", "source"): _meg_source,
     ("meg", "band-power"): _meg_band_power,
     ("meg", "band-power-merge"): _meg_band_power_merge,
+    ("meg", "band-power-tasks"): _meg_band_power_tasks,
     ("features", "erp"): _features_erp,
     ("features", "power"): _features_power,
     ("features", "spectral"): _features_spectral,
