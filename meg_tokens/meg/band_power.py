@@ -168,7 +168,13 @@ def trial_power(
     to_cortex, to_deep = tee(estimates)
     cortex = (_power(stc.surface().project("normal", src[:2])[0]) for stc in to_cortex)
     deep_power = (_power(stc.volume()) for stc in to_deep)
-    for_regions, for_morph = tee(cortex)
+    # A tee keeps whatever one branch has read and the other has not, so the
+    # cortex is split only when the morph will read its branch in step.
+    if morph is None:
+        for_regions, fsaverage = cortex, repeat(None)
+    else:
+        for_regions, for_morph = tee(cortex)
+        fsaverage = (morph.apply(stc).data for stc in for_morph)
     # MNE takes a stream of estimates only as a list or a generator, not a tee.
     regions = mne.extract_label_time_course(
         (stc for stc in for_regions), labels, src[:2], mode="mean", allow_empty=True, return_generator=True, verbose=False,
@@ -178,7 +184,6 @@ def trial_power(
         return_generator=True, verbose=False,
     )
     empty = np.r_[[len(label.restrict(src[:2]).vertices) == 0 for label in labels], np.zeros(len(deep[1]), bool)]
-    fsaverage = repeat(None) if morph is None else (morph.apply(stc).data for stc in for_morph)
     for region, structure, average in zip(regions, structures, fsaverage):
         power = np.concatenate([region, structure])
         power[empty] = np.nan
