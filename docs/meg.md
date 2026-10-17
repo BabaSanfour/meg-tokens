@@ -154,20 +154,22 @@ sources found in the subject's own `aseg`.
 - First run: both streams, the `go`, `decision` and `enter` locks.
 
 **Event-related fields → twelve condition averages per subject, signed, in
-regions and sensors.** For each subject, stream and lock (`go`, `decision`,
-`enter`), the trials of each condition (Fast/Slow × easy/ambiguous/misleading
-× right/left choice; unclassified trials in none) are averaged per run
-(`Epochs.average`), each average inverted (`apply_inverse`, sLORETA, λ² = 1,
-three orientations, the cortex projected onto its normals) at `nave = 1`, the
-kernel band power uses, so conditions with different trial counts compare;
-sLORETA's noise normalisation would otherwise scale each average by its trial
-count. A region's time course is the sign-flipped mean of its sources
-(`extract_label_time_course`, `mode="mean_flip"`); the sign of a region is a
-convention of its anatomy. Runs are combined weighted by their trials (exact:
-the inverse is linear). Stored at 600 Hz, 0.5–150 Hz as cleaned, no baseline;
-filtering and baseline belong to the figure or analysis. The sensor averages
-are kept as MNE evoked files for field maps. Deep structures have no single
-signed time course and are left out.
+regions, deep structures, fsaverage and sensors.** For each subject, stream and
+lock (`go`, `decision`, `enter`), the trials of each condition (Fast/Slow ×
+easy/ambiguous/misleading × right/left choice; unclassified trials in none) are
+averaged per run (`Epochs.average`), each average inverted (`apply_inverse`,
+sLORETA, λ² = 1, three orientations) at `nave = 1`, the kernel band power uses,
+so conditions with different trial counts compare; sLORETA's noise
+normalisation would otherwise scale each average by its trial count. The cortex
+is projected onto its normals: a region's time course is the sign-flipped mean
+of its sources (`extract_label_time_course`, `mode="mean_flip"`; the sign of a
+region is a convention of its anatomy), and the 8,196 sources are morphed to
+`fsaverage` (`SourceMorph.apply`). A deep source has no surface to be normal
+to, so a deep structure keeps the mean of each of its sources' three
+components, head x, y and z, signed and linear. Runs are combined weighted by
+their trials (exact: the inverse is linear). Stored at 600 Hz, 0.5–150 Hz as
+cleaned, no baseline; filtering and baseline belong to the figure or analysis.
+The sensor averages are kept as MNE evoked files for field maps.
 
 **Deep structures → the paper's analyses replicated, then measured.** The
 paper's deep results are reproduced (per-structure PCA on the first-token

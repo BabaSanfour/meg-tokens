@@ -370,10 +370,10 @@ class DerivativeLayout:
             subject=subject, processing=stream, description=lock, suffix="trials", extension=".tsv",
         )
 
-    def evoked_regions(self, *, subject: str, stream: str, lock: str) -> Path:
-        """One subject's twelve condition averages around one lock, in the HCP-MMP1 regions."""
+    def evoked(self, *, subject: str, stream: str, lock: str, space: str) -> Path:
+        """One subject's twelve condition averages around one lock, in source space (``HCPMMP1`` or ``fsaverage``)."""
         return self.path(
-            subject=subject, processing=stream, space="HCPMMP1", description=lock, suffix="erp", extension=".h5",
+            subject=subject, processing=stream, space=space, description=lock, suffix="erp", extension=".h5",
         )
 
     def evoked_sensors(self, *, subject: str, stream: str, lock: str) -> Path:

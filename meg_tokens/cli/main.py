@@ -17,7 +17,6 @@ from meg_tokens.core import (
     DecodingConfig,
     DecompositionConfig,
     CoregistrationConfig,
-    ERPConfig,
     EpochingConfig,
     HilbertConfig,
     LateralizedStatisticsConfig,
@@ -339,24 +338,6 @@ def build_parser() -> argparse.ArgumentParser:
 
     features = domains.add_parser("features", help="Neural feature extraction.")
     feature_commands = features.add_subparsers(dest="feature_command", required=True)
-
-    erp = feature_commands.add_parser("erp", help="Extract ERP source features.")
-    erp.add_argument("--subjects", nargs="+", required=True)
-    erp.add_argument("--run", required=True)
-    erp.add_argument("--condition")
-    erp.add_argument("--alignment", choices=EPOCH_LOCKS, default="go")
-    erp.add_argument("--source-method", default="dSPM")
-    erp.add_argument("--parc", default="HCPMMP1")
-    erp.add_argument("--feature-space", choices=["parcellated", "all_source", "volume"], default="parcellated")
-    erp.add_argument("--hemi", choices=["left", "right", "both"], default="both")
-    erp.add_argument("--label-subject")
-    erp.add_argument("--spacing")
-    erp.add_argument("--label-mode", default="mean")
-    erp.add_argument("--max-duration-samples", type=int, default=400)
-    erp.add_argument("--cutoff-before-enter-ms", type=float, default=300.0)
-    erp.add_argument("--min-rt-ms", type=float, default=100.0)
-    erp.add_argument("--source-root")
-    erp.add_argument("--behavior-root")
 
     power = feature_commands.add_parser("power", help="Extract source-space band power.")
     power.add_argument("--subjects", nargs="+", required=True)
@@ -995,32 +976,6 @@ def _meg_band_power_merge(project: ProjectConfig, args: argparse.Namespace) -> o
     ]
 
 
-def _features_erp(project: ProjectConfig, args: argparse.Namespace) -> object:
-    from meg_tokens.workflows.erp import extract_erp_features
-
-    return extract_erp_features(
-        project,
-        subjects=args.subjects,
-        settings=ERPConfig(
-            run=args.run,
-            condition=args.condition,
-            alignment=args.alignment,
-            source_method=args.source_method,
-            parc=args.parc,
-            feature_space=args.feature_space,
-            hemi=args.hemi,
-            label_subject=args.label_subject,
-            spacing=args.spacing,
-            label_mode=args.label_mode,
-            max_duration_samples=args.max_duration_samples,
-            cutoff_before_enter_ms=args.cutoff_before_enter_ms,
-            min_rt_ms=args.min_rt_ms,
-        ),
-        source_root=args.source_root,
-        behavior_root=args.behavior_root,
-    )
-
-
 def _features_power(project: ProjectConfig, args: argparse.Namespace) -> object:
     from meg_tokens.workflows.power import extract_power_features, parse_frequency_bands
 
@@ -1481,7 +1436,6 @@ _HANDLERS: dict[tuple[str, str], Handler] = {
     ("meg", "erp"): _meg_erp,
     ("meg", "band-power-means"): _meg_band_power_means,
     ("meg", "band-power-prepare"): _meg_band_power_prepare,
-    ("features", "erp"): _features_erp,
     ("features", "power"): _features_power,
     ("features", "spectral"): _features_spectral,
     ("features", "hilbert"): _features_hilbert,

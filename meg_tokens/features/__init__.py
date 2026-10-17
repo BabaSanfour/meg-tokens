@@ -6,9 +6,6 @@ from importlib import import_module
 
 
 _EXPORTS = {
-    "align_and_pad_epochs": ("meg_tokens.features.erp", "align_and_pad_epochs"),
-    "parcellate_source_estimates": ("meg_tokens.features.erp", "parcellate_source_estimates"),
-    "select_source_feature_data": ("meg_tokens.features.erp", "select_source_feature_data"),
     "compute_band_power": ("meg_tokens.features.time_frequency", "compute_band_power"),
     "compute_hilbert_band_features": ("meg_tokens.features.time_frequency", "compute_hilbert_band_features"),
     "compute_psd": ("meg_tokens.features.time_frequency", "compute_psd"),

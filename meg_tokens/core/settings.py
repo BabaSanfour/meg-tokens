@@ -114,33 +114,6 @@ class CoregistrationConfig:
 
 
 @dataclass(frozen=True)
-class ERPConfig:
-    run: str
-    condition: Optional[str] = None
-    alignment: str = "go"
-    source_method: str = "dSPM"
-    parc: str = "HCPMMP1"
-    feature_space: str = "parcellated"
-    hemi: str = "both"
-    label_subject: Optional[str] = None
-    spacing: Optional[str] = None
-    label_mode: str = "mean"
-    max_duration_samples: int = 400
-    cutoff_before_enter_ms: float = 300.0
-    min_rt_ms: float = 100.0
-
-    def __post_init__(self) -> None:
-        if self.alignment not in EPOCH_LOCKS:
-            raise ValueError(f"Unknown alignment event: {self.alignment}")
-        if self.feature_space not in {"parcellated", "all_source", "volume"}:
-            raise ValueError(f"Unknown feature space: {self.feature_space}")
-        if self.hemi not in {"left", "right", "both"}:
-            raise ValueError(f"Unknown hemisphere selection: {self.hemi}")
-        if self.max_duration_samples <= 0:
-            raise ValueError("max_duration_samples must be positive")
-
-
-@dataclass(frozen=True)
 class PowerConfig:
     run: str
     condition: Optional[str] = None

@@ -190,15 +190,20 @@ combined:
 
 ```
 derivatives/sub-H01/meg/sub-H01_task-tokens_proc-dss_space-HCPMMP1_desc-enter_erp.h5
+derivatives/sub-H01/meg/sub-H01_task-tokens_proc-dss_space-fsaverage_desc-enter_erp.h5
 derivatives/sub-H01/meg/sub-H01_task-tokens_proc-dss_desc-enter_ave.fif
 ```
 
-The HDF5 file holds `erp`, conditions x 360 HCP-MMP1 regions x times,
-float32, signed (sLORETA normal component at `nave = 1`, sign-flipped region
-mean), NaN for a condition with no trial; `n_trials`, `conditions` (named
-`<speed>-<class>-<side>`, e.g. `fast-easy-right`), `sources` and `times`. The
-`-ave.fif` holds the sensor averages, one MNE evoked per condition with trials,
-its `comment` the condition name.
+All are signed sLORETA estimates at `nave = 1`, NaN for a condition with no
+trial. `space-HCPMMP1` holds `erp`, conditions x 360 regions x times (cortex
+normal component, sign-flipped region mean), and `deep`, conditions x 17
+structures x 3 x times (the mean of each of head x, y, z over the structure's
+sources, `deep_axes`), with `sources`, `deep_sources`, `n_trials`,
+`conditions` (named `<speed>-<class>-<side>`, e.g. `fast-easy-right`) and
+`times`. `space-fsaverage` holds `erp`, conditions x 8,196 `oct6` sources x
+times (cortex normal component), with `vertices_lh`, `vertices_rh`. The
+`-ave.fif` holds the sensor averages, one MNE evoked per condition with
+trials, its `comment` the condition name.
 
 ## Stage 0: Raw BIDSification
 

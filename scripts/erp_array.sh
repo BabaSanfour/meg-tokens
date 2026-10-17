@@ -11,7 +11,7 @@
 #SBATCH --job-name=erp
 #SBATCH --partition=cpubase_bycore_b1
 #SBATCH --cpus-per-task=4
-#SBATCH --mem=16000M
+#SBATCH --mem=24000M
 #SBATCH --time=02:00:00
 #SBATCH --output=logs/erp-%A_%a.out
 
