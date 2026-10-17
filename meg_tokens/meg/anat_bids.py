@@ -28,7 +28,6 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Optional
 
-import mne
 from mne_bids import BIDSPath, write_anat
 
 from meg_tokens.core import normalize_subject_id

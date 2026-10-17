@@ -35,11 +35,6 @@ from meg_tokens.behavior.math.inference import (
     subject_bootstrap,
 )
 from meg_tokens.behavior.math.evidence import FIRST_ORDER_TOKEN_LOG_LR
-from meg_tokens.behavior.math.probability import (
-    TOTAL_TOKENS,
-    success_probability,
-    success_probability_profile,
-)
 from meg_tokens.behavior.schema import (
     parse_token_directions,
     validate_boolean_values,

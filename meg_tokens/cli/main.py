@@ -282,6 +282,18 @@ def build_parser() -> argparse.ArgumentParser:
     source.add_argument("--condition")
     source.add_argument("--streams", nargs="+", choices=STREAMS, default=list(STREAMS))
 
+    band_power = meg_commands.add_parser(
+        "band-power",
+        help="Single-trial band power in source space, per subject, stream and lock.",
+    )
+    band_power.add_argument("--subjects", nargs="+", required=True)
+    band_power.add_argument("--streams", nargs="+", choices=STREAMS, default=list(STREAMS))
+    band_power.add_argument("--locks", nargs="+", choices=EPOCH_LOCKS, help="default: go, decision, enter")
+    band_power.add_argument(
+        "--fsaverage-root",
+        help="also write every trial's power on fsaverage under this root (about 24 TB for the cohort)",
+    )
+
     features = domains.add_parser("features", help="Neural feature extraction.")
     feature_commands = features.add_subparsers(dest="feature_command", required=True)
 
@@ -870,6 +882,18 @@ def _meg_source(project: ProjectConfig, args: argparse.Namespace) -> object:
     )
 
 
+def _meg_band_power(project: ProjectConfig, args: argparse.Namespace) -> object:
+    from meg_tokens.meg.band_power import LOCKS
+    from meg_tokens.workflows.band_power import band_power_subject
+
+    return [
+        band_power_subject(
+            project, subject, streams=args.streams, locks=args.locks or LOCKS, fsaverage_root=args.fsaverage_root,
+        )
+        for subject in args.subjects
+    ]
+
+
 def _features_erp(project: ProjectConfig, args: argparse.Namespace) -> object:
     from meg_tokens.workflows.erp import extract_erp_features
 
@@ -1350,6 +1374,7 @@ _HANDLERS: dict[tuple[str, str], Handler] = {
     ("meg", "epoch"): _meg_epoch,
     ("meg", "source-models"): _meg_source_models,
     ("meg", "source"): _meg_source,
+    ("meg", "band-power"): _meg_band_power,
     ("features", "erp"): _features_erp,
     ("features", "power"): _features_power,
     ("features", "spectral"): _features_spectral,

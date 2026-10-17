@@ -3,12 +3,11 @@
 The go cue is the one event matched to the behavioral log trial by trial, so
 it anchors every lock: the others sit at a behavioral offset from it (button
 press at ``rawRT``, feedback at ``tTrialEnd - tGO``, decision at ``dt_ms``,
-the press minus the subject's hand-specific motor baseline). Epochs are cut
-from the continuous recording with a margin on both sides of the analysis
-window, so band-pass and Hilbert edges fall outside it; an epoch is dropped
-when its analysis window, not its margin, touches a ``BAD`` annotation or
-leaves the recording. Near the ends of a recording the margin is shorter, and
-zero beyond the last recorded sample. Then an epoch is dropped as an outlier
+the press minus the subject's hand-specific motor baseline). An epoch spans
+its lock's analysis window and no more: what is filtered, band power, is
+filtered on the continuous recording (``meg.band_power``), which gives every
+trial the filter's full span. An epoch is dropped when its window touches a
+``BAD`` annotation or leaves the recording. Then an epoch is dropped as an outlier
 when any magnetometer's peak-to-peak over its analysis window is far above
 that sensor's level across the cohort: what remains after the marks is
 abnormal against the other people, not within its own recording.
@@ -39,7 +38,6 @@ WINDOWS = {
     "feedback": (-1.5, 2.0),
     "decision": (-1.5, 2.0),
 }
-PADDING = 1.0
 
 # An epoch is an outlier when the log peak-to-peak of any magnetometer over its
 # analysis window exceeds that sensor's cohort median by this many robust
@@ -226,45 +224,23 @@ def lock_offset(metadata: pd.DataFrame, lock: str) -> np.ndarray:
     return offset_ms / 1000.0
 
 
-def epoch(raw: mne.io.BaseRaw, go: np.ndarray, metadata: pd.DataFrame, lock: str) -> mne.EpochsArray:
-    """Padded epochs around one lock, dropped where the analysis window touches a mark.
+def epoch(raw: mne.io.BaseRaw, go: np.ndarray, metadata: pd.DataFrame, lock: str) -> mne.Epochs:
+    """Epochs over one lock's analysis window, dropped where it touches a mark or leaves the recording.
 
-    An epoch is dropped when its analysis window touches a mark or leaves the
-    recording. Its margin is kept as far as the recording reaches and zero
-    beyond; ``pad_before_s`` and ``pad_after_s`` give the recorded part, and
-    only that part may be filtered. The reference sensors are kept: the
-    recordings are at compensation grade 3, and the forward model needs them to
-    apply the same compensation.
+    The reference sensors are kept: the recordings are at compensation grade 3,
+    and the forward model needs them to apply the same compensation.
     """
     offset = lock_offset(metadata, lock)
     defined = np.isfinite(offset)
     onset = go[defined] + offset[defined]
     metadata = metadata.loc[defined].reset_index(drop=True).assign(go_onset_s=go[defined], lock_onset_s=onset)
-    sfreq = raw.info["sfreq"]
-    samples = raw.first_samp + np.round(onset * sfreq).astype(int)
+    samples = raw.first_samp + np.round(onset * raw.info["sfreq"]).astype(int)
     events = np.column_stack([samples, np.zeros_like(samples), np.ones_like(samples)])
     tmin, tmax = WINDOWS[lock]
-    kept = mne.Epochs(
+    return mne.Epochs(
         raw, events, {lock: 1}, tmin=tmin, tmax=tmax, baseline=None, picks=["meg", "ref_meg"],
-        reject_by_annotation=True, metadata=metadata, preload=False, verbose=False,
-    ).drop_bad(verbose=False)
-
-    # MNE's sample grid for the padded window, as mne.Epochs would cut it.
-    start = int(round((tmin - PADDING) * sfreq))
-    n_times = int(round((tmax + PADDING) * sfreq)) + 1 - start
-    data = np.zeros((len(kept), len(kept.ch_names), n_times))
-    pad = np.empty((len(kept), 2))
-    for i, first in enumerate(kept.events[:, 0] - raw.first_samp + start):
-        lo, hi = max(first, 0), min(first + n_times, raw.n_times)
-        data[i, :, lo - first:hi - first] = raw.get_data(picks=kept.ch_names, start=lo, stop=hi)
-        pad[i] = PADDING - (lo - first) / sfreq, PADDING - (first + n_times - hi) / sfreq
-
-    epochs = mne.EpochsArray(
-        data, kept.info, kept.events, tmin=start / sfreq, event_id=kept.event_id, baseline=None,
-        metadata=kept.metadata.assign(pad_before_s=pad[:, 0], pad_after_s=pad[:, 1]),
-        selection=kept.selection, drop_log=kept.drop_log, raw_sfreq=sfreq, on_missing="ignore", verbose=False,
+        reject_by_annotation=True, metadata=metadata, preload=True, verbose=False,
     )
-    return epochs.set_annotations(kept.annotations)
 
 
 def amplitudes(epochs: mne.BaseEpochs) -> pd.DataFrame:
@@ -273,9 +249,7 @@ def amplitudes(epochs: mne.BaseEpochs) -> pd.DataFrame:
     One row per epoch, one column per magnetometer, named without its
     system suffix so that recordings and people line up.
     """
-    lock = next(iter(epochs.event_id))
-    tmin, tmax = WINDOWS[lock]
-    window = epochs.copy().pick("mag").crop(tmin, tmax)
+    window = epochs.copy().pick("mag")
     names = [name.split("-")[0] for name in window.ch_names]
     return pd.DataFrame(np.log10(np.ptp(window.get_data(), axis=2)), columns=names)
 
@@ -308,12 +282,10 @@ def save_epochs(epochs: mne.Epochs, path: Path, record: dict) -> Path:
         **record,
         "lock": lock,
         "analysis_window_s": list(WINDOWS[lock]),
-        "padding_s": PADDING,
         "outlier_sd": OUTLIER_SD,
         "sfreq": float(epochs.info["sfreq"]),
         "n_events": len(epochs.drop_log),
         "n_epochs": len(epochs),
-        "n_short_padding": int(((epochs.metadata["pad_before_s"] < PADDING) | (epochs.metadata["pad_after_s"] < PADDING)).sum()),
         "dropped": dict(sorted(reasons.items())),
     }
     with sidecar_path(path).open("w", encoding="utf-8") as handle:
@@ -322,7 +294,7 @@ def save_epochs(epochs: mne.Epochs, path: Path, record: dict) -> Path:
 
 
 __all__ = [
-    "WINDOWS", "PADDING", "OUTLIER_SD", "OUTLIER_REASON", "EPOCH_CONDITIONS", "KNOWN_TRAILING_TRIAL_MISMATCHES", "KNOWN_UNRECOVERABLE_TRIALS",
+    "WINDOWS", "OUTLIER_SD", "OUTLIER_REASON", "EPOCH_CONDITIONS", "KNOWN_TRAILING_TRIAL_MISMATCHES", "KNOWN_UNRECOVERABLE_TRIALS",
     "KNOWN_GO_RECONSTRUCTION_RUNS", "read_triggers", "reconstruct_missing_go", "align_go",
     "trial_metadata", "lock_offset", "epoch", "amplitudes", "outlier_thresholds", "drop_outliers", "save_epochs",
 ]

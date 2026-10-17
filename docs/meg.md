@@ -31,11 +31,16 @@ the workflow (§4, Preprocessing).
 **Epoching — complete.** All 256 Fast and Slow recordings, both streams, four
 locks, with the cohort outlier rule (§4, Epoching).
 
-**Source reconstruction — to rerun with the deep structures.** The cortical
-stage ran on the cohort (32 subject models, 256 forward models, 512 inverse
-operators, both streams); the source space now adds the paper's 17 deep
-structures (§4, Source reconstruction), and every model, forward and inverse
-is rebuilt. Zero features.
+**Source reconstruction — complete, with the deep structures.** 32 subject
+models (the cortex and the paper's 17 deep structures), 256 forward models,
+512 inverse operators and 512 LCMV beamformers (both streams), through the
+workflow (§4, Source reconstruction).
+
+**Band power — built, not yet run on the cohort.** Single-trial power from the
+continuous cleaned runs through MNE (§2, Band power), checked on one run of
+H01 against MNE's own estimate. Epochs no longer carry a margin; the epoch
+stage is to be re-run. The audit behind the analysis stage:
+`docs/analysis_audit.md`.
 
 **Downstream helpers with no callers.** `psd_description`
 (`workflows/spectral.py`), `run_batch_dpca` (`workflows/decomposition.py`),
@@ -65,14 +70,17 @@ Thiery, Rainville, Cisek, Jerbi (2022),
 | EOG/ECG | 2 bipolar EOG + 1 ECG | `EEG057` vEOG, `EEG058` hEOG, `EEG059` ECG |
 | Epoch locks | token jump, button press, feedback, decision time | `go`, `enter`, `feedback`, `decision` |
 | Epoch windows | −500/+1000 token; −1500/+2000 press/fb/DT | per-lock, matching |
-| Noise covariance | baseline [−200, 0] ms, shrunk | empty-room through the trunk's temporal steps, `diagonal_fixed`, passed through each stream's cleaning map |
-| BEM | 3-layer, [0.3, 0.006, 0.3] | same |
+| Noise covariance | baseline [−200, 0] ms, shrunk (code: empty room, shrunk) | empty-room through the trunk's temporal steps, `diagonal_fixed`, passed through each stream's cleaning map |
+| BEM | 3-layer, [0.3, 0.006, 0.3] (code: 1-layer) | 3-layer |
 | Source space | ~8196 vertices; its code adds 17 `aseg` structures on a 5 mm grid for the subcortical analysis (1-layer BEM, free orientation, no depth weighting, data at 200 Hz) | `oct6` = 8196, and the same 17 structures, 5 mm, free orientation, in the 3-layer BEM with depth weighting |
-| Inverse | dSPM, λ² = 1, single-trial | operator stored per run and stream; method and λ² chosen where it is applied (sLORETA measured best) |
+| Inverse | dSPM, λ² = 1, single-trial (code: λ² = 1/9, normal orientation, on the cortex) | operator stored per run and stream; method and λ² chosen where it is applied (sLORETA measured best) |
 | Bands | FOOOF: θ5–8, α9–13, β16–24, γ30–60, hγ60–90 | same |
-| Power | FIR1 order 3 + Hilbert, 500 ms / 50 ms step | Hilbert, same windowing |
-| PCA | source power, 12 classes, top 20 PCs | same, on the corrected class frame |
-| Decoding | LDA, LOSO, 1000 permutations | same |
+| Power | "FIR1 order 3" + Hilbert, 500 ms / 50 ms step (code: FIR of 3 cycles of the low band edge, \|Hilbert\|², no baseline, log or z-score before PCA) | Hilbert, same windowing |
+| PCA | source power, 12 classes, top 20 PCs (code: the grand average over 28 subjects of the 12 condition means, a (12·T) × 8196 matrix, centred; each subject projected uncentred) | same, on the corrected class frame |
+| Decoding | LDA, LOSO, 1000 permutations (code: one PC per time bin, condition means as samples, 95 permutations) | same |
+
+"code:" marks where the archived scripts behind the paper did otherwise than
+it states (`docs/analysis_audit.md`, section 4).
 
 ---
 
@@ -101,22 +109,75 @@ read against that stream's weakness.
 **Applying the inverse → sLORETA, λ² = 1, normal orientation, two spaces.**
 Each analysis applies the stored operator with sLORETA (no peak error, the
 spread and motor lateralisation of dSPM, the stronger visual response; §4,
-Source reconstruction) at λ² = 1, the paper's value, which the motor measure
-favours over 1/9. The normal component keeps the sign, so band-pass and
-Hilbert envelope are valid on it. Every result is computed in both spaces:
-the 8,196 sources morphed to `fsaverage` (`oct6`), and the 360 regions of the
-HCP multimodal parcellation (HCP-MMP1.0, `HCPMMP1`) morphed onto each
-subject's own cortex, one sign-flipped time course per region. 360 regions
-exceed the data's rank (246 DSS, 265 ICA), so neighbouring regions are not
-independent and region-level statistics must not count them as if they were.
-The 17 deep structures have no surface to be normal to: their orientation is
-free, band power there is the sum of the three orientations' envelopes, and
-each structure is one region, its sources found in the subject's own `aseg`.
+Source reconstruction) at λ² = 1, the value the paper states (its code used
+1/9), which the motor measure favours over 1/9. MNE refuses a normal
+orientation on a mixed source space, so the estimate is taken with all three
+orientations (`apply_inverse_epochs`, `pick_ori="vector"`) and each cortical
+source projected onto its normal; the deep sources keep their three. Every cortical result is computed in both
+spaces: the 8,196 sources morphed to `fsaverage` (`oct6`), and the 360 regions
+of the HCP multimodal parcellation (HCP-MMP1.0, `HCPMMP1`) morphed onto each
+subject's own cortex. 360 regions exceed the data's rank (246 DSS, 265 ICA), so
+neighbouring regions are not independent and region-level statistics must not
+count them as if they were. The 17 deep structures have no surface to be
+normal to: their orientation is free, and each structure is one region, its
+sources found in the subject's own `aseg`.
+
+**Band power → from the continuous runs, raw, at full rate.**
+- Bands θ 5–8, α 9–13, β 16–24, γ 30–60, high γ 60–90 Hz, each a zero-phase
+  FIR with explicit transitions (1 Hz for θ and α, 2 Hz for β, 5 Hz for γ and
+  high γ), so no two bands overlap; MNE's default transitions make γ and high
+  γ share 52–68 Hz.
+- Band-pass and Hilbert on each continuous cleaned run in sensor space
+  (`Raw.filter`, `Raw.apply_hilbert`), trials cut from it at the kept epochs'
+  events (`mne.Epochs`), the inverse applied to the complex trials
+  (`apply_inverse_epochs`; exact, the inverse being linear), power = \|z\|².
+  Filtering the whole run gives every trial the full filter span; a window
+  within half a filter length of a `BAD_jump` or the recording's edge is
+  invalid (NaN).
+- A region's power is the mean of its sources' power
+  (`extract_label_time_course`, `mode="mean"`, on the power), which has no
+  sign to cancel and commutes with windowing and morphing; a deep structure's
+  is the mean over its sources of the summed power of the three orientations,
+  which does not depend on the axes (the same call, with the subject's
+  `aseg`). `fsaverage` power comes from `SourceMorph.apply` on the power. One sign-flipped time course per region is kept
+  for connectivity, which needs phase.
+- Stored at 600 Hz, linear, unnormalised: the 360 regions and 17 deep
+  structures for every trial on scratch; every trial's 8,196 `fsaverage`
+  sources (power morphed, never signed time courses) in `/project`, one HDF5
+  file per subject, stream and lock (192 files, about 24 TB). Lower rates are
+  tested against it later.
+- Normalisation belongs to each analysis: log10 power centred per subject,
+  region, band and stream over all its trials and times (main); raw power (the
+  paper's route); dB against each trial's pre-token baseline (the trajectory
+  primer's). A pre-trial baseline would remove a Fast/Slow difference present
+  before the trial, the effect under test.
+- First run: both streams, the `go`, `decision` and `enter` locks.
+
+**Deep structures → the paper's analyses replicated, then measured.** The
+paper's deep results are reproduced (per-structure PCA on the first-token
+lock, Fast/Slow components in β, γ and high γ, the cortex-wide PCA's
+"subcortical" loadings), with its two code faults corrected (power from
+oriented sources, deep sources indexed as such), and each result is measured
+four ways: against a forward simulation of the cortical effect through each
+subject's leadfield and this pipeline, with the LCMV beamformer, in the 23
+without tonic neck muscle, and in both streams. What survives is reported.
+
+**Code → MNE-Python wherever it has the function.** Hand-written numerics
+only where MNE has none, said where they are. The band-power stage could apply
+the operator as one matrix 6.7× faster to the same numbers; MNE's own
+`apply_inverse_epochs` is used instead.
+
+**Analyses → coco-pipe.** PCA trajectories, decoding, statistics and reports
+use coco-pipe (pinned in `pyproject.toml`); this repository keeps the glue it
+lacks (the inverse, band power, storage). PCA runs both ways: the paper's
+(grand average, raw power) and the trajectory primer's (subject × condition
+means, the participant as unit, permutations within participant). Decoding
+permutes labels within subject, and Fast/Slow by run within subject.
 
 **Storage → no single-trial source estimates.** An inverse operator is one
-matrix per run and stream (512 files); each analysis applies it to the epochs,
+matrix per run and stream (512 files); each analysis applies it to the data,
 which takes seconds. Stored single-trial estimates with their 1 s margins would
-be about 11 TB in 350,000 files.
+be about 11 TB in 350,000 files; band power is stored instead.
 
 ---
 
@@ -139,6 +200,30 @@ Slow 3/4 are grade 0; the other 315 are grade 3. Corrected at read time (see Pre
 because CTF stores compensation in the `.res4` header and applies it on read —
 it cannot be baked into a staged `.ds` without abandoning the CTF-native
 format.
+
+**5. The paper's deep-structure claims rest on methods that cannot place
+them.** Its headline that "higher frequency components in subcortical areas
+reflect the adjustment of speed-accuracy tradeoff policies" has two parts.
+The whole-cortex PCA put the top loadings of beta PC3, gamma PC2 and theta PC1
+(Fast against Slow) "mostly" in subcortical regions, but its source space had
+only cortical sources, and the HCP-MMP1 grouped atlas has no subcortical
+region: the only label that is not cortex is `???`, the medial-wall cut, most
+likely what was counted. A PCA inside each of six deep structures found
+Fast/Slow components in the cerebellum, pallidum, caudate and amygdala (the
+discussion adds the thalamus) in β, γ and high γ, as "a shift in power… even
+before the start of the trial". Through a minimum-norm operator those
+structures other than the cerebellum are 86–93% cortex (§4, Source
+reconstruction); the cerebellum lies next to the neck muscles the paper's
+cleaning left in, and a sustained power shift between blocks in the muscle
+bands is what tonic neck tension would give. Any analysis that touches the
+speed-accuracy effect or a deep structure tests this: Fast minus Slow β, γ
+and high-γ power, before the trial and around the locks, in the trunk, DSS
+and ICA, through both the sLORETA operator and the LCMV beamformer, in the
+cerebellum against the cortex, the nine with tonic muscle against the 23. Its
+code adds two more reasons: the deep power was band-passed and
+Hilbert-transformed from non-negative source magnitudes (no orientation
+picked), and the press-locked deep PCA indexed cortical sources
+(`DEEP_enter.m`, without the 8,196-source offset).
 
 ---
 
@@ -421,16 +506,13 @@ only, so press, feedback and decision sit at their behavioral offset from the
 go cue. Metadata: the trial features (corrected-frame trial class, condition,
 choice, correctness, `dt_ms`, SPD) and the trial timings.
 
-**Padding.** Each epoch is cut with 1 s of margin on both sides of its
-analysis window. Band power is computed in source space after the inverse —
-band-pass, then Hilbert envelope — and the margins are trimmed after the
-envelope, so filter edges fall outside the analysed time. Near the start or
-end of a recording the margin is as long as the recording allows: the samples
-beyond it are zero, each epoch's metadata gives its recorded margin
-(`pad_before_s`, `pad_after_s`), and only the recorded span is filtered.
+**No padding.** An epoch spans its lock's analysis window and no more. What is
+filtered is filtered on the continuous recording (band power: §2, Band power),
+which gives every trial the filter's full span; the epochs supply which trials
+are kept, where they sit in the run, and their metadata.
 
-**Epoch rejection.** An epoch is dropped when its analysis window (not its
-margins) touches any bad-segment annotation: `BAD_jump`, `BAD_muscle`,
+**Epoch rejection.** An epoch is dropped when its analysis window touches any
+bad-segment annotation: `BAD_jump`, `BAD_muscle`,
 `BAD_peak` or `BAD_flat`, or runs past the recording. An epoch the marks
 keep is then dropped as an outlier when the log peak-to-peak of any
 magnetometer over its analysis window exceeds that sensor's cohort median by
@@ -446,12 +528,12 @@ equalised within each subject.
 On all 256 Fast and Slow recordings (DSS stream; the ICA stream loses up to
 0.3 points more on every lock):
 
-| Lock | Events | Kept | Lost | Window touches a mark | Window runs past the recording | Outlier | Kept with a short margin |
-|---|---|---|---|---|---|---|---|
-| go | 16,290 | 15,025 | 7.8% | 978 | 54 | 233 | 32 |
-| enter | 16,280 | 14,423 | 11.4% | 1,483 | 168 | 206 | 43 |
-| feedback | 16,290 | 14,358 | 11.9% | 1,533 | 189 | 210 | 44 |
-| decision | 16,280 | 14,471 | 11.1% | 1,453 | 152 | 204 | 44 |
+| Lock | Events | Kept | Lost | Window touches a mark | Window runs past the recording | Outlier |
+|---|---|---|---|---|---|---|
+| go | 16,290 | 15,025 | 7.8% | 978 | 54 | 233 |
+| enter | 16,280 | 14,423 | 11.4% | 1,483 | 168 | 206 |
+| feedback | 16,290 | 14,358 | 11.9% | 1,533 | 189 | 210 |
+| decision | 16,280 | 14,471 | 11.1% | 1,453 | 152 | 204 |
 
 Fast loses 7.9% of go-locked epochs and 11.5–12.0% on the longer locks, Slow
 7.5% and 10.7–11.7%, H10 making most of the difference. Per subject the median
@@ -476,8 +558,7 @@ which changes them: the kept epochs equal an independent recomputation of the
 rule in MNE's sample arithmetic; each lock sits at its behavioral offset; go
 cues fall 2.2 ms after trial start plus `tGO` at the median (8.7 ms at worst),
 so no trial is mispaired; the trigger channel and `events.tsv` agree within half
-a sample; the recorded part of each epoch equals the cleaned recording sample
-for sample and the rest is zero; 299 channels at compensation grade 3, 600 Hz.
+a sample; each epoch equals the cleaned recording sample for sample; 299 channels at compensation grade 3, 600 Hz.
 On the final run the thresholds recomputed from the 32 subjects' amplitude
 tables equal the stored ones, and every file's outlier and kept counts equal
 the recomputation.
@@ -652,6 +733,23 @@ overestimates its net signal (Samuelsson et al., 2020); its magnitudes are
 upper bounds. The choices below were measured on the cortex-only operator; the
 volume adds sources that share the data's rank, and the cortical figures are
 not yet re-measured on the final operator.
+
+On the cohort (all 512 inverses, median subject over its runs; 1,199–1,777
+deep sources per subject, every structure present in all 32):
+
+| Structure (both sides) | own share, DSS / ICA | from the cortex | its sources peaking inside it | peaking in the cortex |
+|---|---|---|---|---|
+| caudate, putamen, pallidum, accumbens | 0.1–1.1% | 86–93% | 0% | 100% |
+| thalamus | 0.2% | 88–89% | 0% | 100% |
+| amygdala, hippocampus | 0.7–1.0% | 77–80% | 0% | 100% |
+| brainstem | 6.6 / 5.8% | 50–57% | 10 / 7% | 86–88% |
+| cerebellar cortex | 54 / 47% (40–59% across subjects) | 32–38% | 45 / 37% | 55–62% |
+
+No cortical source peaks inside a deep structure: the leak runs from the deep
+structures into the cortex, not the reverse. Through the minimum-norm
+operator the basal ganglia, thalamus, amygdala and hippocampus cannot be told
+from the cortex; the cerebellum is the one deep structure that keeps about
+half of its estimate, and DSS keeps more of it than ICA in all 32.
 
 **The empty room is taken through the trunk's temporal steps.** All 26 empty
 rooms were acquired at grade 0, unfiltered, at 1200 Hz; the cleaned

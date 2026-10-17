@@ -34,7 +34,8 @@ dependencies = [
     "scikit-learn>=1.0.0",
     "mne-connectivity>=0.5.0",
     "specparam>=2.0.0rc0",
-    "xarray>=2023.1.0"
+    "xarray>=2023.1.0",
+    "coco-pipe @ git+https://github.com/BabaSanfour/coco-pipe@7f17473e94639d932982cd1fdbb1057c97ecc371"
 ]
 
 [project.scripts]
@@ -43,6 +44,8 @@ meg-tokens = "meg_tokens.cli:main"
 [project.optional-dependencies]
 dev = [
     "pytest>=7.0.0",
+    "ruff>=0.17.1",
+    "pre-commit>=4.0.0",
     "black>=22.0.0",
     "isort>=5.10.0",
     "ipykernel>=6.0.0"
@@ -58,6 +61,14 @@ modeling = [
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["meg_tokens*"]
+
+[tool.ruff]
+extend-exclude = ["archive"]
+
+[tool.ruff.lint]
+# Pyflakes (undefined names, unused imports and variables) and syntax errors:
+# the errors that leave dead code behind. Style is not enforced.
+select = ["F", "E9"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

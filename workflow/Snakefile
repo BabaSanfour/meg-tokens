@@ -3,6 +3,7 @@
 from pathlib import Path
 
 from meg_tokens.io import DerivativeLayout
+from meg_tokens.meg.band_power import LOCKS as BAND_POWER_LOCKS, PARCELLATION
 from meg_tokens.meg.epoching import EPOCH_CONDITIONS
 from meg_tokens.meg.meg_bids import raw_meg_path, raw_meg_sessions
 from meg_tokens.behavior.analyses.sequential_sampling import ROBUSTNESS_CONFIGURATIONS
@@ -66,6 +67,17 @@ SOURCE_TARGETS = [
     if spec.condition in EPOCH_CONDITIONS
     for stream in STREAMS
 ]
+# Band power: the regions on the derivatives; every trial on fsaverage, about
+# 24 TB for the cohort, only where `band_power.fsaverage_root` names a place.
+FSAVERAGE_POWER_ROOT = config.get("band_power", {}).get("fsaverage_root")
+BAND_POWER_PATTERN = SUBJECT_DERIVATIVE + "_proc-{stream}_space-{space}_desc-{lock}_power.h5"
+BAND_POWER_TRIALS_PATTERN = SUBJECT_DERIVATIVE + "_proc-{stream}_desc-{lock}_trials.tsv"
+FSAVERAGE_POWER_PATTERN = (
+    None if FSAVERAGE_POWER_ROOT is None
+    else str(Path(FSAVERAGE_POWER_ROOT) / "derivatives" / "sub-{subject}" / "meg"
+             / "sub-{subject}_task-tokens_proc-{stream}_space-fsaverage_desc-{lock}_power.h5")
+)
+BAND_POWER_TARGETS = expand(BAND_POWER_TRIALS_PATTERN, subject=SUBJECTS, stream=STREAMS, lock=BAND_POWER_LOCKS)
 # The behavioral stages each write many tables or figures, named inside the
 # package. The DAG tracks them by one marker per job under the workflow state.
 SSM = config.get("ssm", {})
@@ -94,6 +106,11 @@ rule all:
     input:
         SOURCE_TARGETS,
         BEHAVIOR_REPORT_TARGET,
+
+
+rule band_power_all:
+    input:
+        BAND_POWER_TARGETS,
 
 
 rule preprocess_all:
@@ -396,6 +413,40 @@ rule source:
           --run {wildcards.run_number:q} \
           --condition {wildcards.condition:q} \
           --streams {params.streams}
+        """
+
+
+def subject_inverses(wildcards):
+    return [
+        str(LAYOUT.inverse(subject=wildcards.subject, run=spec.run, condition=spec.condition, stream=stream))
+        for spec, _ in raw_meg_sessions(BIDS_ROOT, wildcards.subject)
+        if spec.condition in EPOCH_CONDITIONS
+        for stream in STREAMS
+    ]
+
+
+rule band_power:
+    input:
+        epochs=str(EPOCHS_STATE),
+        inv=subject_inverses,
+    output:
+        regions=expand(BAND_POWER_PATTERN, stream=STREAMS, space=PARCELLATION, lock=BAND_POWER_LOCKS, allow_missing=True),
+        trials=expand(BAND_POWER_TRIALS_PATTERN, stream=STREAMS, lock=BAND_POWER_LOCKS, allow_missing=True),
+        fsaverage=(
+            expand(FSAVERAGE_POWER_PATTERN, stream=STREAMS, lock=BAND_POWER_LOCKS, allow_missing=True)
+            if FSAVERAGE_POWER_PATTERN else []
+        ),
+    params:
+        streams=" ".join(STREAMS),
+        locks=" ".join(BAND_POWER_LOCKS),
+        fsaverage=f"--fsaverage-root {FSAVERAGE_POWER_ROOT}" if FSAVERAGE_POWER_ROOT else "",
+    shell:
+        """
+        meg-tokens --config {PROJECT_CONFIG:q} meg band-power \
+          --subjects {wildcards.subject:q} \
+          --streams {params.streams} \
+          --locks {params.locks} \
+          {params.fsaverage}
         """
 
 

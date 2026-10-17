@@ -17,7 +17,6 @@ tests read a real run from this checkout's configured data (see
 from __future__ import annotations
 
 
-import pytest
 from pandas.testing import assert_frame_equal
 
 from meg_tokens.behavior.classification import classify_trial, classify_trials

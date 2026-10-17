@@ -28,7 +28,6 @@ from meg_tokens.reports.panels import (
     group_line,
     paired_slope,
     subject_strip,
-    within_subject_error,
 )
 
 # The fixed-bound integrator every candidate is scored against.

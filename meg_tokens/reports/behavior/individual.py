@@ -4,15 +4,13 @@ from __future__ import annotations
 
 from typing import Any
 
-import numpy as np
 import pandas as pd
 from matplotlib.figure import Figure
 from matplotlib.ticker import MaxNLocator
-from scipy import stats as scipy_stats
 
 from meg_tokens.reports import style
 from meg_tokens.reports.annotations import (
-    ALPHA, format_p, format_r, marker_or_missing,
+    ALPHA, format_r, marker_or_missing,
 )
 from meg_tokens.reports.behavior._tables import BehaviorTableSet
 from meg_tokens.reports.panels import correlation_heatmap, scatter_fit

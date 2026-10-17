@@ -90,3 +90,10 @@ set-resources:
     slurm_partition: cpubase_bycore_b1
     mem_mb: 16000
     runtime: 60
+  # One subject: eight runs, both streams, three locks. Measured locally: a run
+  # takes about 4.5 min per stream for the regions; fsaverage adds about
+  # 750 GB of writes per subject.
+  band_power:
+    slurm_partition: cpubase_bycore_b2
+    mem_mb: 32000
+    runtime: 600

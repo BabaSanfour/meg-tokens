@@ -93,15 +93,12 @@ trials. The recordings carry no press or feedback trigger, so the other locks
 sit at a behavioral offset from the go cue (`rawRT`, `tTrialEnd - tGO`,
 `dt_ms`); a trial without a response has no `enter` or `decision` epoch. Epochs keep the MEG and reference sensors, carry the trial features
 plus `tGO`, `tEnterTarget`, `tTrialEnd`, `go_onset_s` and `lock_onset_s` as
-metadata, and span the lock's analysis window plus 1 s on each side. An epoch
-whose analysis window touches a `BAD` annotation or runs past the recording is
-dropped and its reason kept in the drop log. Near the ends of a recording the
-margin is shorter: `pad_before_s` and `pad_after_s` give the recorded margin of
-each epoch, the samples beyond it are zero, and only the recorded span may be
-filtered. An epoch the marks keep is still dropped, as `OUTLIER`, when any
+metadata, and span the lock's analysis window. An epoch whose window touches a
+`BAD` annotation or runs past the recording is dropped and its reason kept in
+the drop log; anything filtered is filtered on the continuous recording, not
+on the epochs. An epoch the marks keep is still dropped, as `OUTLIER`, when any
 magnetometer's log peak-to-peak over its analysis window exceeds that sensor's
-cohort threshold for the stream and lock. The sidecar records the window, the
-padding, `outlier_sd`, the counts, the epochs with a short margin, the go cues
+cohort threshold for the stream and lock. The sidecar records the window, `outlier_sd`, the counts, the go cues
 reconstructed, trials excluded or truncated, and the dropped epochs by reason.
 A file whose rejection kept no epoch (16 of 2,048, all H10's) is still written
 with its sidecar (`n_epochs` 0) as the record of why; MNE reads it back without
@@ -152,6 +149,31 @@ of its sLORETA estimate's cross-talk from itself, the cortex and the other
 structures (`own`, `cortex`, `other_deep`), the shares of its sources whose
 point-spread peaks inside it and in the cortex (`found`, `found_in_cortex`),
 and the cortical sources whose point-spread peaks inside it (`ghosts`).
+
+## Band-power derivatives
+
+Per subject, stream and lock (`go`, `decision`, `enter`): every kept trial of
+the eight Fast and Slow runs, in run order, with one table of its trials.
+
+```
+derivatives/sub-H01/meg/sub-H01_task-tokens_proc-dss_space-HCPMMP1_desc-go_power.h5
+derivatives/sub-H01/meg/sub-H01_task-tokens_proc-dss_desc-go_trials.tsv
+<fsaverage_root>/derivatives/sub-H01/meg/sub-H01_task-tokens_proc-dss_space-fsaverage_desc-go_power.h5
+```
+
+Each HDF5 file holds `power`, trials x bands x sources x times, float32,
+linear (|z|² of the sLORETA estimate at λ² = 1), at 600 Hz over the lock's
+analysis window, chunked one trial and band at a time; `times` (s from the
+lock), `bands`, `band_edges_hz` and `sources`. In `space-HCPMMP1` the sources
+are the 360 HCP-MMP1 regions (left then right, as the annotation orders them)
+followed by the 17 deep structures in `VOLUME_LABELS` order, and `n_sources`
+gives how many of the subject's sources each averages; in `space-fsaverage`
+they are the 8,196 `oct6` sources, left then right. A sample whose filter
+reaches a flux jump or the recording's end is NaN, as is a region with no
+source. Row `i` of `power` is row `i` of the trials table: the epoch metadata
+plus `subject`, `condition`, `run` and `epoch` (the epoch's index in its run's
+drop log). The sidecar names the method, λ², orientations, bands, transition
+widths, `invalid_near`, `n_trials` and `empty_sources`.
 
 ## Stage 0: Raw BIDSification
 

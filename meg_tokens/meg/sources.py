@@ -286,6 +286,26 @@ def beamformer(
     )
 
 
+def kernel(info: mne.Info, inv: mne.minimum_norm.InverseOperator) -> tuple[list[str], np.ndarray]:
+    """The operator as analyses apply it: sLORETA at their λ², as a matrix on the sensors.
+
+    Returns the sensors it reads and an array of sources x 3 x sensors, each
+    source's three components in head coordinates. MNE refuses a normal
+    orientation on a mixed source space, so callers take the cortex's normal
+    component from it themselves; the sLORETA scaling is one factor per source,
+    so each source's rows stand on their own.
+    """
+    names = list(inv["eigen_fields"]["col_names"])
+    picks = mne.pick_types(info, meg=True, ref_meg=True, exclude=[])
+    sub = mne.pick_info(info, picks)
+    sub["bads"] = []
+    identity = np.zeros((len(sub.ch_names), len(names)))
+    identity[[sub.ch_names.index(name) for name in names], np.arange(len(names))] = 1.0
+    return names, mne.minimum_norm.apply_inverse(
+        mne.EvokedArray(identity, sub, verbose=False), inv, LAMBDA2, METHOD, pick_ori="vector", verbose=False,
+    ).data
+
+
 def deep_leakage(
     info: mne.Info,
     inv: mne.minimum_norm.InverseOperator,
@@ -303,21 +323,13 @@ def deep_leakage(
     point-spread peaks inside it; ``ghosts``, the cortical sources whose
     point-spread peaks inside it.
     """
-    names = list(inv["eigen_fields"]["col_names"])
-    picks = mne.pick_types(info, meg=True, ref_meg=True, exclude=[])
-    sub = mne.pick_info(info, picks)
-    sub["bads"] = []
-    identity = np.zeros((len(sub.ch_names), len(names)))
-    identity[[sub.ch_names.index(name) for name in names], np.arange(len(names))] = 1.0
-    kernel = mne.minimum_norm.apply_inverse(
-        mne.EvokedArray(identity, sub, verbose=False), inv, LAMBDA2, METHOD, pick_ori="vector", verbose=False,
-    ).data  # sources x 3 x sensors
+    names, estimate = kernel(info, inv)
 
     carried = mne.convert_forward_solution(cleaned_forward(info, fwd, operator), surf_ori=True, verbose=False)
     rows = [carried["sol"]["row_names"].index(name) for name in names]
     gain = carried["sol"]["data"][rows]
     n_cortex = carried["src"][0]["nuse"] + carried["src"][1]["nuse"]
-    n_sources = kernel.shape[0]
+    n_sources = estimate.shape[0]
     columns = np.r_[3 * np.arange(n_cortex) + 2, np.arange(3 * n_cortex, 3 * n_sources)]
     true_source = np.r_[np.arange(n_cortex), n_cortex + np.arange(3 * (n_sources - n_cortex)) // 3]
 
@@ -327,7 +339,7 @@ def deep_leakage(
         region[n_cortex + where] = index
     energy = np.zeros((len(structures), len(structures) + 1))  # estimate structure x (structures..., cortex)
     peak = np.empty(columns.size, dtype=int)
-    flat = kernel.reshape(-1, kernel.shape[2])
+    flat = estimate.reshape(-1, estimate.shape[2])
     for start in range(0, columns.size, 1000):
         block = (flat @ gain[:, columns[start : start + 1000]]).reshape(n_sources, 3, -1)
         size = (block ** 2).sum(axis=1)  # estimate source x true column
@@ -359,5 +371,5 @@ __all__ = [
     "COVARIANCE_METHOD", "BEM_CONDUCTIVITY", "SPACING", "VOLUME_LABELS", "VOLUME_SPACING_MM", "LOOSE", "DEPTH",
     "METHOD", "LAMBDA2", "BEAMFORMER_REG",
     "noise_covariance", "head_model", "deep_structures", "forward", "cleaning_operator",
-    "cleaned_forward", "cleaned_noise", "inverse", "beamformer", "deep_leakage",
+    "cleaned_forward", "cleaned_noise", "inverse", "beamformer", "kernel", "deep_leakage",
 ]

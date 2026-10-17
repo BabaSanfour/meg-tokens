@@ -10,7 +10,6 @@ from meg_tokens.core import EPOCH_LOCKS
 from meg_tokens.meg.epoching import (
     OUTLIER_REASON,
     OUTLIER_SD,
-    PADDING,
     WINDOWS,
     align_go,
     amplitudes,
@@ -104,19 +103,24 @@ def _metadata(n):
     return trial_metadata(behavior, features)
 
 
-def test_epochs_are_padded_and_dropped_only_for_a_mark_inside_the_analysis_window():
+def test_epochs_span_the_analysis_window_and_are_dropped_only_for_a_mark_inside_it():
     raw = _recording()
     go = np.array([5.0, 12.0, 20.0, 28.0])
     tmin, tmax = WINDOWS["go"]
     raw.set_annotations(mne.Annotations(
-        [5.0 + tmax + PADDING / 2, 20.3], [0.2, 0.2], ["BAD_muscle", "BAD_peak"]
+        [5.0 + tmax + 0.5, 20.3], [0.2, 0.2], ["BAD_muscle", "BAD_peak"]
     ))
     epochs = epoch(raw, go, _metadata(4), "go")
 
-    assert epochs.tmin == pytest.approx(tmin - PADDING)
-    assert epochs.tmax == pytest.approx(tmax + PADDING)
+    assert epochs.tmin == pytest.approx(tmin)
+    assert epochs.tmax == pytest.approx(tmax)
     assert epochs.ch_names == ["MEG1", "MEG2", "REF1"]
-    # The first epoch's mark sits in its margin only, the third's in its window.
+    sfreq = raw.info["sfreq"]
+    first = int(round((go[0] + tmin) * sfreq))
+    np.testing.assert_array_equal(
+        epochs.get_data()[0], raw.get_data(picks=epochs.ch_names, start=first, stop=first + len(epochs.times))
+    )
+    # The first epoch's mark sits after its window, the third's inside it.
     assert epochs.selection.tolist() == [0, 1, 3]
     assert epochs.drop_log[2] == ("BAD_peak",)
     assert epochs.metadata["nTrialIndex"].tolist() == [1, 2, 4]
@@ -147,33 +151,16 @@ def test_each_lock_sits_at_its_behavioral_offset_from_the_go_cue():
 def test_the_sidecar_counts_dropped_epochs_by_reason(tmp_path):
     raw = _recording()
     raw.set_annotations(mne.Annotations([12.2], [0.1], ["BAD_muscle"]))
-    epochs = epoch(raw, np.array([5.0, 12.0, 39.0]), _metadata(3), "go")
+    epochs = epoch(raw, np.array([5.0, 12.0, 39.5]), _metadata(3), "go")
     path = save_epochs(epochs, tmp_path / "x_epo.fif", {"stream": "dss"})
 
     sidecar = json.loads(path.with_suffix(".json").read_text())
     assert sidecar["n_events"] == 3
     assert sidecar["n_epochs"] == 1
-    # The last epoch's margin runs past the end of the recording.
+    # The last epoch's window runs past the end of the recording.
     assert sidecar["dropped"] == {"BAD_muscle": 1, "TOO_SHORT": 1}
     assert sidecar["analysis_window_s"] == [-0.5, 1.0]
     assert len(mne.read_epochs(path, verbose=False)) == 1
-
-
-def test_an_epoch_near_the_recording_edge_keeps_the_margin_it_has_and_zero_beyond():
-    raw = _recording()
-    sfreq = raw.info["sfreq"]
-    # The first window starts 0.3 s into the recording, the last ends 0.5 s before its end.
-    go = np.array([0.8, 12.0, 38.5])
-    epochs = epoch(raw, go, _metadata(3), "go")
-
-    assert epochs.selection.tolist() == [0, 1, 2]
-    np.testing.assert_allclose(epochs.metadata["pad_before_s"], [0.3, PADDING, PADDING])
-    np.testing.assert_allclose(epochs.metadata["pad_after_s"], [PADDING, PADDING, 0.5 - 1 / sfreq])
-    first, last = epochs.get_data()[[0, 2]]
-    missing = int(round((PADDING - 0.3) * sfreq))
-    assert not first[:, :missing].any()
-    np.testing.assert_array_equal(first[:, missing:], raw.get_data(picks=epochs.ch_names, stop=first.shape[1] - missing))
-    assert not last[:, -int(round(0.5 * sfreq)):].any()
 
 
 def test_an_epoch_whose_analysis_window_leaves_the_recording_is_dropped():
@@ -183,17 +170,10 @@ def test_an_epoch_whose_analysis_window_leaves_the_recording_is_dropped():
     assert epochs.drop_log[0] and epochs.drop_log[2]
 
 
-def test_the_sidecar_counts_epochs_with_a_short_margin(tmp_path):
-    epochs = epoch(_recording(), np.array([0.8, 12.0, 20.0]), _metadata(3), "go")
-    path = save_epochs(epochs, tmp_path / "x_epo.fif", {"stream": "dss"})
-    assert json.loads(path.with_suffix(".json").read_text())["n_short_padding"] == 1
-    np.testing.assert_allclose(mne.read_epochs(path, verbose=False).metadata["pad_before_s"], [0.3, PADDING, PADDING])
-
-
 def test_amplitudes_are_the_log_peak_to_peak_of_each_magnetometer_over_the_analysis_window():
     raw = _recording()
     sfreq = raw.info["sfreq"]
-    # a 1 pT step inside the first epoch's margin, and one inside the second's window
+    # a 1 pT step before the first epoch's window, and one inside the second's
     data = raw.get_data()
     data[0, int(4.0 * sfreq)] += 1e-12
     data[1, int(12.5 * sfreq)] += 1e-12
@@ -202,10 +182,9 @@ def test_amplitudes_are_the_log_peak_to_peak_of_each_magnetometer_over_the_analy
     table = amplitudes(epochs)
 
     assert list(table.columns) == ["MEG1", "MEG2"]
-    tmin, tmax = WINDOWS["go"]
-    window = epochs.copy().pick("mag").crop(tmin, tmax).get_data()
+    window = epochs.copy().pick("mag").get_data()
     np.testing.assert_allclose(table.to_numpy(), np.log10(np.ptp(window, axis=2)))
-    assert table.loc[0, "MEG1"] < -12.0        # the margin's step is not in the window
+    assert table.loc[0, "MEG1"] < -12.0        # the step before the window is not in it
     assert table.loc[1, "MEG2"] > -12.0        # the window's is
 
 

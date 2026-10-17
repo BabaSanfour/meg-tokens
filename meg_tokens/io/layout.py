@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, Sequence
 
-from meg_tokens.core import RunSpec, normalize_subject_id, parse_run_label
+from meg_tokens.core import normalize_subject_id, parse_run_label
 
 from .contract import derivative_path
 
@@ -342,6 +342,18 @@ class DerivativeLayout:
         """One recording's inverse operator for one stream."""
         return self.source(
             subject=subject, run=run, condition=condition, processing=stream, suffix="inv", extension=".fif",
+        )
+
+    def band_power(self, *, subject: str, stream: str, lock: str, space: str) -> Path:
+        """One subject's single-trial band power around one lock, every Fast and Slow run, one stream and space."""
+        return self.path(
+            subject=subject, processing=stream, space=space, description=lock, suffix="power", extension=".h5",
+        )
+
+    def band_power_trials(self, *, subject: str, stream: str, lock: str) -> Path:
+        """The trials of a subject's band power, in its order: one row per trial, both spaces."""
+        return self.path(
+            subject=subject, processing=stream, description=lock, suffix="trials", extension=".tsv",
         )
 
     def beamformer(self, *, subject: str, run: str, condition: str, stream: str) -> Path:
