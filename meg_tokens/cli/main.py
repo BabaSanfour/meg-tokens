@@ -313,6 +313,14 @@ def build_parser() -> argparse.ArgumentParser:
     band_power_tasks.add_argument("--subjects", nargs="+", help="default: every staged subject")
     band_power_tasks.add_argument("--streams", nargs="+", choices=STREAMS, default=list(STREAMS))
 
+    erp = meg_commands.add_parser(
+        "erp",
+        help="Event-related fields per condition, in sensors and in source regions, per subject and stream.",
+    )
+    erp.add_argument("--subjects", nargs="+", required=True)
+    erp.add_argument("--streams", nargs="+", choices=STREAMS, default=list(STREAMS))
+    erp.add_argument("--locks", nargs="+", choices=EPOCH_LOCKS, help="default: go, decision, enter")
+
     band_power_merge = meg_commands.add_parser(
         "band-power-merge",
         help="Assemble a subject's band power per stream and lock from its run and band parts.",
@@ -946,6 +954,17 @@ def _meg_band_power_tasks(project: ProjectConfig, args: argparse.Namespace) -> o
     return None
 
 
+def _meg_erp(project: ProjectConfig, args: argparse.Namespace) -> object:
+    from meg_tokens.meg.band_power import LOCKS
+    from meg_tokens.workflows.evoked import evoked_subject
+
+    return [
+        evoked_subject(project, subject, stream=stream, locks=args.locks or LOCKS)
+        for subject in args.subjects
+        for stream in args.streams
+    ]
+
+
 def _meg_band_power_merge(project: ProjectConfig, args: argparse.Namespace) -> object:
     from meg_tokens.meg.band_power import LOCKS
     from meg_tokens.workflows.band_power import band_power_merge
@@ -1440,6 +1459,7 @@ _HANDLERS: dict[tuple[str, str], Handler] = {
     ("meg", "band-power"): _meg_band_power,
     ("meg", "band-power-merge"): _meg_band_power_merge,
     ("meg", "band-power-tasks"): _meg_band_power_tasks,
+    ("meg", "erp"): _meg_erp,
     ("meg", "band-power-prepare"): _meg_band_power_prepare,
     ("features", "erp"): _features_erp,
     ("features", "power"): _features_power,

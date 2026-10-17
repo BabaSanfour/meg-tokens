@@ -364,6 +364,16 @@ class DerivativeLayout:
             subject=subject, processing=stream, description=lock, suffix="trials", extension=".tsv",
         )
 
+    def evoked_regions(self, *, subject: str, stream: str, lock: str) -> Path:
+        """One subject's twelve condition averages around one lock, in the HCP-MMP1 regions."""
+        return self.path(
+            subject=subject, processing=stream, space="HCPMMP1", description=lock, suffix="erp", extension=".h5",
+        )
+
+    def evoked_sensors(self, *, subject: str, stream: str, lock: str) -> Path:
+        """One subject's twelve condition averages around one lock, in the sensors (MNE evoked file)."""
+        return self.path(subject=subject, processing=stream, description=lock, suffix="ave", extension=".fif")
+
     def beamformer(self, *, subject: str, run: str, condition: str, stream: str) -> Path:
         """One recording's LCMV filters for one stream, the check on deep-structure results."""
         return self.source(

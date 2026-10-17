@@ -153,6 +153,22 @@ sources found in the subject's own `aseg`.
   before the trial, the effect under test.
 - First run: both streams, the `go`, `decision` and `enter` locks.
 
+**Event-related fields → twelve condition averages per subject, signed, in
+regions and sensors.** For each subject, stream and lock (`go`, `decision`,
+`enter`), the trials of each condition (Fast/Slow × easy/ambiguous/misleading
+× right/left choice; unclassified trials in none) are averaged per run
+(`Epochs.average`), each average inverted (`apply_inverse`, sLORETA, λ² = 1,
+three orientations, the cortex projected onto its normals) at `nave = 1`, the
+kernel band power uses, so conditions with different trial counts compare;
+sLORETA's noise normalisation would otherwise scale each average by its trial
+count. A region's time course is the sign-flipped mean of its sources
+(`extract_label_time_course`, `mode="mean_flip"`); the sign of a region is a
+convention of its anatomy. Runs are combined weighted by their trials (exact:
+the inverse is linear). Stored at 600 Hz, 0.5–150 Hz as cleaned, no baseline;
+filtering and baseline belong to the figure or analysis. The sensor averages
+are kept as MNE evoked files for field maps. Deep structures have no single
+signed time course and are left out.
+
 **Deep structures → the paper's analyses replicated, then measured.** The
 paper's deep results are reproduced (per-structure PCA on the first-token
 lock, Fast/Slow components in β, γ and high γ, the cortex-wide PCA's

@@ -182,6 +182,24 @@ stream and band under its own BIDS-like root (`band_power.fsaverage_root`):
 per lock, `<lock>/power`, trials x 8,196 `oct6` sources (left then right) x
 times, and `<lock>/times`, in the order of the lock's epoch file.
 
+## Event-related-field derivatives
+
+Per subject, stream and lock, the twelve condition averages (Fast/Slow ×
+easy/ambiguous/misleading × right/left choice), every Fast and Slow run
+combined:
+
+```
+derivatives/sub-H01/meg/sub-H01_task-tokens_proc-dss_space-HCPMMP1_desc-enter_erp.h5
+derivatives/sub-H01/meg/sub-H01_task-tokens_proc-dss_desc-enter_ave.fif
+```
+
+The HDF5 file holds `erp`, conditions x 360 HCP-MMP1 regions x times,
+float32, signed (sLORETA normal component at `nave = 1`, sign-flipped region
+mean), NaN for a condition with no trial; `n_trials`, `conditions` (named
+`<speed>-<class>-<side>`, e.g. `fast-easy-right`), `sources` and `times`. The
+`-ave.fif` holds the sensor averages, one MNE evoked per condition with trials,
+its `comment` the condition name.
+
 ## Stage 0: Raw BIDSification
 
 Raw CTF media carries no condition/run label (`H02_DDM-tthiery_20180213_03.ds`
