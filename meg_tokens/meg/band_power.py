@@ -19,7 +19,8 @@ orientations and the cortex projected onto its normals.
 from __future__ import annotations
 
 from collections.abc import Iterator
-from itertools import repeat, tee
+from collections import deque
+from itertools import repeat
 from pathlib import Path
 
 import mne
@@ -165,19 +166,23 @@ def trial_power(
     estimates = mne.minimum_norm.apply_inverse_epochs(
         epochs, inv, LAMBDA2, METHOD, pick_ori="vector", prepared=True, return_generator=True, verbose=False,
     )
-    to_cortex, to_deep = tee(estimates)
-    cortex = (_power(stc.surface().project("normal", src[:2])[0]) for stc in to_cortex)
-    deep_power = (_power(stc.volume()) for stc in to_deep)
-    # A tee keeps whatever one branch has read and the other has not, so the
-    # cortex is split only when the morph will read its branch in step.
-    if morph is None:
-        for_regions, fsaverage = cortex, repeat(None)
-    else:
-        for_regions, for_morph = tee(cortex)
-        fsaverage = (morph.apply(stc).data for stc in for_morph)
-    # MNE takes a stream of estimates only as a list or a generator, not a tee.
+    # Each estimate (about 1 GB: three orientations, complex) is read once and
+    # let go; what the other streams need from it waits in a one-item queue.
+    # itertools.tee would keep up to 57 estimates alive, in its blocks.
+    deep_waiting, cortex_waiting = deque(), deque()
+
+    def cortex() -> Iterator[mne.SourceEstimate]:
+        for stc in estimates:
+            deep_waiting.append(_power(stc.volume()))
+            power = _power(stc.surface().project("normal", src[:2])[0])
+            if morph is not None:
+                cortex_waiting.append(power)
+            yield power
+
+    deep_power = (deep_waiting.popleft() for _ in repeat(None))
+    fsaverage = repeat(None) if morph is None else (morph.apply(cortex_waiting.popleft()).data for _ in repeat(None))
     regions = mne.extract_label_time_course(
-        (stc for stc in for_regions), labels, src[:2], mode="mean", allow_empty=True, return_generator=True, verbose=False,
+        cortex(), labels, src[:2], mode="mean", allow_empty=True, return_generator=True, verbose=False,
     )
     structures = mne.extract_label_time_course(
         deep_power, deep, src[2:], mode="mean", mri_resolution=False, allow_empty=True,
