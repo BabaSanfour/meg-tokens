@@ -376,9 +376,17 @@ class DerivativeLayout:
             subject=subject, processing=stream, space=space, description=lock, suffix="erp", extension=".h5",
         )
 
-    def evoked_sensors(self, *, subject: str, stream: str, lock: str) -> Path:
-        """One subject's twelve condition averages around one lock, in the sensors (MNE evoked file)."""
-        return self.path(subject=subject, processing=stream, description=lock, suffix="ave", extension=".fif")
+    def evoked_sensors(self, *, subject: str, run: str, condition: str, stream: str, lock: str) -> Path:
+        """One run's condition averages around one lock, in the sensors and that run's head position (MNE evoked file)."""
+        run_number, inferred = parse_run_label(run)
+        return self.path(
+            subject=subject,
+            run=run_number,
+            processing=stream,
+            description=_description(_condition(condition or inferred), lock),
+            suffix="ave",
+            extension=".fif",
+        )
 
     def beamformer(self, *, subject: str, run: str, condition: str, stream: str) -> Path:
         """One recording's LCMV filters for one stream, the check on deep-structure results."""

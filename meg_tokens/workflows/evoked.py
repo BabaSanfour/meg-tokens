@@ -32,16 +32,18 @@ def evoked_subject(
 
     Writes per lock: an HDF5 file of conditions x 360 regions x times and
     conditions x 17 deep structures x 3 components x times; an HDF5 file of
-    conditions x 8,196 fsaverage sources x times; and an MNE ``-ave.fif`` of
-    the sensor averages (signed, sLORETA at nave = 1, 0.5-150 Hz as cleaned, no
-    baseline). A condition with no trial is NaN in source space and absent from
-    the sensors.
+    conditions x 8,196 fsaverage sources x times (signed, sLORETA at nave = 1,
+    0.5-150 Hz as cleaned, no baseline); and per run an MNE ``-ave.fif`` of the
+    sensor averages. Runs are combined in source space, each through its own
+    inverse; in the sensors each run keeps its own head position, so its
+    averages stay in its own file. A condition with no trial is NaN in source
+    space and absent from the sensors.
     """
     layout = DerivativeLayout(project.bids_root, task=project.task)
     destination = DerivativeLayout(output_root or project.bids_root, task=project.task)
     inputs, outputs, labels, deep, morph = [], [], None, None, None
     for lock in locks:
-        totals, counts, sensors, times = {}, dict.fromkeys(CONDITIONS, 0), {name: [] for name in CONDITIONS}, None
+        totals, counts, times = {}, dict.fromkeys(CONDITIONS, 0), None
         for run, path in epoched_meg_runs(layout, subject, alignment=lock, stream=stream):
             inv_path = require_file(
                 layout.inverse(subject=run.subject, run=run.run, condition=run.condition, stream=stream),
@@ -58,15 +60,24 @@ def evoked_subject(
                 morph = fsaverage_morph(inv["src"], project.subjects_dir)
             prepared = mne.minimum_norm.prepare_inverse_operator(inv, 1, LAMBDA2, METHOD, verbose=False)
             times = epochs.times
+            averages = []
             for name, mask in condition_masks(epochs.metadata).items():
                 n = int(mask.sum())
                 if not n:
                     continue
                 average = epochs[mask].average()
+                average.comment = name
+                averages.append(average)
                 courses = source_time_courses(average, prepared, labels, deep, morph)
                 totals[name] = [n * course + (totals[name][k] if name in totals else 0) for k, course in enumerate(courses)]
                 counts[name] += n
-                sensors[name].append(average)
+            if averages:
+                sensor_path = destination.evoked_sensors(
+                    subject=run.subject, run=run.run, condition=run.condition, stream=stream, lock=lock,
+                )
+                sensor_path.parent.mkdir(parents=True, exist_ok=True)
+                mne.write_evokeds(sensor_path, averages, overwrite=True, verbose=False)
+                outputs.append(sensor_path)
         if times is None:
             continue
 
@@ -111,14 +122,7 @@ def evoked_subject(
             "deep": "mean of each of x, y, z (head coordinates) per aseg structure",
             "baseline": None, "n_trials": {name: counts[name] for name in CONDITIONS},
         })
-        averages = [
-            mne.combine_evoked(sensors[name], weights="nave") for name in CONDITIONS if sensors[name]
-        ]
-        for average, name in zip(averages, [name for name in CONDITIONS if sensors[name]]):
-            average.comment = name
-        sensor_path = destination.evoked_sensors(subject=subject, stream=stream, lock=lock)
-        mne.write_evokeds(sensor_path, averages, overwrite=True, verbose=False)
-        outputs.extend([path, fsaverage_path, sensor_path])
+        outputs.extend([path, fsaverage_path])
     return WorkflowResult(
         stage="evoked",
         inputs=tuple(inputs),

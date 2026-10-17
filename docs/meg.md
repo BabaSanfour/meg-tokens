@@ -169,7 +169,10 @@ to, so a deep structure keeps the mean of each of its sources' three
 components, head x, y and z, signed and linear. Runs are combined weighted by
 their trials (exact: the inverse is linear). Stored at 600 Hz, 0.5–150 Hz as
 cleaned, no baseline; filtering and baseline belong to the figure or analysis.
-The sensor averages are kept as MNE evoked files for field maps.
+The sensor averages are kept per run, as MNE evoked files for field maps: each
+run has its own head position, which CTF data cannot be realigned to with
+Maxwell filtering, so runs combine in source space only, each through its own
+inverse, and any sensor-level analysis combines runs itself.
 
 **Deep structures → the paper's analyses replicated, then measured.** The
 paper's deep results are reproduced (per-structure PCA on the first-token

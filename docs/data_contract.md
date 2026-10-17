@@ -186,12 +186,12 @@ times, and `<lock>/times`, in the order of the lock's epoch file.
 
 Per subject, stream and lock, the twelve condition averages (Fast/Slow ×
 easy/ambiguous/misleading × right/left choice), every Fast and Slow run
-combined:
+combined in source space, one file per run in the sensors:
 
 ```
 derivatives/sub-H01/meg/sub-H01_task-tokens_proc-dss_space-HCPMMP1_desc-enter_erp.h5
 derivatives/sub-H01/meg/sub-H01_task-tokens_proc-dss_space-fsaverage_desc-enter_erp.h5
-derivatives/sub-H01/meg/sub-H01_task-tokens_proc-dss_desc-enter_ave.fif
+derivatives/sub-H01/meg/sub-H01_task-tokens_run-1_proc-dss_desc-fast-enter_ave.fif
 ```
 
 All are signed sLORETA estimates at `nave = 1`, NaN for a condition with no
@@ -202,8 +202,9 @@ sources, `deep_axes`), with `sources`, `deep_sources`, `n_trials`,
 `conditions` (named `<speed>-<class>-<side>`, e.g. `fast-easy-right`) and
 `times`. `space-fsaverage` holds `erp`, conditions x 8,196 `oct6` sources x
 times (cortex normal component), with `vertices_lh`, `vertices_rh`. The
-`-ave.fif` holds the sensor averages, one MNE evoked per condition with
-trials, its `comment` the condition name.
+`-ave.fif` files hold the sensor averages, one file per run (each run has
+its own head position), one MNE evoked per condition with trials in that run,
+its `comment` the condition name and `nave` its trial count.
 
 ## Stage 0: Raw BIDSification
 
