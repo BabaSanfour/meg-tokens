@@ -73,7 +73,7 @@ SOURCE_TARGETS = [
 # the cohort, only where `band_power.fsaverage_root` names a BIDS-like root.
 BAND_POWER = config.get("band_power", {})
 FSAVERAGE_POWER_ROOT = BAND_POWER.get("fsaverage_root")
-BAND_POWER_THREADS = BAND_POWER.get("threads", 8)
+BAND_POWER_THREADS = BAND_POWER.get("threads", 4)
 BAND_POWER_PART = RUN_DERIVATIVE + "_proc-{stream}_space-" + PARCELLATION + "_desc-{condition}-{band}_power.h5"
 FSAVERAGE_POWER_PART = (
     None if FSAVERAGE_POWER_ROOT is None

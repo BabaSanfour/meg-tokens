@@ -92,12 +92,13 @@ set-resources:
     slurm_partition: cpubase_bycore_b1
     mem_mb: 16000
     runtime: 60
-  # One run, stream and band, every lock: about 20 min on one core of fir for
-  # the MNE route (apply_inverse_epochs at 7 s a trial), less with threads.
+  # One run, stream and band, every lock (H01 Fast 1, 186 trials): 439 s on
+  # one core, 181 s on four, 157 s on eight; peak 5.3 GB. Four cores give the
+  # most trials per CPU-hour among the threaded settings.
   band_power_part:
     slurm_partition: cpubase_bycore_b1
-    mem_mb: 16000
-    runtime: 120
+    mem_mb: 8000
+    runtime: 60
   band_power_merge:
     slurm_partition: cpubase_bycore_b1
     mem_mb: 8000
