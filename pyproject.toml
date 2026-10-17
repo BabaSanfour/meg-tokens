@@ -35,7 +35,7 @@ dependencies = [
     "mne-connectivity>=0.5.0",
     "specparam>=2.0.0rc0",
     "xarray>=2023.1.0",
-    "coco-pipe @ git+https://github.com/BabaSanfour/coco-pipe@7f17473e94639d932982cd1fdbb1057c97ecc371"
+    "coco-pipe @ git+https://github.com/BabaSanfour/coco-pipe@c57fb1ad143686b807121b16b764bf0238668868"
 ]
 
 [project.scripts]
