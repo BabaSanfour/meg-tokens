@@ -177,6 +177,19 @@ is row `i` of the trials table: the epoch metadata plus `subject`,
 sidecar names the method, λ², orientations, bands, transition widths,
 `invalid_near`, `n_trials` and `empty_sources`.
 
+The means per condition and per decision-time quintile, one file per subject,
+stream and lock (`*_space-HCPMMP1_desc-<lock>_powermeans.h5`), average the
+trials three ways: `condition_power`, `condition_log10` and `condition_db`
+(the twelve conditions x bands x sources x times) and the same `quantile_*`
+(Fast q1-q5, Slow q1-q5 of the subject's decision times), each NaN-ignoring:
+linear power, log10 of each trial's power, and 10 log10 of each trial's power
+over its own baseline, its mean power from -0.2 to 0 s in its go epoch (the
+trial matched across locks by `condition`, `run` and `nTrialIndex`; a trial
+without a kept go epoch is left out of the dB means). `*_n` counts the trials,
+`*_n_db` those with a baseline; `log10_center` (bands x sources) is the mean
+log10 power over every trial and time of the lock; `quantile_dt_ms` the
+quantiles' mean decision times.
+
 The `fsaverage` power, about 24 TB for the cohort, stays one file per run,
 stream and band under its own BIDS-like root (`band_power.fsaverage_root`):
 per lock, `<lock>/power`, trials x 8,196 `oct6` sources (left then right) x

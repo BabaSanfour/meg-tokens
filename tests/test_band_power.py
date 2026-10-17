@@ -70,45 +70,63 @@ def test_a_part_needs_its_morph_map_built_beforehand(tmp_path):
     assert bp.morph_map("H01", tmp_path).name == "fsaverage-H01-morph.fif"
 
 
-def test_means_per_condition_and_decision_time_quintile(tmp_path):
+def test_means_per_condition_and_quintile_as_power_log10_and_db(tmp_path):
     import h5py
     import pandas as pd
 
     from meg_tokens.core import ProjectConfig
     from meg_tokens.io import DerivativeLayout
-    from meg_tokens.meg.evoked import CONDITIONS
     from meg_tokens.workflows.band_power import band_power_means
 
     project = ProjectConfig(data_root=tmp_path)
     layout = DerivativeLayout(project.bids_root, task=project.task)
     n = 20
-    trials = pd.DataFrame({
+    go = pd.DataFrame({
         "condition": ["Fast"] * 10 + ["Slow"] * 10,
+        "run": [1] * 20,
+        "nTrialIndex": list(range(1, 11)) * 2,
         "trial_class_name": ["easy", "ambiguous"] * 10,
         "choice_side": [1.0] * 20,
         "dt_ms": list(range(10)) + list(range(100, 110)),
     })
-    power = np.arange(n, dtype=np.float32)[:, None, None, None] * np.ones((n, 2, 3, 4), np.float32)
-    power[0, 0, 0, 0] = np.nan
-    path = layout.band_power(subject="H01", stream="dss", lock="go", space=bp.PARCELLATION)
-    path.parent.mkdir(parents=True)
-    with h5py.File(path, "w") as handle:
-        handle["power"] = power
-        for key in ("times", "bands", "band_edges_hz", "sources", "n_sources"):
-            handle[key] = np.arange(3)
-    trials.to_csv(layout.band_power_trials(subject="H01", stream="dss", lock="go"), sep="\t", index=False)
+    times = np.array([-0.4, -0.2, 0.0, 0.2])
+    level = np.arange(1, n + 1, dtype=np.float32)
+    shape = np.array([5.0, 1.0, 1.0, 10.0], np.float32)  # 1 over the baseline, -0.2 to 0 s
+    power = level[:, None, None, None] * shape * np.ones((n, 2, 3, 4), np.float32)
+    power[1, 0, 0, 3] = np.nan
+    decision = go.assign(nTrialIndex=[99] + go["nTrialIndex"].tolist()[1:])  # trial 0 has no go epoch
 
-    band_power_means(project, "H01", stream="dss", locks=["go"])
+    for lock, table in (("go", go), ("decision", decision)):
+        path = layout.band_power(subject="H01", stream="dss", lock=lock, space=bp.PARCELLATION)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with h5py.File(path, "w") as handle:
+            handle["power"] = power
+            handle["times"] = times
+            for key in ("bands", "band_edges_hz", "sources", "n_sources"):
+                handle[key] = np.arange(3)
+        table.to_csv(layout.band_power_trials(subject="H01", stream="dss", lock=lock), sep="\t", index=False)
 
-    with h5py.File(layout.band_power_means(subject="H01", stream="dss", lock="go"), "r") as handle:
-        condition = handle["condition_power"][:]
-        n_condition = dict(zip([c.decode() for c in handle["conditions"]], handle["condition_n"][:]))
-        quantile = handle["quantile_power"][:]
-        dt = handle["quantile_dt_ms"][:]
-    assert n_condition["fast-easy-right"] == 5 and n_condition["fast-easy-left"] == 0
-    fast_easy = CONDITIONS.index("fast-easy-right")
-    assert condition[fast_easy, 0, 0, 0] == np.mean([2, 4, 6, 8])  # trial 0's NaN ignored
-    assert condition[fast_easy, 1, 0, 0] == np.mean([0, 2, 4, 6, 8])
-    assert np.isnan(condition[CONDITIONS.index("fast-easy-left")]).all()
-    assert quantile[0, 1, 0, 0] == 0.5 and quantile[9, 1, 0, 0] == 18.5  # fast q1, slow q5
-    assert dt[0] == 0.5 and dt[9] == 108.5
+    band_power_means(project, "H01", stream="dss", locks=["go", "decision"])
+
+    def read(lock):
+        with h5py.File(layout.band_power_means(subject="H01", stream="dss", lock=lock), "r") as handle:
+            return {key: handle[key][:] for key in handle}
+
+    means = read("go")
+    names = [c.decode() for c in means["conditions"]]
+    easy, ambiguous, empty = (names.index(f"fast-{c}") for c in ("easy-right", "ambiguous-right", "easy-left"))
+    assert means["condition_n"][easy] == 5 and means["condition_n"][empty] == 0
+    assert means["condition_power"][easy, 0, 0, 0] == np.mean([1, 3, 5, 7, 9]) * 5
+    assert means["condition_power"][ambiguous, 0, 0, 3] == np.mean([4, 6, 8, 10]) * 10  # trial 1's NaN ignored
+    assert np.isclose(means["condition_log10"][easy, 0, 0, 1], np.mean(np.log10([1, 3, 5, 7, 9])))
+    assert np.allclose(means["condition_db"][easy, 0, 0], 10 * np.log10(shape))
+    assert np.isnan(means["condition_power"][empty]).all()
+    assert np.allclose(means["log10_center"], np.nanmean(np.log10(power), axis=(0, 3)))
+    assert means["quantile_power"][0, 1, 0, 0] == 1.5 * 5 and means["quantile_power"][9, 1, 0, 0] == 19.5 * 5
+    assert means["quantile_dt_ms"][0] == 0.5 and means["quantile_dt_ms"][9] == 108.5
+
+    means = read("decision")
+    assert means["condition_n"][easy] == 5 and means["condition_n_db"][easy] == 4
+    assert means["condition_power"][easy, 0, 0, 0] == np.mean([1, 3, 5, 7, 9]) * 5
+    assert np.allclose(means["condition_db"][easy, 0, 0], 10 * np.log10(shape))
+    assert means["quantile_n_db"][0] == 1

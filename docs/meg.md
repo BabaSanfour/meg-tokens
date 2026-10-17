@@ -36,11 +36,27 @@ models (the cortex and the paper's 17 deep structures), 256 forward models,
 512 inverse operators and 512 LCMV beamformers (both streams), through the
 workflow (§4, Source reconstruction).
 
-**Band power — built, not yet run on the cohort.** Single-trial power from the
-continuous cleaned runs through MNE (§2, Band power), checked on one run of
-H01 against MNE's own estimate. Epochs no longer carry a margin; the epoch
-stage is to be re-run. The audit behind the analysis stage:
-`docs/analysis_audit.md`.
+**Band power — complete, both streams.** Single-trial power from the
+continuous cleaned runs through MNE (§2, Band power): 2,560 parts and 64
+assemblies, every epoch of the margin-free re-epoching (the counts of §4
+reproduced exactly). In all 192 region files the trials equal the trial table
+and the epochs, no trial is all-NaN, no power is negative, and invalid samples
+are 0.07–0.13 % (at most 0.44 %, H04 `go`); all 2,560 fsaverage parts hold
+every lock. Against the matrix route on H01 run 1 (both streams, three locks)
+the two agree to a median of 1.6e-6, except in the two or three trials
+nearest each end of the run, where they differ by up to 5 % of a source's
+typical power, most in theta: the analytic signal is computed over the whole
+recording and its edge error decays slowly, past the half filter length
+marked invalid, and the two routes treat the ends differently. Means per
+condition and per decision-time quintile: complete.
+
+**Event-related fields — complete, both streams.** Regions, deep structures
+and fsaverage per subject and lock; sensor averages per run (§2, Event-related
+fields). All 32 subjects in both streams; H10's four empty runs have no sensor
+file.
+
+The audit behind the analysis stage: `docs/analysis_audit.md`; the hypotheses
+it leads to: `docs/analysis_hypotheses.md`.
 
 **Downstream helpers with no callers.** `psd_description`
 (`workflows/spectral.py`), `run_batch_dpca` (`workflows/decomposition.py`),
@@ -148,9 +164,13 @@ sources found in the subject's own `aseg`.
   tested against it later.
 - Normalisation belongs to each analysis: log10 power centred per subject,
   region, band and stream over all its trials and times (main); raw power (the
-  paper's route); dB against each trial's pre-token baseline (the trajectory
-  primer's). A pre-trial baseline would remove a Fast/Slow difference present
-  before the trial, the effect under test.
+  paper's route); dB against each trial's pre-token baseline, its mean power
+  from −0.2 to 0 s in its go epoch whatever the lock (the trajectory primer's
+  window). A pre-trial baseline would remove a Fast/Slow difference present
+  before the trial, the effect under test. The log10 and dB forms are averaged
+  per trial, before the condition and quintile means: log10 of a mean power
+  weights the trials with the most power, and the two differ wherever bursts
+  or artifacts change the trials' spread rather than their typical power.
 - First run: both streams, the `go`, `decision` and `enter` locks.
 
 **Event-related fields → twelve condition averages per subject, signed, in

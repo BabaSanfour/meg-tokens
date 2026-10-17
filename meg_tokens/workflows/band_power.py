@@ -231,6 +231,38 @@ def band_power_merge(
 
 QUANTILES = 5
 
+# The trajectory primer's baseline: each trial's mean power over the 200 ms
+# before the first token, taken from its go epoch whatever the lock.
+BASELINE = (-0.2, 0.0)
+
+# The three forms of power averaged per condition and quintile.
+MEASURES = ("power", "log10", "db")
+
+# Trials read at once by the passes over every trial of a file.
+BLOCK = 32
+
+
+def _trial_keys(trials: pd.DataFrame) -> pd.MultiIndex:
+    """A trial's identity in every lock's table: its run and its index in the run's task log."""
+    return pd.MultiIndex.from_frame(trials[["condition", "run", "nTrialIndex"]])
+
+
+def _go_baselines(destination: DerivativeLayout, subject: str, stream: str) -> tuple[pd.MultiIndex, np.ndarray]:
+    """Each go epoch's mean linear power over ``BASELINE``, trials x bands x sources, with its trials' keys."""
+    path = require_file(
+        destination.band_power(subject=subject, stream=stream, lock="go", space=PARCELLATION),
+        purpose=f"{subject} {stream} go band power, the baseline of every lock; run `meg band-power-merge` first",
+    )
+    trials = pd.read_csv(destination.band_power_trials(subject=subject, stream=stream, lock="go"), sep="\t")
+    with h5py.File(path, "r") as source:
+        power, times = source["power"], source["times"][:]
+        span = (times >= BASELINE[0]) & (times <= BASELINE[1])
+        baseline = np.concatenate([
+            np.nanmean(power[start:start + BLOCK][..., span], axis=-1)
+            for start in range(0, power.shape[0], BLOCK)
+        ])
+    return _trial_keys(trials), baseline
+
 
 def band_power_means(
     project: ProjectConfig,
@@ -240,19 +272,25 @@ def band_power_means(
     locks: Sequence[str] = LOCKS,
     output_root: Optional[str | Path] = None,
 ) -> WorkflowResult:
-    """A subject's mean band power per condition and per decision-time quintile, per lock.
+    """A subject's mean band power per condition and per decision-time quintile, per lock, three ways.
 
-    Averages the assembled single-trial power (linear, NaN ignored) over the
-    trials of each of the twelve conditions, and over Fast and Slow trials in
-    each fifth of the subject's own decision times in that condition (the
-    quantile-matched bins of the time-scaling test). Writes one HDF5 file per
-    lock: ``condition_power`` (12 x bands x sources x times), ``quantile_power``
-    (Fast q1-q5, Slow q1-q5 x bands x sources x times), their trial counts and
-    the quantiles' mean decision times.
+    Averages the assembled single-trial power (NaN ignored) over the trials of
+    each of the twelve conditions, and over Fast and Slow trials in each fifth
+    of the subject's own decision times in that condition (the quantile-matched
+    bins of the time-scaling test), as linear power, as log10 power, and in dB
+    against each trial's own baseline: its mean power over ``BASELINE`` in its
+    go epoch. A trial without a kept go epoch has no baseline and is left out
+    of the dB means. Writes one HDF5 file per lock: ``condition_<measure>`` (12
+    x bands x sources x times) and ``quantile_<measure>`` (Fast q1-q5, Slow
+    q1-q5) for each of ``MEASURES``, their trial counts (``*_n``, and ``*_n_db``
+    for the trials with a baseline), ``log10_center`` (bands x sources: the mean
+    log10 power over every trial and time of the lock, to centre by) and the
+    quantiles' mean decision times.
     """
     from meg_tokens.meg.evoked import CONDITIONS, condition_masks
 
     destination = DerivativeLayout(output_root or project.bids_root, task=project.task)
+    go_keys, go_baseline = _go_baselines(destination, subject, stream)
     inputs, outputs = [], []
     for lock in locks:
         power_path = require_file(
@@ -268,34 +306,58 @@ def band_power_means(
             bins = pd.qcut(trials.loc[rows, "dt_ms"].rank(method="first"), QUANTILES, labels=False)
             for q in range(QUANTILES):
                 quantiles[f"{speed.lower()}-q{q + 1}"] = rows[bins.to_numpy() == q].to_numpy()
+        position = go_keys.get_indexer(_trial_keys(trials))
+        has_baseline = position >= 0
+        baseline = np.where(has_baseline[:, None, None], go_baseline[position], np.nan)
 
         with h5py.File(power_path, "r") as source:
             power = source["power"]
             shape = power.shape[1:]
 
-            def mean(indices: np.ndarray) -> np.ndarray:
+            def means(indices: np.ndarray) -> tuple[list[np.ndarray], int]:
                 if not indices.size:
-                    return np.full(shape, np.nan, dtype=np.float32)
-                return np.nanmean(power[np.sort(indices)], axis=0).astype(np.float32)
+                    return [np.full(shape, np.nan, dtype=np.float32)] * len(MEASURES), 0
+                rows = np.sort(indices)
+                linear = power[rows]
+                logged = np.log10(linear)
+                # MNE's rescale takes the baseline from the array it rescales;
+                # this one comes from another lock's epoch, so dB is written out.
+                db = 10 * (logged - np.log10(baseline[rows])[..., None])
+                return [np.nanmean(x, axis=0).astype(np.float32) for x in (linear, logged, db)], int(has_baseline[rows].sum())
 
-            condition_power = np.stack([mean(groups[name]) for name in CONDITIONS])
-            quantile_power = np.stack([mean(indices) for indices in quantiles.values()])
+            condition = [means(groups[name]) for name in CONDITIONS]
+            quantile = [means(indices) for indices in quantiles.values()]
+            total, count = np.zeros(shape[:-1]), np.zeros(shape[:-1])
+            for start in range(0, power.shape[0], BLOCK):
+                logged = np.log10(power[start:start + BLOCK])
+                total += np.nansum(logged, axis=(0, -1))
+                count += np.isfinite(logged).sum(axis=(0, -1))
             meta = {key: source[key][:] for key in ("times", "bands", "band_edges_hz", "sources", "n_sources")}
 
         path = destination.band_power_means(subject=subject, stream=stream, lock=lock)
         with h5py.File(path, "w") as handle:
-            handle.create_dataset("condition_power", data=condition_power)
-            handle.create_dataset("condition_n", data=np.array([groups[name].size for name in CONDITIONS]))
-            handle.create_dataset("conditions", data=np.array(CONDITIONS, dtype="S"))
-            handle.create_dataset("quantile_power", data=quantile_power)
-            handle.create_dataset("quantile_n", data=np.array([indices.size for indices in quantiles.values()]))
-            handle.create_dataset("quantiles", data=np.array(list(quantiles), dtype="S"))
+            for prefix, results, sizes, names in (
+                ("condition", condition, [groups[name].size for name in CONDITIONS], CONDITIONS),
+                ("quantile", quantile, [indices.size for indices in quantiles.values()], list(quantiles)),
+            ):
+                for index, measure in enumerate(MEASURES):
+                    handle.create_dataset(f"{prefix}_{measure}", data=np.stack([r[0][index] for r in results]))
+                handle.create_dataset(f"{prefix}_n", data=np.array(sizes))
+                handle.create_dataset(f"{prefix}_n_db", data=np.array([r[1] for r in results]))
+                handle.create_dataset(f"{prefix}s", data=np.array(names, dtype="S"))
+            handle.create_dataset("log10_center", data=total / count)
             handle.create_dataset("quantile_dt_ms", data=np.array([
                 trials.loc[indices, "dt_ms"].mean() if indices.size else np.nan for indices in quantiles.values()
             ]))
             for key, value in meta.items():
                 handle.create_dataset(key, data=value)
-            handle.attrs.update({"subject": subject, "stream": stream, "lock": lock, "power": "linear |z|^2, mean of trials"})
+            handle.attrs.update({
+                "subject": subject, "stream": stream, "lock": lock,
+                "power": "linear |z|^2, mean of trials",
+                "log10": "log10 of each trial's power, mean of trials",
+                "db": "10 log10 of each trial's power over its mean power in the go epoch's baseline, mean of trials",
+                "baseline_s": BASELINE,
+            })
         outputs.append(path)
     return WorkflowResult(
         stage="band_power_means",
