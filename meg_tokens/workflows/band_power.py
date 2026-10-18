@@ -4,6 +4,7 @@ then a subject's parts assembled per stream and lock."""
 
 from __future__ import annotations
 
+from functools import partial
 from pathlib import Path
 from collections.abc import Iterator
 from typing import Optional, Sequence
@@ -104,8 +105,7 @@ def band_power_part(
     variant = None
     if induced:
         go, paired = _paired_trials(project, run)
-        events, event_id = task_events(go, paired, run.condition, raw.info["sfreq"], raw.first_samp)
-        raw, _ = remove_event_responses(raw, events, event_id)
+        raw, _ = remove_event_responses(raw, partial(task_events, go, paired, run.condition))
         variant = "induced"
     inv = mne.minimum_norm.read_inverse_operator(inv_path, verbose=False)
     src = inv["src"]

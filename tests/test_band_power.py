@@ -253,42 +253,105 @@ def test_task_events_place_every_go_token_press_and_feedback():
     from meg_tokens.meg.epoching import TASK_EVENTS, task_events
 
     trials = pd.DataFrame({
-        "tGO": [1000.0, 1000.0], "tTime": [[1200.0, 1400.0, 1600.0, 1620.0], [1200.0, 1400.0]],
-        "nTokenDir": [[1, 2, 1, 2], [2, 2]], "tEnterTarget": [1500.0, 0.0], "tTrialEnd": [1700.0, 0.0],
+        "tGO": [1000.0, 1000.0], "tTime": [[1200.0, 1400.0, 1500.0, 1520.0, 1700.0], [1200.0, 1400.0]],
+        "nTokenDir": [[1, 2, 1, 2, 1], [2, 2]], "tEnterTarget": [1500.0, 0.0], "tTrialEnd": [1700.0, 0.0],
     })
-    events, present = task_events(np.array([10.0, 20.0]), trials, "Fast", sfreq=100.0, first_samp=50)
+    events, present, covariates, trial = task_events(np.array([10.0, 20.0]), trials, "Fast", sfreq=100.0, first_samp=50)
     by_name = {name: events[events[:, 2] == code, 0].tolist() for name, code in TASK_EVENTS.items()}
     assert by_name["go"] == [1050, 2050]
     assert by_name["token right before press"] == [1070]  # trial start 9 s: +1.2 s
     assert by_name["token left before press"] == [1090, 2070, 2090]  # trial 2 has no press: all before it
-    assert by_name["token after press fast"] == [1110, 1112]
+    # the token at the press's time gives way to the press, the one at the feedback's to the feedback
     assert by_name["press"] == [1100] and by_name["feedback"] == [1120]
+    assert by_name["token after press fast"] == [1102]
     assert "token after press slow" not in present
+    place = {name: dict(zip(events[:, 0].tolist(), values.tolist())) for name, values in covariates.items()}
+    assert {k: v for k, v in place["place of token right before press"].items() if v} == {1070: 1.0}
+    assert {k: v for k, v in place["place of token left before press"].items() if v} == {1090: 2.0, 2070: 1.0, 2090: 2.0}
+    assert trial.tolist() == [0] * 6 + [1] * 3
+
+
+def _events_at(onsets, covariates=None):
+    """``task_events``' interface for regression tests: onsets in seconds per event type (codes 1, 2, ...)."""
+    names = {code: name for code, name in enumerate(onsets, start=1)}
+    times = np.concatenate(list(onsets.values()))
+    codes = np.concatenate([np.full(len(v), code) for code, v in zip(names, onsets.values())])
+    values = {name: np.asarray(v, float) for name, v in (covariates or {}).items()}
+    order = np.argsort(times)
+
+    def at(sfreq, first_samp):
+        samples = first_samp + np.round(times[order] * sfreq).astype(int)
+        keep = np.r_[True, np.diff(samples) > 0]  # one event per sample, as task_events keeps
+        events = np.column_stack([samples[keep], np.zeros(keep.sum(), int), codes[order][keep]])
+        return events, {name: code for code, name in names.items()}, {k: v[order][keep] for k, v in values.items()}, order[keep]
+
+    return at
+
+
+def _smooth_raw(data, sfreq=600.0):
+    import mne
+
+    return mne.io.RawArray(data, mne.create_info([f"MLC1{i}" for i in range(len(data))], sfreq, "mag"), verbose=False)
+
+
+def _response(t, kind):
+    """Band-limited responses on -0.1 to +0.3 s."""
+    shape = np.sin(2 * np.pi * 5 * t) if kind == "a" else -np.exp(-((t - 0.1) / 0.04) ** 2)
+    return shape * np.hanning(t.size) * 1e-12
 
 
 def test_event_responses_are_estimated_and_taken_out():
+    from meg_tokens.meg.band_power import RESPONSE_SFREQ, remove_event_responses
+
+    rng = np.random.default_rng(0)
+    sfreq, n = 600.0, 600 * 120
+    lags = np.arange(-60, 181)  # -0.1 to +0.3 s
+    onsets = {"a": np.arange(60, 114, 0.37), "b": np.arange(61.05, 114, 0.53)}  # on the 10 ms grid
+    onsets["b"] = onsets["b"][~np.isin(np.round(onsets["b"] * 100), np.round(onsets["a"] * 100))]  # never together
+    clean = rng.normal(size=(2, n)) * 1e-13
+    data = clean.copy()
+    for kind, times in onsets.items():
+        for onset in np.round(times * sfreq).astype(int):
+            data[:, onset + lags] += _response(lags / sfreq, kind)
+
+    cleaned, fits = remove_event_responses(_smooth_raw(data), _events_at(onsets), window=(-0.1, 0.3))
+    assert fits[0]["a"].info["sfreq"] == RESPONSE_SFREQ
+    np.testing.assert_allclose(fits[0]["a"].data[0], _response(np.arange(-10, 31) / RESPONSE_SFREQ, "a"), atol=5e-14)
+    assert np.std(cleaned.get_data() - clean) < 0.1 * np.std(clean)
+
+
+def test_a_response_scaled_by_a_covariate_is_taken_out():
+    from meg_tokens.meg.band_power import remove_event_responses
+
+    rng = np.random.default_rng(1)
+    sfreq, n = 600.0, 600 * 120
+    lags = np.arange(-60, 181)
+    times = np.arange(60, 114, 0.37)
+    place = rng.integers(1, 10, times.size).astype(float)
+    clean = rng.normal(size=(1, n)) * 1e-13
+    data = clean.copy()
+    for onset, value in zip(np.round(times * sfreq).astype(int), place):
+        data[0, onset + lags] += _response(lags / sfreq, "a") + 0.2 * value * _response(lags / sfreq, "b")
+
+    cleaned, fits = remove_event_responses(_smooth_raw(data), _events_at({"a": times}, {"place of a": place}),
+                                           window=(-0.1, 0.3))
+    np.testing.assert_allclose(fits[0]["place of a"].data[0], 0.2 * _response(np.arange(-10, 31) / 100.0, "b"), atol=5e-14)
+    assert np.std(cleaned.get_data() - clean) < 0.1 * np.std(clean)
+
+
+def test_fitted_on_its_own_events_the_regression_takes_out_noise_and_on_other_folds_it_adds_some():
     import mne
 
     from meg_tokens.meg.band_power import remove_event_responses
 
-    rng = np.random.default_rng(0)
-    sfreq, n = 100.0, 6000
-    info = mne.create_info(["MLC11", "MLC12"], sfreq, "mag")
-    onsets = {1: np.arange(100, 5800, 37), 2: np.arange(120, 5800, 53)}
-    onsets[2] = onsets[2][~np.isin(onsets[2], onsets[1])]
-    kernels = {1: np.sin(np.linspace(0, 3, 21)) * 1e-12, 2: -np.hanning(21) * 2e-12}  # -0.05 to +0.15 s
-    clean = rng.normal(size=(2, n)) * 1e-13
-    data = clean.copy()
-    for code, where in onsets.items():
-        for onset in where:
-            data[:, onset - 5:onset + 16] += kernels[code]
-    raw = mne.io.RawArray(data, info, verbose=False)
-    events = np.array(sorted([(o, 0, c) for c, w in onsets.items() for o in w]))
+    rng = np.random.default_rng(2)
+    noise = mne.filter.filter_data(rng.normal(size=(1, 600 * 60)), 600.0, None, 30.0, verbose=False) * 1e-13
+    times = np.arange(1, 58, 0.2)  # no response at all; the fit's band holds all the noise
 
-    cleaned, responses = remove_event_responses(raw, events, {"a": 1, "b": 2}, window=(-0.05, 0.15))
-    np.testing.assert_allclose(responses["a"].data[0], kernels[1], atol=2e-14)
-    np.testing.assert_allclose(responses["b"].data[1], kernels[2], atol=2e-14)
-    assert np.std(cleaned.get_data() - clean) < 0.1 * np.std(clean)
+    in_sample, _ = remove_event_responses(_smooth_raw(noise), _events_at({"a": times}), window=(-0.5, 0.5))
+    crossed, fits = remove_event_responses(_smooth_raw(noise), _events_at({"a": times}), n_folds=10, window=(-0.5, 0.5))
+    assert len(fits) == 10
+    assert np.var(in_sample.get_data()) < 0.99 * np.var(noise) < np.var(noise) < np.var(crossed.get_data())  # 101 lags
 
 
 def test_the_induced_copy_has_its_own_files_beside_the_first(tmp_path):

@@ -18,7 +18,7 @@ orientations and the cortex projected onto its normals.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from collections import deque
 from itertools import repeat
 from pathlib import Path
@@ -246,31 +246,65 @@ __all__ = [
 
 # The span of each event's response the regression estimates, seconds from the event.
 RESPONSE_WINDOW = (-0.2, 0.8)
+# The rate the responses are fitted at, and the low-pass before it: evoked responses carry little above 40 Hz.
+RESPONSE_SFREQ = 100.0
+RESPONSE_LOWPASS = 40.0
 
 
 def remove_event_responses(
-    raw: mne.io.BaseRaw, events: np.ndarray, event_id: dict[str, int], window: tuple[float, float] = RESPONSE_WINDOW,
-) -> tuple[mne.io.BaseRaw, dict[str, mne.Evoked]]:
+    raw: mne.io.BaseRaw, events_at: Callable[[float, int], tuple], n_folds: int | None = None,
+    window: tuple[float, float] = RESPONSE_WINDOW,
+) -> tuple[mne.io.BaseRaw, list[dict[str, mne.Evoked]]]:
     """The magnetometers with every event's response taken out, and the responses.
 
-    MNE's ``linear_regression_raw`` estimates each event type's response over
-    the whole run at once, so responses that overlap (tokens 200 ms apart, a
-    press amid tokens) are told apart. The responses are placed back at every
-    event, on the lags the regression used, and subtracted, leaving what is
-    not locked to the task's events. MNE's regression sees every sample,
-    annotated ones included. ``raw`` is preloaded; returns a copy.
+    ``events_at(sfreq, first_samp)`` gives the run's events at a rate, as
+    ``task_events`` does: events, event types, covariates and each event's
+    trial. MNE's ``linear_regression_raw`` estimates each event type's
+    response over the whole run at once, so responses that overlap (tokens
+    200 ms apart, a press amid tokens) are told apart; a covariate (one value
+    per event, 0 where it does not apply) adds a response scaled by its value.
+    The regression has a parameter per lag, and fitted on the events it
+    cleans it also takes out the noise around them in proportion, most at
+    the token rate's harmonics. It is therefore fitted on the run low-passed
+    at ``RESPONSE_LOWPASS`` and decimated to ``RESPONSE_SFREQ`` (the
+    regression's ``decim``, which keeps every n-th sample; ``Raw.resample``
+    would shift the samples by half a period), six times fewer parameters
+    than at 600 Hz, with the events placed on the decimated samples; the
+    responses are brought back to the run's rate (MNE's polyphase
+    resampling), placed at every event on its own sample and subtracted. With ``n_folds``, trials are split into folds
+    and the responses subtracted at each fold's events are fitted on the
+    other folds'. MNE's regression sees every sample, annotated ones
+    included. ``raw`` is preloaded; returns a copy and the responses of each
+    fit, at ``RESPONSE_SFREQ``.
     """
     cleaned = raw.copy().pick("mag")
-    responses = mne.stats.linear_regression_raw(cleaned, events, event_id, tmin=window[0], tmax=window[1])
     sfreq = cleaned.info["sfreq"]
+    decim = int(round(sfreq / RESPONSE_SFREQ))
+    fit = cleaned.copy().filter(None, RESPONSE_LOWPASS, verbose=False)
+    fit_events, fit_ids, fit_covariates, fit_trials = events_at(RESPONSE_SFREQ, 0)
+    fit_events[:, 0] = cleaned.first_samp + decim * fit_events[:, 0]
+    events, event_id, covariates, trials = events_at(sfreq, cleaned.first_samp)
+    folds = range(n_folds) if n_folds else [None]
     lags = np.arange(int(round(window[0] * sfreq)), int(round(window[1] * sfreq)) + 1)
     predicted = np.zeros_like(cleaned._data)
-    for name, code in event_id.items():
-        onsets = events[events[:, 2] == code, 0] - cleaned.first_samp
-        kernel = responses[name].data
-        for j, lag in enumerate(lags):
-            where = onsets + lag
-            where = where[(where >= 0) & (where < cleaned.n_times)]
-            predicted[:, where] += kernel[:, j:j + 1]
+    responses = []
+    for fold in folds:
+        fitted = np.ones(len(fit_events), bool) if fold is None else fit_trials % n_folds != fold
+        here = np.ones(len(events), bool) if fold is None else trials % n_folds == fold
+        ids = {name: code for name, code in fit_ids.items() if np.any(fit_events[fitted, 2] == code)}
+        responses.append(mne.stats.linear_regression_raw(
+            fit, fit_events[fitted], ids, tmin=window[0], tmax=window[1],
+            covariates={name: values[fitted] for name, values in fit_covariates.items()} or None, decim=decim,
+        ))
+        scales = {name: (events[:, 2] == event_id[name]).astype(float) for name in ids if name in event_id}
+        scales |= {name: values for name, values in covariates.items() if name in responses[-1]}
+        for name, scale in scales.items():
+            used = here & (scale != 0)
+            onsets, values = events[used, 0] - cleaned.first_samp, scale[used]
+            kernel = mne.filter.resample(responses[-1][name].data, up=decim, method="polyphase", verbose=False)[:, :lags.size]
+            for j, lag in enumerate(lags):
+                where = onsets + lag
+                inside = (where >= 0) & (where < cleaned.n_times)
+                predicted[:, where[inside]] += kernel[:, j:j + 1] * values[inside]
     cleaned._data -= predicted
     return cleaned, responses

@@ -314,7 +314,7 @@ TASK_EVENTS = {
 
 def task_events(
     go: np.ndarray, trials: pd.DataFrame, condition: str, sfreq: float, first_samp: int,
-) -> tuple[np.ndarray, dict[str, int]]:
+) -> tuple[np.ndarray, dict[str, int], dict[str, np.ndarray]]:
     """Every go cue, token jump, press and feedback of one run, as MNE events.
 
     ``go`` and ``trials`` are ``align_go``'s pairing; the task log gives every
@@ -322,31 +322,44 @@ def task_events(
     (``tEnterTarget``) and the trial's end, its feedback (``tTrialEnd``), in
     milliseconds from the trial's start, which lies ``tGO`` before its go cue.
     Tokens before the press are split by side (1 = right) and those after it
-    by the run's speed, since they jump every 200, 20 or 170 ms. An event
-    falling on a sample already taken (two tokens 20 ms apart at most share
-    none at 600 Hz) is dropped, as MNE's regression requires unique samples.
-    Returns the events and the event types present in the run.
+    by the run's speed, since they jump every 200, 20 or 170 ms. The response
+    to a jump can change over the trial, so each token before the press also
+    carries its place in the trial (1 for the first), a covariate for MNE's
+    regression: a response that grows or shrinks with the place. Groups of
+    places cannot be separated: the tokens jump on a fixed grid from the go
+    cue, so where every trial of a run reaches the 6th token, tokens 4-6 are
+    tokens 1-3 shifted by 600 ms. MNE's regression requires one event per
+    sample: where a token shares its sample with the go cue, the press or the
+    feedback, the token is dropped. In Fast the press sets off the rapid
+    stream, its first jump at the press's own time (93 % of trials), so the
+    press's response holds that jump. Returns the events, the event types
+    present in the run, the covariates and each event's trial (0 for the
+    run's first), the last two aligned with the events.
     """
     after = "token after press fast" if condition.lower() == "fast" else "token after press slow"
-    rows = []
-    for onset, trial in zip(go, trials.itertuples()):
+    rows = []  # (seconds, event type, place of a token before the press or 0, trial)
+    for number, (onset, trial) in enumerate(zip(go, trials.itertuples())):
         start = onset - trial.tGO / 1000
         press = trial.tEnterTarget / 1000 if trial.tEnterTarget > 0 else np.inf
-        rows.append((onset, "go"))
-        for time, side in zip(np.asarray(trial.tTime, float) / 1000, trial.nTokenDir):
+        rows.append((onset, "go", 0, number))
+        for place, (time, side) in enumerate(zip(np.asarray(trial.tTime, float) / 1000, trial.nTokenDir), start=1):
             if time <= press:
-                rows.append((start + time, "token right before press" if side == 1 else "token left before press"))
+                rows.append((start + time, f"token {'right' if side == 1 else 'left'} before press", place, number))
             else:
-                rows.append((start + time, after))
+                rows.append((start + time, after, 0, number))
         if trial.tEnterTarget > 0:
-            rows.append((start + press, "press"))
+            rows.append((start + press, "press", 0, number))
         if trial.tTrialEnd > 0:
-            rows.append((start + trial.tTrialEnd / 1000, "feedback"))
-    samples = first_samp + np.round(np.array([t for t, _ in rows]) * sfreq).astype(int)
-    codes = np.array([TASK_EVENTS[name] for _, name in rows])
-    order = np.argsort(samples, kind="stable")
-    samples, codes = samples[order], codes[order]
-    unique = np.r_[True, np.diff(samples) > 0]
-    events = np.column_stack([samples[unique], np.zeros(unique.sum(), int), codes[unique]])
-    present = {name: code for name, code in TASK_EVENTS.items() if code in events[:, 2]}
-    return events, present
+            rows.append((start + trial.tTrialEnd / 1000, "feedback", 0, number))
+    times, names, places, numbers = (np.array(column) for column in zip(*rows))
+    samples = first_samp + np.round(times * sfreq).astype(int)
+    order = np.lexsort((np.char.startswith(names, "token"), samples))
+    keep = order[np.r_[True, np.diff(samples[order]) > 0]]
+    codes = np.array([TASK_EVENTS[name] for name in names[keep]])
+    events = np.column_stack([samples[keep], np.zeros(keep.size, int), codes])
+    present = {name: code for name, code in TASK_EVENTS.items() if code in codes}
+    covariates = {
+        f"place of {name}": np.where(codes == present[name], places[keep], 0).astype(float)
+        for name in ("token right before press", "token left before press") if name in present
+    }
+    return events, present, covariates, numbers[keep]
