@@ -10,8 +10,6 @@ _EXPORTS = {
     "compute_decoding_permutations": ("meg_tokens.analysis.decoding", "compute_decoding_permutations"),
     "compute_permutation_t_test": ("meg_tokens.analysis.statistics", "compute_permutation_t_test"),
     "compute_cluster_permutation_test": ("meg_tokens.analysis.statistics", "compute_cluster_permutation_test"),
-    "fit_condition_pca": ("meg_tokens.analysis.decomposition", "fit_condition_pca"),
-    "NeuralPCAResult": ("meg_tokens.analysis.decomposition", "NeuralPCAResult"),
 }
 
 __all__ = sorted(_EXPORTS)

@@ -39,7 +39,6 @@ _EXPORTS = {
     "run_lateralized_statistics": ("meg_tokens.workflows.statistics", "run_lateralized_statistics"),
     "run_decoding": ("meg_tokens.workflows.decoding", "run_decoding"),
     "run_spatial_decoding": ("meg_tokens.workflows.spatial_decoding", "run_spatial_decoding"),
-    "run_decomposition": ("meg_tokens.workflows.decomposition", "run_decomposition"),
 }
 
 __all__ = sorted(_EXPORTS)

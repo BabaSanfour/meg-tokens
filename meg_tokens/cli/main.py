@@ -15,7 +15,6 @@ from meg_tokens.core import (
     STREAMS,
     ConnectivityConfig,
     DecodingConfig,
-    DecompositionConfig,
     CoregistrationConfig,
     EpochingConfig,
     HilbertConfig,
@@ -28,6 +27,9 @@ from meg_tokens.core import (
     SpatialDecodingConfig,
     SpectralConfig,
     StatisticsConfig,
+    TRAJECTORY_MEASURES,
+    TRAJECTORY_SPACES,
+    TrajectoryConfig,
     normalize_subject_id,
 )
 
@@ -461,27 +463,17 @@ def build_parser() -> argparse.ArgumentParser:
     decoding.add_argument("--n-jobs", type=int, default=4)
     decoding.add_argument("--feature-root")
 
-    decomposition = analysis_commands.add_parser("decomposition", help="Run PCA trajectories or dPCA.")
-    decomposition.add_argument("--conditions", nargs="+", default=["Fast", "Slow"])
-    decomposition.add_argument("--subjects", nargs="+")
-    decomposition.add_argument("--analysis", choices=["pca", "dpca"], default="pca")
-    decomposition.add_argument("--feature-source", choices=["erp", "power"], default="erp")
-    decomposition.add_argument("--alignment", choices=EPOCH_LOCKS, default="go")
-    decomposition.add_argument("--source-method", default="dSPM")
-    decomposition.add_argument("--parc", default="HCPMMP1")
-    decomposition.add_argument("--band")
-    decomposition.add_argument("--power-method", default="hilbert")
-    decomposition.add_argument("--labels", nargs="+")
-    decomposition.add_argument("--lateralize", action="store_true")
-    decomposition.add_argument("--average-unit", choices=["subject", "trial"], default="subject")
-    decomposition.add_argument("--transform", choices=["sqrt", "signed-sqrt"])
-    decomposition.add_argument("--n-components", type=int, default=20)
-    decomposition.add_argument("--min-variance", type=float)
-    decomposition.add_argument("--fit-time-range", type=float, nargs=2)
-    decomposition.add_argument("--project-centered", action="store_true")
-    decomposition.add_argument("--marginalize-cols", nargs="+")
-    decomposition.add_argument("--dpca-labels")
-    decomposition.add_argument("--feature-root")
+    trajectories = analysis_commands.add_parser(
+        "trajectories",
+        help="PCA trajectories of the cohort's condition means, per stream and lock (meg.md §2).",
+    )
+    trajectories.add_argument("--fit", choices=["grandaverage", "pooled"], required=True)
+    trajectories.add_argument("--measure", choices=TRAJECTORY_MEASURES, required=True)
+    trajectories.add_argument("--space", choices=TRAJECTORY_SPACES, default="HCPMMP1")
+    trajectories.add_argument("--n-components", type=int, default=20)
+    trajectories.add_argument("--streams", nargs="+", choices=STREAMS, default=list(STREAMS))
+    trajectories.add_argument("--locks", nargs="+", choices=EPOCH_LOCKS, help="default: go, decision, enter")
+    trajectories.add_argument("--subjects", nargs="+", help="default: every staged subject")
 
     spatial_decoding = analysis_commands.add_parser(
         "spatial-decoding",
@@ -583,43 +575,6 @@ def build_parser() -> argparse.ArgumentParser:
     spatial_report.add_argument("--score-path", required=True)
     spatial_report.add_argument("--info-fif", required=True)
     spatial_report.add_argument("--output-root")
-
-    trajectory_report = report_commands.add_parser("pca-trajectory", help="Plot PCA trajectories.")
-    trajectory_report.add_argument("--timecourse-path", required=True)
-    trajectory_report.add_argument("--conditions", nargs="+")
-    trajectory_report.add_argument("--components", type=int, nargs="+", default=[1, 2, 3])
-    trajectory_report.add_argument("--output-root")
-
-    timecourse_report = report_commands.add_parser("pca-timecourse", help="Plot PCA component time courses.")
-    timecourse_report.add_argument("--timecourse-path", required=True)
-    timecourse_report.add_argument("--components", type=int, default=3)
-    timecourse_report.add_argument("--conditions", nargs="+")
-    timecourse_report.add_argument("--output-root")
-
-    variance_report = report_commands.add_parser("pca-variance", help="Plot PCA explained variance.")
-    variance_report.add_argument("--variance-path", required=True)
-    variance_report.add_argument("--output-root")
-
-    heatmap_report = report_commands.add_parser("pca-heatmap", help="Plot a PCA ROI heatmap.")
-    heatmap_report.add_argument("--data-path", required=True)
-    heatmap_report.add_argument("--rois", nargs="+")
-    heatmap_report.add_argument("--output-root")
-
-    loadings_report = report_commands.add_parser("pca-loadings", help="Plot PCA source loadings.")
-    loadings_report.add_argument("--loadings-path", required=True)
-    loadings_report.add_argument("--subjects-dir")
-    loadings_report.add_argument("--threshold-percentile", type=float)
-    loadings_report.add_argument("--export-csv", action="store_true")
-    loadings_report.add_argument("--save-movie", action="store_true")
-    loadings_report.add_argument("--vertices-path")
-    loadings_report.add_argument("--volume", action="store_true")
-    loadings_report.add_argument("--output-root")
-
-    dpca_report = report_commands.add_parser("dpca", help="Plot dPCA components.")
-    dpca_report.add_argument("--component-paths", nargs="+")
-    dpca_report.add_argument("--dpca-root")
-    dpca_report.add_argument("--n-components", type=int, default=3)
-    dpca_report.add_argument("--output-root")
 
     validate = domains.add_parser("validate", help="Validate staged derivatives.")
     validation_commands = validate.add_subparsers(dest="validation_command", required=True)
@@ -1168,34 +1123,18 @@ def _analyze_decoding(project: ProjectConfig, args: argparse.Namespace) -> objec
     )
 
 
-def _analyze_decomposition(project: ProjectConfig, args: argparse.Namespace) -> object:
-    from meg_tokens.workflows.decomposition import run_decomposition
+def _analyze_trajectories(project: ProjectConfig, args: argparse.Namespace) -> object:
+    from meg_tokens.meg.band_power import LOCKS
+    from meg_tokens.workflows.trajectories import trajectories
 
-    return run_decomposition(
-        project,
-        subjects=args.subjects,
-        settings=DecompositionConfig(
-            conditions=tuple(args.conditions),
-            analysis=args.analysis,
-            feature_source=args.feature_source,
-            alignment=args.alignment,
-            source_method=args.source_method,
-            parc=args.parc,
-            band=args.band,
-            power_method=args.power_method,
-            labels=tuple(args.labels) if args.labels else None,
-            lateralize=args.lateralize,
-            average_unit=args.average_unit,
-            transform=args.transform,
-            n_components=args.n_components,
-            min_variance=args.min_variance,
-            fit_time_range=tuple(args.fit_time_range) if args.fit_time_range else None,
-            project_centered=args.project_centered,
-            marginalize_cols=tuple(args.marginalize_cols) if args.marginalize_cols else None,
-            dpca_labels=args.dpca_labels,
-        ),
-        feature_root=args.feature_root,
+    settings = TrajectoryConfig(
+        fit=args.fit, measure=args.measure, space=args.space, n_components=args.n_components,
     )
+    return [
+        trajectories(project, stream=stream, lock=lock, settings=settings, subjects=args.subjects)
+        for stream in args.streams
+        for lock in args.locks or LOCKS
+    ]
 
 
 def _analyze_spatial_decoding(project: ProjectConfig, args: argparse.Namespace) -> object:
@@ -1320,75 +1259,6 @@ def _report_spatial_decoding(project: ProjectConfig, args: argparse.Namespace) -
     )
 
 
-def _report_pca_trajectory(project: ProjectConfig, args: argparse.Namespace) -> object:
-    from meg_tokens.reports.decomposition.trajectory import run_batch_plot_pca_trajectory
-
-    return run_batch_plot_pca_trajectory(
-        args.timecourse_path,
-        str(args.output_root or project.bids_root),
-        args.conditions,
-        args.components,
-    )
-
-
-def _report_pca_timecourse(project: ProjectConfig, args: argparse.Namespace) -> object:
-    from meg_tokens.reports.decomposition.timecourse import run_batch_plot_component_timecourse
-
-    return run_batch_plot_component_timecourse(
-        args.timecourse_path,
-        str(args.output_root or project.bids_root),
-        args.components,
-        args.conditions,
-    )
-
-
-def _report_pca_variance(project: ProjectConfig, args: argparse.Namespace) -> object:
-    from meg_tokens.reports.decomposition.variance import run_batch_plot_pca_variance
-
-    return run_batch_plot_pca_variance(
-        args.variance_path,
-        str(args.output_root or project.bids_root),
-    )
-
-
-def _report_pca_heatmap(project: ProjectConfig, args: argparse.Namespace) -> object:
-    from meg_tokens.reports.decomposition.heatmap import run_batch_plot_pca_heatmap
-
-    return run_batch_plot_pca_heatmap(
-        args.data_path,
-        str(args.output_root or project.bids_root),
-        args.rois,
-    )
-
-
-def _report_pca_loadings(project: ProjectConfig, args: argparse.Namespace) -> object:
-    from meg_tokens.reports.decomposition.loadings import run_batch_plot_pca_loadings
-
-    return run_batch_plot_pca_loadings(
-        args.loadings_path,
-        str(args.output_root or project.bids_root),
-        args.subjects_dir or (
-            str(project.subjects_dir) if project.subjects_dir else None
-        ),
-        args.threshold_percentile,
-        args.export_csv,
-        args.save_movie,
-        args.vertices_path,
-        args.volume,
-    )
-
-
-def _report_dpca(project: ProjectConfig, args: argparse.Namespace) -> object:
-    from meg_tokens.reports.decomposition.dpca import run_batch_plot_dpca
-
-    return run_batch_plot_dpca(
-        component_paths=args.component_paths,
-        dpca_dir=args.dpca_root,
-        output_dir=str(args.output_root or project.bids_root),
-        n_components_to_plot=args.n_components,
-    )
-
-
 def _validate_golden(project: ProjectConfig, args: argparse.Namespace) -> object:
     from meg_tokens.validation import run_golden_validation
 
@@ -1444,7 +1314,7 @@ _HANDLERS: dict[tuple[str, str], Handler] = {
     ("analyze", "statistics"): _analyze_statistics,
     ("analyze", "lateralization"): _analyze_lateralization,
     ("analyze", "decoding"): _analyze_decoding,
-    ("analyze", "decomposition"): _analyze_decomposition,
+    ("analyze", "trajectories"): _analyze_trajectories,
     ("analyze", "spatial-decoding"): _analyze_spatial_decoding,
     ("report", "behavior"): _report_behavior,
     ("report", "coreg"): _report_coreg,
@@ -1453,12 +1323,6 @@ _HANDLERS: dict[tuple[str, str], Handler] = {
     ("report", "seed-connectivity"): _report_seed_connectivity,
     ("report", "decoding-onset"): _report_decoding_onset,
     ("report", "spatial-decoding"): _report_spatial_decoding,
-    ("report", "pca-trajectory"): _report_pca_trajectory,
-    ("report", "pca-timecourse"): _report_pca_timecourse,
-    ("report", "pca-variance"): _report_pca_variance,
-    ("report", "pca-heatmap"): _report_pca_heatmap,
-    ("report", "pca-loadings"): _report_pca_loadings,
-    ("report", "dpca"): _report_dpca,
     ("validate", "golden"): _validate_golden,
 }
 

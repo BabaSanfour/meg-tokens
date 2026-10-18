@@ -6,66 +6,6 @@ import mne
 # Set seaborn defaults for beautiful modern plots
 sns.set_theme(style="whitegrid", context="paper", palette="deep")
 
-def plot_roi_timecourse(
-    times: np.ndarray,
-    data_cond1: np.ndarray,
-    data_cond2: np.ndarray,
-    label_cond1: str = 'Condition 1',
-    label_cond2: str = 'Condition 2',
-    significance_windows: list = None,
-    roi_name: str = 'ROI',
-    ax=None
-):
-    """
-    Plots the time course of neural activity for two conditions with standard error shading.
-    Highlights periods of statistical significance.
-    
-    Args:
-        times: Array of time points (in ms or s).
-        data_cond1: Array of shape (n_subjects, n_times) for Condition 1.
-        data_cond2: Array of shape (n_subjects, n_times) for Condition 2.
-        label_cond1: Label for Condition 1.
-        label_cond2: Label for Condition 2.
-        significance_windows: List of (start_idx, end_idx) tuples indicating significant windows.
-        roi_name: Name of the ROI for the title.
-        ax: Matplotlib axis. If None, creates a new figure.
-        
-    Returns:
-        Matplotlib axis.
-    """
-    if ax is None:
-        _, ax = plt.subplots(figsize=(10, 6))
-        
-    mean1 = np.mean(data_cond1, axis=0)
-    sem1 = np.std(data_cond1, axis=0) / np.sqrt(data_cond1.shape[0])
-    
-    mean2 = np.mean(data_cond2, axis=0)
-    sem2 = np.std(data_cond2, axis=0) / np.sqrt(data_cond2.shape[0])
-    
-    ax.plot(times, mean1, label=label_cond1, color=sns.color_palette()[0], lw=2)
-    ax.fill_between(times, mean1 - sem1, mean1 + sem1, alpha=0.3, color=sns.color_palette()[0])
-    
-    ax.plot(times, mean2, label=label_cond2, color=sns.color_palette()[1], lw=2)
-    ax.fill_between(times, mean2 - sem2, mean2 + sem2, alpha=0.3, color=sns.color_palette()[1])
-    
-    # Highlight significant windows
-    if significance_windows:
-        for (start_idx, end_idx) in significance_windows:
-            if start_idx < len(times) and end_idx < len(times):
-                ax.axvspan(times[start_idx], times[end_idx], color='gray', alpha=0.2, label='p < 0.05' if start_idx == significance_windows[0][0] else "")
-                
-    ax.set_title(f"Source Activity: {roi_name}")
-    ax.set_xlabel("Time")
-    ax.set_ylabel("Source Amplitude (A.U.)")
-    
-    # Deduplicate labels in legend
-    handles, labels = ax.get_legend_handles_labels()
-    by_label = dict(zip(labels, handles))
-    ax.legend(by_label.values(), by_label.keys(), loc='best')
-    
-    sns.despine(ax=ax)
-    return ax
-
 def plot_correlation(
     x_data: np.ndarray,
     y_data: np.ndarray,
@@ -110,54 +50,6 @@ def plot_correlation(
     
     sns.despine(ax=ax)
     return ax
-
-def plot_brain_tmap(
-    stc: mne.SourceEstimate,
-    subject: str = 'fsaverage',
-    subjects_dir: str = None,
-    hemi: str = 'both',
-    clim: dict = None,
-    time: float = None,
-    title: str = 'Source T-Map'
-):
-    """
-    Plots statistical source maps onto a 3D brain using MNE's built-in PyVista 3D backend.
-    This replaces the legacy 'visbrain' dependencies.
-    
-    Args:
-        stc: An mne.SourceEstimate holding the t-values.
-        subject: Subject template name (default 'fsaverage').
-        subjects_dir: Path to FreeSurfer subjects directory.
-        hemi: Hemisphere to plot ('lh', 'rh', 'both', or 'split').
-        clim: Dictionary for colorbar limits, e.g., dict(kind='value', pos_lims=(2, 3, 5)).
-        time: Specific time point to visualize (in seconds).
-        title: Title of the window.
-        
-    Returns:
-        brain: mne.viz.Brain object.
-    """
-    if clim is None:
-        # Default symmetric limits for t-values
-        clim = dict(kind='value', pos_lims=(1.5, 2.5, 4.0))
-        
-    brain = stc.plot(
-        subject=subject,
-        surface='inflated',
-        hemi=hemi,
-        subjects_dir=subjects_dir,
-        time_viewer=True,
-        clim=clim,
-        colormap='mne',
-        transparent=True,
-        title=title,
-        background='white',
-        cortex='low_contrast'
-    )
-    
-    if time is not None:
-        brain.set_time(time)
-        
-    return brain
 
 def plot_tfr_spectrogram(
     tfr: mne.time_frequency.AverageTFR,
@@ -243,36 +135,3 @@ def plot_sensor_topomap(
     
     ax.set_title(title)
     return ax
-
-def save_brain_movie_frames(
-    brain: mne.viz.Brain,
-    times: np.ndarray,
-    output_dir: str,
-    prefix: str = "Fig",
-    views: list = ['dorsal', 'lateral', 'medial']
-):
-    """
-    Core function to export time-resolved frame-by-frame screenshots of a 3D brain map.
-    Replicates the legacy 'visbrain' screenshot loop by capturing multiple views per timepoint.
-    
-    Args:
-        brain: The mne.viz.Brain object (e.g. returned by stc.plot).
-        times: Array of timepoints corresponding to the SourceEstimate.
-        output_dir: Directory to save the PNG frames.
-        prefix: Prefix for the output filenames.
-        views: List of MNE views to capture ('dorsal'=top, 'lateral'=left, 'medial'=right).
-    """
-    import os
-    if not os.path.exists(output_dir):
-        os.makedirs(output_dir)
-        
-    print(f"Exporting {len(times)} timepoints x {len(views)} views...")
-    for t_idx, t in enumerate(times):
-        brain.set_time(t)
-        for view in views:
-            brain.show_view(view)
-            # In a real environment, uncomment this to save:
-            # brain.save_image(
-            #     os.path.join(output_dir, f"{prefix}_{view}_{t_idx}.png")
-            # )
-    print("Export complete.")

@@ -9,7 +9,7 @@ Analysis library for decision-making dynamics on the **Tokens Task** with MEG. `
     *   `behavior/`: TDMS parsing, behavioral metrics.
     *   `meg/`: raw staging, coregistration, two-stream preprocessing (DSS and ICA), epoching, source localization.
     *   `features/`: ERP, power, spectral, Hilbert, PAC, connectivity estimators.
-    *   `analysis/`: statistics, decoding, PCA, dPCA estimators.
+    *   `analysis/`: statistics, decoding, PCA trajectories.
     *   `workflows/`: filesystem-aware processing/analysis stages.
     *   `reports/`: figures, report tables.
     *   `cli/`: the `meg-tokens` command.
@@ -44,7 +44,7 @@ Module map, in pipeline order. Stage numbers live only under [Running the Pipeli
 | **Neural Source Localization** | [`sources.py`](meg_tokens/meg/sources.py) | Computes noise covariance, BEM models, sets up source spaces, and applies minimum-norm inverses. |
 | **Source-Space Time-Frequency Power** | [`time_frequency.py`](meg_tokens/features/time_frequency.py) | Extracts band power from source estimates using modern MNE calls. |
 | **ERP Slicing, Parcellation, & Export** | [`erp.py`](meg_tokens/features/erp.py) | Aligns, pads, parcellates, and exports labeled `.npy` arrays with JSON sidecars. |
-| **Group Analyses** | [`analysis/`](meg_tokens/analysis) | Provides permutation statistics, decoding, PCA, and dPCA estimators. |
+| **Group Analyses** | [`analysis/`](meg_tokens/analysis) | Provides permutation statistics, decoding, and PCA trajectories (`trajectories.py`, through coco-pipe). |
 | **Workflow Orchestration** | [`Snakefile`](workflow/Snakefile) | Schedules subjects, runs, shared source models, features, analyses, and reports. |
 
 ## 💾 Data Locations
@@ -260,12 +260,17 @@ meg-tokens --config tokens.toml report behavior --figures all
 
 Commands exist for every later stage -- `meg source`, `features
 {erp,power,spectral,hilbert,pac,connectivity}`, `analyze
-{statistics,lateralization,decoding,decomposition,spatial-decoding}`, the
+{statistics,lateralization,decoding,spatial-decoding}`, the
 matching `report` figures, and `validate golden` -- but they were ported from
 the original notebooks and **none has run on this project's data**. Each is
 rebuilt against [`docs/meg.md`](docs/meg.md) when
 its stage is reached; until then treat them as unverified, and read their
 options from `meg-tokens <domain> <command> --help`.
+
+`analyze trajectories` is rebuilt: PCA trajectories of the cohort's condition
+means through coco-pipe, fitted on their grand average or on every subject's
+means pooled (`docs/meg.md` §2, Analyses). It runs on `fir` as a Slurm array,
+`scripts/trajectories_array.sh`, one task per analysis, stream and lock.
 
 ## Workflow Orchestration
 

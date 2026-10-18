@@ -219,6 +219,30 @@ times (cortex normal component), with `vertices_lh`, `vertices_rh`. The
 its own head position), one MNE evoked per condition with trials in that run,
 its `comment` the condition name and `nave` its trial count.
 
+## Trajectory derivatives
+
+One file per stream, lock, space, fit and measure, for the cohort:
+
+```
+derivatives/sub-group/meg/sub-group_task-tokens_proc-dss_space-HCPMMP1_desc-go-pooled-log10_trajectories.h5
+```
+
+The fit is `grandaverage` (a PCA of the grand average of the subjects'
+condition means, each subject projected uncentred) or `pooled` (a PCA of every
+subject's condition means pooled at equal weight, projected centred); `measure` is `power`,
+`log10` (centred per subject, band and region by `log10_center`), `db` or
+`erp`. Every array has a leading band axis (`bands`; `field` alone for the
+event-related fields): `components` (component x source), `mean` (the fit's
+centre), `explained_variance_ratio`, `participation_ratio` (of the retained
+components), `reconstruction_error` (per subject), `scores` (subject x
+condition x time x component) and, for band power, `quantile_scores`
+(subject x quintile x time x component, on the components of the condition
+means). Labels: `subjects`, `conditions`, `quantiles`, `sources` (the cortical
+sources finite in every subject: no deep structure, no region without a
+source; fsaverage vertices as `lh-<v>`, `rh-<v>`), `times`; the region fields
+add `signs` (subject x region, the flip that makes the subjects' fields
+agree). The sidecar names the fit, the subjects and the sources dropped.
+
 ## Stage 0: Raw BIDSification
 
 Raw CTF media carries no condition/run label (`H02_DDM-tthiery_20180213_03.ds`

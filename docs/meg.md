@@ -48,7 +48,14 @@ nearest each end of the run, where they differ by up to 5 % of a source's
 typical power, most in theta: the analytic signal is computed over the whole
 recording and its edge error decays slowly, past the half filter length
 marked invalid, and the two routes treat the ends differently. Means per
-condition and per decision-time quintile: complete.
+condition and per decision-time quintile: complete, as linear power, log10
+power and dB against each trial's go-epoch baseline (`315b950`). In all 192
+files every condition of every subject has trials, no mean is NaN where its
+region has sources, and log10 of the mean exceeds the mean of log10 by 0.10
+at the median (up to 1.3 in a few cells): taking the log per trial matters.
+1–2% of the decision- and press-locked trials in conditions have no baseline,
+their go epoch dropped (H10 ICA 30–33, H02 14–18, H21 13–16), and are left
+out of the dB means only.
 
 **Event-related fields — complete, both streams.** Regions, deep structures
 and fsaverage per subject and lock; sensor averages per run (§2, Event-related
@@ -59,7 +66,7 @@ The audit behind the analysis stage: `docs/analysis_audit.md`; the hypotheses
 it leads to: `docs/analysis_hypotheses.md`.
 
 **Downstream helpers with no callers.** `psd_description`
-(`workflows/spectral.py`), `run_batch_dpca` (`workflows/decomposition.py`),
+(`workflows/spectral.py`),
 `get_peak_latency` / `get_significance_onset` / `compute_motor_lateralization`
 (`analysis/statistics.py`), `extract_roi_time_courses`
 (`features/connectivity.py`), `plot_tfr_spectrogram` / `plot_sensor_topomap`
@@ -214,6 +221,25 @@ lacks (the inverse, band power, storage). PCA runs both ways: the paper's
 (grand average, raw power) and the trajectory primer's (subject × condition
 means, the participant as unit, permutations within participant). Decoding
 permutes labels within subject, and Fast/Slow by run within subject.
+- Every sample at 600 Hz enters the PCA; any smoothing comes after it. One
+  PCA per stream, lock and band, on the cortex alone: the 17 deep structures
+  are mostly cortex through this inverse (§4, Source reconstruction) and the
+  preprint's PCA had none; a region with no source in any subject is left out.
+- The two fits are named for what they do: `grandaverage` (one PCA of the
+  grand average of the subjects' condition means, each subject projected
+  uncentred: the preprint's code) and `pooled` (one PCA of every subject's
+  condition means pooled at equal weight, projected centred: the primer's).
+  Band power enters the grand-average fit as raw power and the pooled fit as
+  log10 centred by each subject's mean log10 power over every trial and time
+  of the lock (main) or in dB; the decision-time quintile means are projected on the
+  components of the condition means.
+- The event-related fields enter signed. On `fsaverage` each vertex keeps its
+  subject's outward-normal convention, so subjects compare as they are: that
+  PCA is the main one for the fields. A region's field (`mean_flip`) has a sign
+  set by each subject's folding, so before its PCA each subject's region is
+  flipped, once for all twelve conditions, until it agrees with the other
+  subjects' sum; condition contrasts are untouched, and the group mean is
+  slightly favoured.
 
 **Storage → no single-trial source estimates.** An inverse operator is one
 matrix per run and stream (512 files); each analysis applies it to the data,

@@ -334,39 +334,39 @@ class SpatialDecodingConfig:
             raise ValueError("n_jobs cannot be zero")
 
 
+# What a trajectory PCA reads: band power as each of its means' three forms, or
+# the signed event-related fields; and where (fields also on fsaverage).
+TRAJECTORY_MEASURES = ("power", "log10", "db", "erp")
+TRAJECTORY_SPACES = ("HCPMMP1", "fsaverage")
+
+
 @dataclass(frozen=True)
-class DecompositionConfig:
-    conditions: Tuple[str, ...] = ("Fast", "Slow")
-    analysis: str = "pca"
-    feature_source: str = "erp"
-    alignment: str = "go"
-    source_method: str = "dSPM"
-    parc: Optional[str] = "HCPMMP1"
-    band: Optional[str] = None
-    power_method: str = "hilbert"
-    labels: Optional[Tuple[str, ...]] = None
-    lateralize: bool = False
-    average_unit: str = "subject"
-    transform: Optional[str] = None
+class TrajectoryConfig:
+    """One PCA trajectory analysis (meg.md §2, Analyses).
+
+    ``fit`` is ``grandaverage`` (one PCA of the grand average of the subjects'
+    condition means, each subject projected uncentred, as the preprint's code
+    did) or ``pooled`` (one PCA of every subject's condition means pooled at
+    equal weight, projected centred, as the trajectory primer does).
+    ``measure`` is band power as ``power`` (linear), ``log10`` (centred per
+    subject, band and region) or ``db`` (against each trial's pre-token
+    baseline), or ``erp``, the signed fields.
+    Band power is in the HCP-MMP1 regions; fields also on ``fsaverage``.
+    """
+
+    fit: str = "pooled"
+    measure: str = "log10"
+    space: str = "HCPMMP1"
     n_components: int = 20
-    min_variance: Optional[float] = None
-    fit_time_range: Optional[Tuple[float, float]] = None
-    project_centered: bool = False
-    marginalize_cols: Optional[Tuple[str, ...]] = None
-    dpca_labels: Optional[str] = None
 
     def __post_init__(self) -> None:
-        if self.analysis not in {"pca", "dpca"}:
-            raise ValueError("analysis must be 'pca' or 'dpca'")
-        if self.feature_source not in {"erp", "power"}:
-            raise ValueError("feature_source must be 'erp' or 'power'")
-        if self.feature_source == "power" and self.band is None:
-            raise ValueError("band is required for power decomposition")
-        if self.average_unit not in {"subject", "trial"}:
-            raise ValueError("average_unit must be 'subject' or 'trial'")
-        if self.transform not in {None, "sqrt", "signed-sqrt"}:
-            raise ValueError(f"Unknown transform: {self.transform}")
-        if self.n_components <= 0:
+        if self.fit not in ("grandaverage", "pooled"):
+            raise ValueError(f"fit must be 'grandaverage' or 'pooled', got {self.fit!r}")
+        if self.measure not in TRAJECTORY_MEASURES:
+            raise ValueError(f"measure must be one of {list(TRAJECTORY_MEASURES)}, got {self.measure!r}")
+        if self.space not in TRAJECTORY_SPACES:
+            raise ValueError(f"space must be one of {list(TRAJECTORY_SPACES)}, got {self.space!r}")
+        if self.space == "fsaverage" and self.measure != "erp":
+            raise ValueError("band power means exist in the HCP-MMP1 regions only; fsaverage takes measure 'erp'")
+        if self.n_components < 1:
             raise ValueError("n_components must be positive")
-        if self.analysis == "dpca" and not self.marginalize_cols:
-            raise ValueError("marginalize_cols are required for dPCA")

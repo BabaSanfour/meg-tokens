@@ -27,6 +27,10 @@ CHOICE_VALUES = {
     "--configuration": "tau_slow",
     "--stream": "dss",
     "--streams": "dss",
+    "--locks": "go",
+    "--fit": "pooled",
+    "--measure": "log10",
+    "--space": "HCPMMP1",
 }
 
 

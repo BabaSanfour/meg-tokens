@@ -376,6 +376,13 @@ class DerivativeLayout:
             subject=subject, processing=stream, space=space, description=lock, suffix="erp", extension=".h5",
         )
 
+    def trajectories(self, *, stream: str, lock: str, space: str, fit: str, measure: str) -> Path:
+        """The cohort's PCA trajectories around one lock: one fit, one measure, every band."""
+        return self.path(
+            subject="group", processing=stream, space=space, description=f"{lock}-{fit}-{measure}",
+            suffix="trajectories", extension=".h5",
+        )
+
     def evoked_sensors(self, *, subject: str, run: str, condition: str, stream: str, lock: str) -> Path:
         """One run's condition averages around one lock, in the sensors and that run's head position (MNE evoked file)."""
         run_number, inferred = parse_run_label(run)
@@ -665,42 +672,6 @@ class DerivativeLayout:
                 band.replace("_", "-") if band else None,
                 roi,
                 "lateralized" if lateralized else None,
-            ),
-            suffix=suffix,
-            extension=extension,
-        )
-
-    def pca(
-        self,
-        *,
-        conditions: Sequence[str],
-        feature_source: str,
-        alignment: str,
-        source_method: str,
-        parc: Optional[str],
-        band: Optional[str],
-        suffix: str,
-        extension: str,
-        labels: Optional[Sequence[str]] = None,
-        lateralized: bool = False,
-    ) -> Path:
-        contrast = "-".join(
-            [conditions[0].lower(), "vs", *[condition.lower() for condition in conditions[1:]]]
-        )
-        selection = "lateralized" if lateralized else None
-        if labels and not lateralized:
-            selection = str(labels[0]) if len(labels) == 1 else f"{len(labels)}labels"
-        return self.path(
-            subject="group",
-            description=_description(
-                contrast,
-                feature_source,
-                alignment,
-                source_method,
-                parc,
-                band.replace("_", "-") if band else None,
-                selection,
-                "pca",
             ),
             suffix=suffix,
             extension=extension,

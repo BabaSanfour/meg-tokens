@@ -8,7 +8,6 @@ from .settings import (
     STREAMS,
     ConnectivityConfig,
     DecodingConfig,
-    DecompositionConfig,
     CoregistrationConfig,
     EpochingConfig,
     HilbertConfig,
@@ -20,6 +19,9 @@ from .settings import (
     SpectralConfig,
     SpatialDecodingConfig,
     StatisticsConfig,
+    TRAJECTORY_MEASURES,
+    TRAJECTORY_SPACES,
+    TrajectoryConfig,
 )
 
 __all__ = [
@@ -28,7 +30,6 @@ __all__ = [
     "EpochingConfig",
     "ConnectivityConfig",
     "DecodingConfig",
-    "DecompositionConfig",
     "HilbertConfig",
     "LateralizedStatisticsConfig",
     "PACConfig",
@@ -40,6 +41,9 @@ __all__ = [
     "SpatialDecodingConfig",
     "SpectralConfig",
     "StatisticsConfig",
+    "TRAJECTORY_MEASURES",
+    "TRAJECTORY_SPACES",
+    "TrajectoryConfig",
     "RunSpec",
     "WorkflowResult",
     "normalize_subject_id",
