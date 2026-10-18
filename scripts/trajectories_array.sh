@@ -1,6 +1,6 @@
 #!/bin/bash
 # Slurm array for the PCA trajectories (meg.md §2): one task per analysis,
-# stream and lock, 60 for the plan. Never run this command directly on a login
+# stream and lock, 72 for the plan. Never run this command directly on a login
 # node.
 #
 #   sbatch --array=<tasks> [resources] scripts/trajectories_array.sh tokens.toml [analyze trajectories options]
@@ -9,7 +9,9 @@
 # preprint-matched fit is the press lock cut to -1.25 to +1.2 s (tasks 2 and
 # 5: `--window -1.25 1.2`), `--with-deep` fits the deep structures beside the
 # regions, and band power on fsaverage (tasks 42-59) needs `--fsaverage-root`
-# (scripts/band_power_means_fsaverage_array.sh).
+# (scripts/band_power_means_fsaverage_array.sh). The deep sources on
+# fsaverage's grid (tasks 60-71) take `--fsaverage-root` (the deep root) and
+# `--structure`, one submission per structure (scripts/deep_power_means_array.sh).
 #
 # Task i runs analysis i // 6 of ANALYSES on stream (i % 6) // 3 and lock
 # i % 3 (0 go, 1 decision, 2 enter). Memory follows the analysis and the lock:
@@ -57,6 +59,8 @@ ANALYSES=(
     "grandaverage power fsaverage"
     "pooled log10 fsaverage"
     "pooled db fsaverage"
+    "grandaverage power fsaverageaseg"
+    "pooled log10 fsaverageaseg"
 )
 STREAMS=(dss ica)
 LOCKS=(go decision enter)
