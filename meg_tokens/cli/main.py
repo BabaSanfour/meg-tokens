@@ -301,6 +301,30 @@ def build_parser() -> argparse.ArgumentParser:
         "empty for none",
     )
 
+    deep_power = meg_commands.add_parser(
+        "deep-power",
+        help="Single-trial band power at every deep source for one run, stream and band, every lock.",
+    )
+    deep_power.add_argument("--subjects", nargs=1, required=True)
+    deep_power.add_argument("--run", required=True)
+    deep_power.add_argument("--condition", required=True)
+    deep_power.add_argument("--stream", choices=STREAMS, required=True)
+    deep_power.add_argument("--band", required=True, help="theta, alpha, beta, gamma or highgamma")
+    deep_power.add_argument("--locks", nargs="+", choices=EPOCH_LOCKS, help="default: go, decision, enter")
+    deep_power.add_argument("--n-jobs", type=int, default=1, help="cores for filtering")
+    deep_power.add_argument("--output-root", required=True, help="the BIDS-like root of the deep power (in /project)")
+
+    band_power_means_fsaverage = meg_commands.add_parser(
+        "band-power-means-fsaverage",
+        help="A subject's mean fsaverage band power per condition and decision-time quintile, one band, every lock.",
+    )
+    band_power_means_fsaverage.add_argument("--subjects", nargs="+", required=True)
+    band_power_means_fsaverage.add_argument("--streams", nargs="+", choices=STREAMS, default=list(STREAMS))
+    band_power_means_fsaverage.add_argument("--bands", nargs="+", help="default: every band")
+    band_power_means_fsaverage.add_argument("--locks", nargs="+", choices=EPOCH_LOCKS, help="default: go, decision, enter")
+    band_power_means_fsaverage.add_argument("--fsaverage-root", required=True, help="where the fsaverage band power is")
+    band_power_means_fsaverage.add_argument("--output-root", help="write the means under this root instead of the fsaverage root")
+
     band_power_prepare = meg_commands.add_parser(
         "band-power-prepare",
         help="Build each subject's morph map with fsaverage, once, before the band-power jobs.",
@@ -474,6 +498,9 @@ def build_parser() -> argparse.ArgumentParser:
     trajectories.add_argument("--streams", nargs="+", choices=STREAMS, default=list(STREAMS))
     trajectories.add_argument("--locks", nargs="+", choices=EPOCH_LOCKS, help="default: go, decision, enter")
     trajectories.add_argument("--subjects", nargs="+", help="default: every staged subject")
+    trajectories.add_argument("--window", type=float, nargs=2, metavar=("TMIN", "TMAX"),
+                              help="seconds from the lock; default: the lock's whole analysis window")
+    trajectories.add_argument("--fsaverage-root", help="where the fsaverage band power means are (power on fsaverage)")
 
     spatial_decoding = analysis_commands.add_parser(
         "spatial-decoding",
@@ -874,6 +901,35 @@ def _meg_band_power(project: ProjectConfig, args: argparse.Namespace) -> object:
     )
 
 
+def _meg_deep_power(project: ProjectConfig, args: argparse.Namespace) -> object:
+    from meg_tokens.meg.band_power import BANDS, LOCKS
+    from meg_tokens.workflows.band_power import deep_power_part
+
+    if args.band not in BANDS:
+        raise SystemExit(f"--band must be one of {', '.join(BANDS)}")
+    return deep_power_part(
+        project, RunSpec(subject=args.subjects[0], run=args.run, condition=args.condition),
+        stream=args.stream, band=args.band, locks=args.locks or LOCKS, output_root=args.output_root,
+        n_jobs=args.n_jobs,
+    )
+
+
+def _meg_band_power_means_fsaverage(project: ProjectConfig, args: argparse.Namespace) -> object:
+    from meg_tokens.meg.band_power import BANDS, LOCKS
+    from meg_tokens.workflows.band_power import band_power_means_fsaverage
+
+    unknown = sorted(set(args.bands or ()) - set(BANDS))
+    if unknown:
+        raise SystemExit(f"--bands must be among {', '.join(BANDS)}, got {unknown}")
+    return [
+        band_power_means_fsaverage(project, subject, stream=stream, band=band, locks=args.locks or LOCKS,
+                                   fsaverage_root=args.fsaverage_root, output_root=args.output_root)
+        for subject in args.subjects
+        for stream in args.streams
+        for band in args.bands or BANDS
+    ]
+
+
 def _meg_band_power_prepare(project: ProjectConfig, args: argparse.Namespace) -> object:
     from meg_tokens.meg.band_power import prepare_morph_map
     from meg_tokens.meg.meg_bids import staged_subjects
@@ -1129,9 +1185,11 @@ def _analyze_trajectories(project: ProjectConfig, args: argparse.Namespace) -> o
 
     settings = TrajectoryConfig(
         fit=args.fit, measure=args.measure, space=args.space, n_components=args.n_components,
+        window=tuple(args.window) if args.window else None,
     )
     return [
-        trajectories(project, stream=stream, lock=lock, settings=settings, subjects=args.subjects)
+        trajectories(project, stream=stream, lock=lock, settings=settings, subjects=args.subjects,
+                     fsaverage_root=args.fsaverage_root)
         for stream in args.streams
         for lock in args.locks or LOCKS
     ]
@@ -1306,6 +1364,8 @@ _HANDLERS: dict[tuple[str, str], Handler] = {
     ("meg", "erp"): _meg_erp,
     ("meg", "band-power-means"): _meg_band_power_means,
     ("meg", "band-power-prepare"): _meg_band_power_prepare,
+    ("meg", "deep-power"): _meg_deep_power,
+    ("meg", "band-power-means-fsaverage"): _meg_band_power_means_fsaverage,
     ("features", "power"): _features_power,
     ("features", "spectral"): _features_spectral,
     ("features", "hilbert"): _features_hilbert,

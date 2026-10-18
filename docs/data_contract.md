@@ -195,6 +195,25 @@ stream and band under its own BIDS-like root (`band_power.fsaverage_root`):
 per lock, `<lock>/power`, trials x 8,196 `oct6` sources (left then right) x
 times, and `<lock>/times`, in the order of the lock's epoch file.
 
+The fsaverage means (`band-power-means-fsaverage`) are the same three forms,
+groups, counts and baseline on the 8,196 `fsaverage` sources, one file per
+subject, stream, lock and band under the fsaverage root
+(`*_space-fsaverage_desc-<lock>-<band>_powermeans.h5`, about 4.4 TB for the
+cohort): `condition_<measure>` (12 x sources x times), `quantile_<measure>`,
+`*_n`, `*_n_db`, `log10_center` (sources), `quantile_dt_ms`, `times`,
+`vertices_lh`, `vertices_rh`. They equal the region means' computation on
+the same trials.
+
+Deep power (`deep-power`) keeps every deep source that the region file
+averages per structure: one file per run, stream and band under the same
+root (`*_run-<n>_proc-<stream>_space-aseg_desc-<cond>-<band>_power.h5`), with
+`<lock>/power` (trials x sources x times, the sum over x, y and z of
+|z|^2, NaN where the filter reaches a flux jump or the recording's end, in
+the order of the lock's epoch file), `<lock>/times`, and per source its
+`structure` (one of the 17), `vertno` and `positions_mri` (metres). Sources
+stay in the subject's own volume; a group analysis brings them to a common
+grid.
+
 ## Event-related-field derivatives
 
 Per subject, stream and lock, the twelve condition averages (Fast/Slow ×

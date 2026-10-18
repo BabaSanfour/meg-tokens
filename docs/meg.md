@@ -225,6 +225,14 @@ permutes labels within subject, and Fast/Slow by run within subject.
   PCA per stream, lock and band, on the cortex alone: the 17 deep structures
   are mostly cortex through this inverse (§4, Source reconstruction) and the
   preprint's PCA had none; a region with no source in any subject is left out.
+- The preprint's PCA is on the button-press lock from −1.25 to +1.2 s; the
+  matched fit cuts the window before fitting (a PCA fits what it is given),
+  at 600 Hz, on all 32 subjects, our trial classes and both streams. Band
+  power on the 8,196 fsaverage sources has its own condition and quintile
+  means, read once from the 24 TB of single-trial power. Every deep source's
+  power (all 17 structures, whatever share of their estimate is cortex) is
+  kept per trial as a derivative, for the preprint's per-structure PCA and
+  later analyses.
 - The means are held in the float32 they are stored in. The grand-average fit
   runs in float64, since raw power sits far from zero and its covariance would
   lose precision; the pooled fit (centred log10, dB, signed fields) runs in

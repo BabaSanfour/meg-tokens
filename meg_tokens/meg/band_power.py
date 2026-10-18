@@ -217,8 +217,28 @@ def trial_power(
         yield power, average
 
 
+
+def deep_trial_power(epochs: mne.BaseEpochs, inv: mne.minimum_norm.InverseOperator) -> Iterator[np.ndarray]:
+    """For each trial of complex epochs, the power of every deep source, sources x times.
+
+    A deep source has no surface to be normal to: its power is the sum over x,
+    y and z of |z|^2, which does not depend on the axes. ``inv`` is prepared;
+    MNE applies the whole operator, and only the volume's estimate is kept.
+    """
+    for stc in mne.minimum_norm.apply_inverse_epochs(
+        epochs, inv, LAMBDA2, METHOD, pick_ori="vector", prepared=True, return_generator=True, verbose=False,
+    ):
+        yield _power(stc.volume()).data
+
+
+def fsaverage_vertices(subjects_dir: str | Path) -> list[np.ndarray]:
+    """The ``fsaverage`` ``oct6`` vertices the fsaverage power is on, left then right."""
+    target = mne.setup_source_space("fsaverage", "oct6", subjects_dir=subjects_dir, add_dist=False, verbose=False)
+    return [hemisphere["vertno"] for hemisphere in target]
+
 __all__ = [
     "BANDS", "TRANSITIONS", "LOCKS", "PARCELLATION", "INVALID_NEAR",
     "half_length", "analytic", "invalid_samples", "window",
     "morph_map", "prepare_morph_map", "hcp_labels", "deep_labels", "fsaverage_morph", "trial_power",
+    "deep_trial_power", "fsaverage_vertices",
 ]

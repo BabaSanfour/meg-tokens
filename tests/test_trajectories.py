@@ -151,11 +151,6 @@ def test_region_fields_are_sign_aligned_before_the_pca(tmp_path):
         assert [s.decode() for s in handle["sources"]] == ["lh-0", "lh-1", "rh-0", "rh-1"]
 
 
-def test_band_power_is_in_the_regions_only():
-    with pytest.raises(ValueError, match="fsaverage takes measure 'erp'"):
-        TrajectoryConfig(measure="power", space="fsaverage")
-
-
 def test_a_pooled_fit_in_float32_matches_float64():
     means = RNG.normal(size=(6, 12, 300, 40))
     means[..., :5] += 3 * np.sin(np.linspace(0, 8, 300))[None, None, :, None]
@@ -168,3 +163,53 @@ def test_a_grand_average_fit_is_float64_even_from_float32_means():
     means = (RNG.normal(size=(4, 3, 50, 6)) + 1e3).astype(np.float32)
     reducer = pca.fit(means, "grandaverage", 2)
     assert reducer.reducer.model.mean_.dtype == np.float64
+
+
+
+def test_a_window_crops_the_fit_and_the_trajectories(tmp_path):
+    project, layout = _project(tmp_path)
+    subjects = ["H01", "H02", "H03"]
+    for index, subject in enumerate(subjects):
+        _write_power_means(layout, subject, level=10 * index)
+    settings = TrajectoryConfig(fit="grandaverage", measure="power", n_components=2, window=(-0.2, 0.5))
+
+    trajectories(project, stream="dss", lock="go", settings=settings, subjects=subjects)
+
+    path = layout.trajectories(stream="dss", lock="go", space="HCPMMP1", fit="grandaverage", measure="power",
+                               window=(-0.2, 0.5))
+    assert path.name.endswith("desc-go-grandaverage-power-m200to500ms_trajectories.h5")
+    inside = (TIMES >= -0.2 - 1e-9) & (TIMES <= 0.5 + 1e-9)
+    with h5py.File(path, "r") as handle:
+        np.testing.assert_allclose(handle["times"][:], TIMES[inside])
+        assert handle["scores"].shape == (len(BANDS), 3, 12, inside.sum(), 2)
+        assert handle["quantile_scores"].shape == (len(BANDS), 3, 10, inside.sum(), 2)
+
+
+def test_band_power_on_fsaverage_reads_one_means_file_per_band(tmp_path):
+    project, layout = _project(tmp_path)
+    fsaverage = DerivativeLayout(tmp_path / "fsaverage", task=project.task)
+    subjects = ["H01", "H02", "H03"]
+    for level, subject in enumerate(subjects):
+        for band in BANDS:
+            path = fsaverage.band_power_means_fsaverage(subject=subject, stream="dss", lock="go", band=band)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with h5py.File(path, "w") as handle:
+                for prefix, n in (("condition", 12), ("quantile", 10)):
+                    for measure in ("power", "log10", "db"):
+                        handle[f"{prefix}_{measure}"] = RNG.normal(size=(n, 5, TIMES.size)) + 10 * level
+                handle["condition_n"] = np.full(12, 5)
+                handle["conditions"] = np.array(CONDITIONS, dtype="S")
+                handle["quantiles"] = np.array([f"q{q}" for q in range(10)], dtype="S")
+                handle["log10_center"] = np.full(5, 10.0 * level)
+                handle["times"] = TIMES
+                handle["vertices_lh"], handle["vertices_rh"] = np.array([0, 1, 2]), np.array([0, 1])
+    settings = TrajectoryConfig(fit="pooled", measure="log10", space="fsaverage", n_components=2)
+
+    trajectories(project, stream="dss", lock="go", settings=settings, subjects=subjects,
+                 fsaverage_root=tmp_path / "fsaverage")
+
+    path = layout.trajectories(stream="dss", lock="go", space="fsaverage", fit="pooled", measure="log10")
+    with h5py.File(path, "r") as handle:
+        assert [s.decode() for s in handle["sources"]] == ["lh-0", "lh-1", "lh-2", "rh-0", "rh-1"]
+        assert handle["scores"].shape == (len(BANDS), 3, 12, TIMES.size, 2)
+        assert np.abs(handle["mean"][:]).max() < 1  # each subject centred by its own log10_center

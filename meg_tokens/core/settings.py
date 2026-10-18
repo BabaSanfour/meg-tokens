@@ -350,14 +350,16 @@ class TrajectoryConfig:
     equal weight, projected centred, as the trajectory primer does).
     ``measure`` is band power as ``power`` (linear), ``log10`` (centred per
     subject, band and region) or ``db`` (against each trial's pre-token
-    baseline), or ``erp``, the signed fields.
-    Band power is in the HCP-MMP1 regions; fields also on ``fsaverage``.
+    baseline), or ``erp``, the signed fields, in the HCP-MMP1 regions or on
+    ``fsaverage``. ``window`` (seconds from the lock) restricts the fit and the
+    trajectories to part of the lock's analysis window; ``None`` keeps all of it.
     """
 
     fit: str = "pooled"
     measure: str = "log10"
     space: str = "HCPMMP1"
     n_components: int = 20
+    window: Optional[Tuple[float, float]] = None
 
     def __post_init__(self) -> None:
         if self.fit not in ("grandaverage", "pooled"):
@@ -366,7 +368,7 @@ class TrajectoryConfig:
             raise ValueError(f"measure must be one of {list(TRAJECTORY_MEASURES)}, got {self.measure!r}")
         if self.space not in TRAJECTORY_SPACES:
             raise ValueError(f"space must be one of {list(TRAJECTORY_SPACES)}, got {self.space!r}")
-        if self.space == "fsaverage" and self.measure != "erp":
-            raise ValueError("band power means exist in the HCP-MMP1 regions only; fsaverage takes measure 'erp'")
+        if self.window is not None and not self.window[0] < self.window[1]:
+            raise ValueError(f"window must run forward in time, got {self.window}")
         if self.n_components < 1:
             raise ValueError("n_components must be positive")

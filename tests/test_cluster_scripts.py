@@ -31,6 +31,8 @@ CHOICE_VALUES = {
     "--fit": "pooled",
     "--measure": "log10",
     "--space": "HCPMMP1",
+    "--bands": "alpha",
+    "--band": "alpha",
 }
 
 
@@ -43,6 +45,8 @@ def invocations(script: Path) -> list[list[str]]:
         if line.startswith("echo") or "meg-tokens --config" not in line:
             continue
         command = line[line.index("meg-tokens"):].split("|")[0].split(")")[0].strip()
+        # An array of optional arguments ("${OPTIONS[@]}") may be empty: drop it.
+        command = re.sub(r'"?\$\{[A-Za-z_][A-Za-z0-9_]*\[@\]\}"?', "", command)
         command = re.sub(r'"?\$\{?[A-Za-z_][A-Za-z0-9_]*(:-[^}]*)?\}?"?', "3", command)
         argv = shlex.split(command)[1:]
         for flag, value in CHOICE_VALUES.items():

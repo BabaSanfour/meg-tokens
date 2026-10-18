@@ -30,47 +30,86 @@ def _names(values: np.ndarray) -> list[str]:
     return [value.decode() for value in values]
 
 
+def _in_window(times: np.ndarray, window: Optional[tuple[float, float]]) -> np.ndarray:
+    """The samples inside ``window`` (seconds from the lock, both ends kept); all without one."""
+    if window is None:
+        return np.ones(times.size, bool)
+    return (times >= window[0] - 1e-9) & (times <= window[1] + 1e-9)
+
+
 def _require_every_condition(handle: h5py.File, counts: str, subject: str, what: str) -> None:
     empty = [name for name, n in zip(_names(handle["conditions"][:]), handle[counts][:]) if n == 0]
     if empty:
         raise ValueError(f"{subject} {what}: no trials in {empty}; the PCA needs every subject's twelve conditions")
 
 
-def _power_means(
-    layout: DerivativeLayout, subjects: Sequence[str], *, stream: str, lock: str, measure: str, band: int,
-) -> tuple[np.ndarray, np.ndarray, dict, list[Path]]:
-    """One band's condition and quintile means of the subjects' cortical regions,
-    subject x (condition | quintile) x time x region, log10 centred."""
-    paths = [
-        require_file(layout.band_power_means(subject=subject, stream=stream, lock=lock),
-                     purpose=f"{subject} {stream} {lock} band power means; run `meg band-power-means` first")
-        for subject in subjects
-    ]
-    with h5py.File(paths[0], "r") as first:
-        cortex = ~np.isin(_names(first["sources"][:]), VOLUME_LABELS)
-        meta = {
-            "conditions": _names(first["conditions"][:]), "quantiles": _names(first["quantiles"][:]),
-            "sources": np.array(_names(first["sources"][:]))[cortex].tolist(), "times": first["times"][:],
-        }
-        shape = (len(meta["times"]), int(cortex.sum()))
-    # Kept in the files' float32; the fit upcasts what needs it (analysis/trajectories.py).
-    conditions = np.empty((len(subjects), len(meta["conditions"]), *shape), dtype=np.float32)
-    quantiles = np.empty((len(subjects), len(meta["quantiles"]), *shape), dtype=np.float32)
-    centres = np.zeros((len(subjects), shape[1]), dtype=np.float32)
-    for index, (subject, path) in enumerate(zip(subjects, paths)):
-        with h5py.File(path, "r") as handle:
-            _require_every_condition(handle, "condition_n", subject, f"{stream} {lock}")
-            conditions[index] = np.swapaxes(handle[f"condition_{measure}"][:, band][:, cortex], 1, 2)
-            quantiles[index] = np.swapaxes(handle[f"quantile_{measure}"][:, band][:, cortex], 1, 2)
-            if measure == "log10":
-                centres[index] = handle["log10_center"][band][cortex]
-    if measure == "log10":
-        conditions, quantiles = pca.centre_log10(conditions, centres), pca.centre_log10(quantiles, centres)
-    return conditions, quantiles, meta, paths
+class _PowerMeans:
+    """One band's means of the subjects' cortical sources, read from the means files:
+    the 360 HCP-MMP1 regions (deep structures left out) or the 8,196 fsaverage
+    sources; within ``window``; log10 centred by each subject's ``log10_center``."""
+
+    def __init__(
+        self, layout: DerivativeLayout, fsaverage: Optional[DerivativeLayout], subjects: Sequence[str], *,
+        stream: str, lock: str, measure: str, band: int, space: str, window: Optional[tuple[float, float]],
+    ) -> None:
+        self.measure, self.band, self.space = measure, band, space
+        if space == PARCELLATION:
+            self.paths = [
+                require_file(layout.band_power_means(subject=subject, stream=stream, lock=lock),
+                             purpose=f"{subject} {stream} {lock} band power means; run `meg band-power-means` first")
+                for subject in subjects
+            ]
+        else:
+            self.paths = [
+                require_file(fsaverage.band_power_means_fsaverage(subject=subject, stream=stream, lock=lock,
+                                                                  band=list(BANDS)[band]),
+                             purpose=f"{subject} {stream} {lock} fsaverage band power means; "
+                                     "run `meg band-power-means-fsaverage` first")
+                for subject in subjects
+            ]
+        with h5py.File(self.paths[0], "r") as first:
+            if space == PARCELLATION:
+                names = _names(first["sources"][:])
+                self.cortex = ~np.isin(names, VOLUME_LABELS)
+                sources = np.array(names)[self.cortex].tolist()
+            else:
+                sources = [f"lh-{v}" for v in first["vertices_lh"][:]] + [f"rh-{v}" for v in first["vertices_rh"][:]]
+                self.cortex = np.ones(len(sources), bool)
+            self.crop = _in_window(first["times"][:], window)
+            self.meta = {
+                "conditions": _names(first["conditions"][:]), "quantiles": _names(first["quantiles"][:]),
+                "sources": sources, "times": first["times"][:][self.crop],
+            }
+        self.subjects, self.what = list(subjects), f"{stream} {lock}"
+
+    def _read(self, handle: h5py.File, group: str) -> np.ndarray:
+        data = handle[f"{group}_{self.measure}"]
+        data = data[:, self.band] if self.space == PARCELLATION else data[:]
+        data = np.swapaxes(data[:, self.cortex][..., self.crop], 1, 2)
+        if self.measure == "log10":
+            centre = handle["log10_center"][self.band] if self.space == PARCELLATION else handle["log10_center"][:]
+            data = pca.centre_log10(data[None], centre[None, self.cortex].astype(np.float32))[0]
+        return data
+
+    def conditions(self) -> np.ndarray:
+        """Subject x condition x time x source, float32 as stored."""
+        shape = (len(self.meta["conditions"]), int(self.crop.sum()), int(self.cortex.sum()))
+        means = np.empty((len(self.paths), *shape), dtype=np.float32)
+        for index, (subject, path) in enumerate(zip(self.subjects, self.paths)):
+            with h5py.File(path, "r") as handle:
+                _require_every_condition(handle, "condition_n", subject, self.what)
+                means[index] = self._read(handle, "condition")
+        return means
+
+    def quantiles(self, index: int) -> np.ndarray:
+        """One subject's quintile means, quintile x time x source."""
+        with h5py.File(self.paths[index], "r") as handle:
+            return self._read(handle, "quantile")
 
 
 def _field_means(
     layout: DerivativeLayout, subjects: Sequence[str], *, stream: str, lock: str, space: str,
+    window: Optional[tuple[float, float]],
 ) -> tuple[np.ndarray, dict, list[Path]]:
     """The subjects' signed condition fields on the cortex, subject x condition x time x source."""
     paths = [
@@ -83,12 +122,13 @@ def _field_means(
             sources = _names(first["sources"][:])
         else:
             sources = [f"lh-{v}" for v in first["vertices_lh"][:]] + [f"rh-{v}" for v in first["vertices_rh"][:]]
-        meta = {"conditions": _names(first["conditions"][:]), "sources": sources, "times": first["times"][:]}
-    fields = np.empty((len(subjects), len(meta["conditions"]), len(meta["times"]), len(sources)), dtype=np.float32)
+        crop = _in_window(first["times"][:], window)
+        meta = {"conditions": _names(first["conditions"][:]), "sources": sources, "times": first["times"][:][crop]}
+    fields = np.empty((len(subjects), len(meta["conditions"]), int(crop.sum()), len(sources)), dtype=np.float32)
     for index, (subject, path) in enumerate(zip(subjects, paths)):
         with h5py.File(path, "r") as handle:
             _require_every_condition(handle, "n_trials", subject, f"{stream} {lock} {space}")
-            fields[index] = np.swapaxes(handle["erp"][:], 1, 2)
+            fields[index] = np.swapaxes(handle["erp"][:][..., crop], 1, 2)
     return fields, meta, paths
 
 
@@ -99,6 +139,7 @@ def trajectories(
     lock: str,
     settings: TrajectoryConfig,
     subjects: Optional[Sequence[str]] = None,
+    fsaverage_root: Optional[str | Path] = None,
     output_root: Optional[str | Path] = None,
 ) -> WorkflowResult:
     """The cohort's PCA trajectories around one lock, one fit and measure, every band.
@@ -111,22 +152,29 @@ def trajectories(
     quintile x time x component); with ``subjects``, ``conditions``,
     ``quantiles``, ``sources`` (those finite in every subject), ``times`` and,
     for the region fields, ``signs`` (subject x region, ``align_signs``).
+    Band power on fsaverage reads its means under ``fsaverage_root``. Each
+    subject is projected on its own, so no more than one subject's means is
+    ever copied to the components' precision.
     """
     layout = DerivativeLayout(project.bids_root, task=project.task)
     destination = DerivativeLayout(output_root or project.bids_root, task=project.task)
+    fsaverage = None if fsaverage_root is None else DerivativeLayout(fsaverage_root, task=project.task)
+    if settings.space == "fsaverage" and settings.measure != "erp" and fsaverage is None:
+        raise ValueError("band power on fsaverage needs fsaverage_root, where its means are")
     selected = list(subjects or staged_subjects(project.bids_root))
     is_field = settings.measure == "erp"
     bands = ("field",) if is_field else tuple(BANDS)
 
     results, signs = [], None
     for band_index, _ in enumerate(bands):
-        quantile_means = None
+        source = None
         if is_field:
-            means, meta, paths = _field_means(layout, selected, stream=stream, lock=lock, space=settings.space)
+            means, meta, paths = _field_means(layout, selected, stream=stream, lock=lock, space=settings.space,
+                                              window=settings.window)
         else:
-            means, quantile_means, meta, paths = _power_means(
-                layout, selected, stream=stream, lock=lock, measure=settings.measure, band=band_index,
-            )
+            source = _PowerMeans(layout, fsaverage, selected, stream=stream, lock=lock, measure=settings.measure,
+                                 band=band_index, space=settings.space, window=settings.window)
+            means, meta, paths = source.conditions(), source.meta, source.paths
         keep = np.isfinite(means).all(axis=(0, 1, 2))
         if not keep.all():
             means = means[..., keep]
@@ -138,14 +186,18 @@ def trajectories(
             "components": reducer.get_components(),
             "mean": reducer.reducer.model.mean_,
             **pca.describe(reducer, means),
-            "scores": pca.project(reducer, means, settings.fit),
+            "scores": np.stack([pca.project(reducer, subject, settings.fit) for subject in means]),
         }
-        if quantile_means is not None:
-            result["quantile_scores"] = pca.project(reducer, quantile_means[..., keep], settings.fit)
+        if source is not None:
+            result["quantile_scores"] = np.stack([
+                pca.project(reducer, source.quantiles(index)[..., keep], settings.fit) for index in range(len(selected))
+            ])
         results.append(result)
+        del means
 
     path = destination.trajectories(
         stream=stream, lock=lock, space=settings.space, fit=settings.fit, measure=settings.measure,
+        window=settings.window,
     )
     path.parent.mkdir(parents=True, exist_ok=True)
     projection = "uncentred" if settings.fit == "grandaverage" else "centred"
@@ -164,12 +216,14 @@ def trajectories(
         handle.attrs.update({
             "stream": stream, "lock": lock, "space": settings.space, "fit": settings.fit,
             "measure": settings.measure, "n_components": settings.n_components, "projection": projection,
+            "window_s": list(settings.window) if settings.window else [float(meta["times"][0]), float(meta["times"][-1])],
         })
     save_sidecar(path, {
         "stream": stream, "lock": lock, "space": settings.space, "fit": settings.fit,
         "measure": settings.measure, "n_components": settings.n_components, "projection": projection,
         "fitted_on": "grand average of the subjects' condition means" if settings.fit == "grandaverage"
         else "every subject's condition means pooled at equal weight",
+        "window_s": list(settings.window) if settings.window else "the lock's whole analysis window",
         "subjects": selected, "bands": list(bands), "n_sources": int(keep.sum()),
         "dropped_sources": np.array(meta["sources"])[~keep].tolist(),
         "deep_structures": "left out",

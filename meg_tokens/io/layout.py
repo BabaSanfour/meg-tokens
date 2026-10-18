@@ -364,6 +364,13 @@ class DerivativeLayout:
             subject=subject, processing=stream, space="HCPMMP1", description=lock, suffix="powermeans", extension=".h5",
         )
 
+    def band_power_means_fsaverage(self, *, subject: str, stream: str, lock: str, band: str) -> Path:
+        """A subject's mean band power on ``fsaverage`` per condition and decision-time quintile, one lock and band."""
+        return self.path(
+            subject=subject, processing=stream, space="fsaverage", description=f"{lock}-{band}",
+            suffix="powermeans", extension=".h5",
+        )
+
     def band_power_trials(self, *, subject: str, stream: str, lock: str) -> Path:
         """The trials of a subject's band power, in its order: one row per trial, both spaces."""
         return self.path(
@@ -376,10 +383,22 @@ class DerivativeLayout:
             subject=subject, processing=stream, space=space, description=lock, suffix="erp", extension=".h5",
         )
 
-    def trajectories(self, *, stream: str, lock: str, space: str, fit: str, measure: str) -> Path:
-        """The cohort's PCA trajectories around one lock: one fit, one measure, every band."""
+    def trajectories(
+        self, *, stream: str, lock: str, space: str, fit: str, measure: str,
+        window: Optional[tuple[float, float]] = None,
+    ) -> Path:
+        """The cohort's PCA trajectories around one lock: one fit, one measure, every band.
+
+        A window other than the lock's whole one is named in milliseconds,
+        ``m`` for minus: ``-1.25, 1.2`` is ``m1250to1200ms``.
+        """
+        def ms(seconds: float) -> str:
+            value = int(round(seconds * 1000))
+            return f"m{-value}" if value < 0 else str(value)
+
+        tag = "" if window is None else f"-{ms(window[0])}to{ms(window[1])}ms"
         return self.path(
-            subject="group", processing=stream, space=space, description=f"{lock}-{fit}-{measure}",
+            subject="group", processing=stream, space=space, description=f"{lock}-{fit}-{measure}{tag}",
             suffix="trajectories", extension=".h5",
         )
 

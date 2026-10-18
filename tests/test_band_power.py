@@ -130,3 +130,65 @@ def test_means_per_condition_and_quintile_as_power_log10_and_db(tmp_path):
     assert means["condition_power"][easy, 0, 0, 0] == np.mean([1, 3, 5, 7, 9]) * 5
     assert np.allclose(means["condition_db"][easy, 0, 0], 10 * np.log10(shape))
     assert means["quantile_n_db"][0] == 1
+
+
+def test_fsaverage_means_equal_the_region_means_of_the_same_trials(tmp_path, monkeypatch):
+    import h5py
+    import pandas as pd
+
+    import meg_tokens.meg.band_power as domain
+    from meg_tokens.core import ProjectConfig
+    from meg_tokens.io import DerivativeLayout
+    from meg_tokens.workflows.band_power import band_power_means, band_power_means_fsaverage
+
+    monkeypatch.setattr(domain, "fsaverage_vertices", lambda subjects_dir: [np.array([0, 1]), np.array([0])])
+    project = ProjectConfig(data_root=tmp_path, subjects_dir=tmp_path)
+    layout = DerivativeLayout(project.bids_root, task=project.task)
+    fsaverage_root = tmp_path / "fsaverage"
+    rng = np.random.default_rng(0)
+    times = {"go": np.array([-0.4, -0.2, 0.0, 0.2]), "decision": np.linspace(-1.5, 2.0, 6)}
+    go = pd.DataFrame({
+        "condition": ["Fast"] * 10 + ["Slow"] * 10,
+        "run": [1] * 20,
+        "nTrialIndex": list(range(1, 11)) * 2,
+        "trial_class_name": ["easy", "ambiguous"] * 10,
+        "choice_side": [1.0] * 20,
+        "dt_ms": rng.permutation(np.arange(20.0)),
+    })
+    tables = {"go": go, "decision": go.drop(index=3).reset_index(drop=True)}  # one trial lost at decision
+    for lock, table in tables.items():
+        power = rng.lognormal(size=(len(table), 1, 3, times[lock].size)).astype(np.float32)
+        power[0, 0, 1, 2] = np.nan
+        path = layout.band_power(subject="H01", stream="dss", lock=lock, space=bp.PARCELLATION)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with h5py.File(path, "w") as handle:
+            handle["power"] = power
+            handle["times"] = times[lock]
+            handle["bands"] = np.array([b"alpha"])
+            for key in ("band_edges_hz", "sources", "n_sources"):
+                handle[key] = np.arange(3)
+        table.to_csv(layout.band_power_trials(subject="H01", stream="dss", lock=lock), sep="\t", index=False)
+        for condition in ("Fast", "Slow"):
+            rows = np.flatnonzero(table["condition"] == condition)
+            part = DerivativeLayout(fsaverage_root, task=project.task).band_power_part(
+                subject="H01", run="1", condition=condition, stream="dss", band="alpha", space="fsaverage")
+            part.parent.mkdir(parents=True, exist_ok=True)
+            with h5py.File(part, "a") as handle:
+                handle[f"{lock}/power"] = power[rows, 0]
+                handle[f"{lock}/times"] = times[lock]
+
+    band_power_means(project, "H01", stream="dss", locks=["go", "decision"])
+    band_power_means_fsaverage(project, "H01", stream="dss", band="alpha", locks=["go", "decision"],
+                               fsaverage_root=fsaverage_root)
+
+    for lock in ("go", "decision"):
+        with h5py.File(layout.band_power_means(subject="H01", stream="dss", lock=lock), "r") as regions, \
+                h5py.File(DerivativeLayout(fsaverage_root, task=project.task).band_power_means_fsaverage(
+                    subject="H01", stream="dss", lock=lock, band="alpha"), "r") as vertices:
+            for key in ("condition_power", "condition_log10", "condition_db",
+                        "quantile_power", "quantile_log10", "quantile_db"):
+                np.testing.assert_allclose(vertices[key][:], regions[key][:, 0], rtol=1e-5, equal_nan=True)
+            for key in ("condition_n", "condition_n_db", "quantile_n", "quantile_n_db", "quantile_dt_ms"):
+                np.testing.assert_array_equal(vertices[key][:], regions[key][:])
+            np.testing.assert_allclose(vertices["log10_center"][:], regions["log10_center"][0], rtol=1e-6)
+            assert vertices["vertices_lh"].size == 2
