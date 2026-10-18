@@ -245,3 +245,80 @@ def test_deep_means_are_the_part_means_morphed_onto_fsaverages_grid(tmp_path, mo
                                    rtol=1e-6)
         np.testing.assert_allclose(handle["coverage"][:], 0.5)
         assert [s.decode() for s in handle["structure"]] == ["Left-Caudate"] * 3
+
+
+def test_task_events_place_every_go_token_press_and_feedback():
+    import pandas as pd
+
+    from meg_tokens.meg.epoching import TASK_EVENTS, task_events
+
+    trials = pd.DataFrame({
+        "tGO": [1000.0, 1000.0], "tTime": [[1200.0, 1400.0, 1600.0, 1620.0], [1200.0, 1400.0]],
+        "nTokenDir": [[1, 2, 1, 2], [2, 2]], "tEnterTarget": [1500.0, 0.0], "tTrialEnd": [1700.0, 0.0],
+    })
+    events, present = task_events(np.array([10.0, 20.0]), trials, "Fast", sfreq=100.0, first_samp=50)
+    by_name = {name: events[events[:, 2] == code, 0].tolist() for name, code in TASK_EVENTS.items()}
+    assert by_name["go"] == [1050, 2050]
+    assert by_name["token right before press"] == [1070]  # trial start 9 s: +1.2 s
+    assert by_name["token left before press"] == [1090, 2070, 2090]  # trial 2 has no press: all before it
+    assert by_name["token after press fast"] == [1110, 1112]
+    assert by_name["press"] == [1100] and by_name["feedback"] == [1120]
+    assert "token after press slow" not in present
+
+
+def test_event_responses_are_estimated_and_taken_out():
+    import mne
+
+    from meg_tokens.meg.band_power import remove_event_responses
+
+    rng = np.random.default_rng(0)
+    sfreq, n = 100.0, 6000
+    info = mne.create_info(["MLC11", "MLC12"], sfreq, "mag")
+    onsets = {1: np.arange(100, 5800, 37), 2: np.arange(120, 5800, 53)}
+    onsets[2] = onsets[2][~np.isin(onsets[2], onsets[1])]
+    kernels = {1: np.sin(np.linspace(0, 3, 21)) * 1e-12, 2: -np.hanning(21) * 2e-12}  # -0.05 to +0.15 s
+    clean = rng.normal(size=(2, n)) * 1e-13
+    data = clean.copy()
+    for code, where in onsets.items():
+        for onset in where:
+            data[:, onset - 5:onset + 16] += kernels[code]
+    raw = mne.io.RawArray(data, info, verbose=False)
+    events = np.array(sorted([(o, 0, c) for c, w in onsets.items() for o in w]))
+
+    cleaned, responses = remove_event_responses(raw, events, {"a": 1, "b": 2}, window=(-0.05, 0.15))
+    np.testing.assert_allclose(responses["a"].data[0], kernels[1], atol=2e-14)
+    np.testing.assert_allclose(responses["b"].data[1], kernels[2], atol=2e-14)
+    assert np.std(cleaned.get_data() - clean) < 0.1 * np.std(clean)
+
+
+def test_the_induced_copy_has_its_own_files_beside_the_first(tmp_path):
+    import h5py
+    import pandas as pd
+
+    from meg_tokens.core import ProjectConfig
+    from meg_tokens.io import DerivativeLayout
+    from meg_tokens.workflows.band_power import band_power_means
+
+    project = ProjectConfig(data_root=tmp_path)
+    layout = DerivativeLayout(project.bids_root, task=project.task)
+    trials = pd.DataFrame({
+        "condition": ["Fast"] * 4 + ["Slow"] * 4, "run": [1] * 8, "nTrialIndex": list(range(1, 5)) * 2,
+        "trial_class_name": ["easy"] * 8, "choice_side": [1.0] * 8, "dt_ms": np.arange(8.0),
+    })
+    for variant, level in ((None, 1.0), ("induced", 2.0)):
+        path = layout.band_power(subject="H01", stream="dss", lock="go", space=bp.PARCELLATION, variant=variant)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with h5py.File(path, "w") as handle:
+            handle["power"] = np.full((8, 1, 2, 3), level, np.float32)
+            handle["times"] = np.array([-0.2, 0.0, 0.2])
+            for key in ("bands", "band_edges_hz", "sources", "n_sources"):
+                handle[key] = np.arange(2)
+    trials.to_csv(layout.band_power_trials(subject="H01", stream="dss", lock="go"), sep="\t", index=False)
+
+    band_power_means(project, "H01", stream="dss", locks=["go"], induced=True)
+
+    induced = layout.band_power_means(subject="H01", stream="dss", lock="go", variant="induced")
+    assert induced.name.endswith("desc-go-induced_powermeans.h5")
+    assert not layout.band_power_means(subject="H01", stream="dss", lock="go").exists()
+    with h5py.File(induced, "r") as handle:
+        assert np.allclose(handle["condition_power"][:][handle["condition_n"][:] > 0], 2.0)

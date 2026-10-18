@@ -4,7 +4,7 @@
 # login node.
 #
 #   sbatch --dependency=afterok:<prepare job> --array=0-2559%400 \
-#       scripts/band_power_array.sh tokens.toml [fsaverage_root]
+#       scripts/band_power_array.sh tokens.toml [fsaverage_root] [--induced]
 #
 # Run scripts/band_power_prepare.sh first: every task reads the morph maps it
 # builds. Task i takes line i of `meg band-power-tasks`. A task writes its
@@ -27,6 +27,8 @@ set -euo pipefail
 
 CONFIG="${1:?usage: sbatch --array=0-N scripts/band_power_array.sh <config.toml> [fsaverage_root]}"
 FSAVERAGE_ROOT="${2:-}"
+# Further options go to `meg band-power`: `--induced` writes the second copy.
+EXTRA=("${@:3}")
 
 mapfile -t TASKS < <(./.venv/bin/meg-tokens --config "$CONFIG" meg band-power-tasks)
 if [ "${SLURM_ARRAY_TASK_ID}" -ge "${#TASKS[@]}" ]; then
@@ -54,7 +56,8 @@ echo "commit=$(git rev-parse HEAD) dirty=$(git status --porcelain | tr '\n' ';')
     --band "$BAND" \
     --n-jobs "${SLURM_CPUS_PER_TASK}" \
     --output-root "$LOCAL_REGIONS" \
-    --fsaverage-root "$LOCAL_FSAVERAGE"
+    --fsaverage-root "$LOCAL_FSAVERAGE" \
+    "${EXTRA[@]}"
 echo "computed=$(date --iso-8601=seconds)"
 
 # Copy each file into place under a temporary name, then rename it.

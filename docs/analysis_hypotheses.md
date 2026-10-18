@@ -108,13 +108,17 @@ Checked against our own docs and code.
    fundamental in theta, the 10 Hz harmonic in alpha and the 15/20 Hz
    harmonics in beta. Every band-power result has to survive on induced
    power (A3).
-4. **The post-press token rate is not established for this dataset.** In the
-   monkey task the remaining tokens jump every 50 ms (Fast) or 150 ms (Slow),
-   which would put a 20 Hz flicker in beta for Fast and 6.7 Hz in theta for
-   Slow. `behavior.md` records that the remaining-token timing schedule was
-   never established from the acquisition material. Until it is (D0), every
-   post-press Fast-vs-Slow contrast is suspect, and post-press analyses run
-   within one speed.
+4. **After the press, Fast and Slow show different things.** The task log
+   (`tTime`) holds every token's time, all 16,324 trials: the first token
+   214 ms after the go cue, then one every 200 ms until the press at both
+   speeds; after the press one every 20 ms in Fast (the remaining ~7 within
+   ~140 ms, the trial over 143 ms after the press) and one every 170 ms in
+   Slow (~6 more, the trial over 1,024 ms after it). A post-press
+   Fast-vs-Slow contrast compares a 50 Hz burst and early feedback with a
+   6 Hz stream and late feedback, so post-press analyses run within one
+   speed. Before the press the 5 Hz stream adds power at 5 Hz (+8 % over the
+   neighbouring bins, 28-29 of 32 subjects) and at 10 Hz (+13-15 %, 20 of
+   32), none at 15 or 20 Hz (`pca_replication.md`, token flicker).
 5. **Hand, target and hemifield are one variable.** Side 1 is the right hand
    and the right target. Motor lateralisation is interpretable; occipital and
    parietal lateralisation cannot be attributed to the hand or to space.
@@ -740,7 +744,7 @@ is not obvious or the effect is small and focal:
 
 | | What | For | Cost |
 |---|---|---|---|
-| D0 | The post-press token schedule from the acquisition material or the stimulus channel | A4, E4, E5, F1, every post-press contrast | low; blocks the rest |
+| D0 | The post-press token schedule: established from the task log (§2.4) | A4, E4, E5, F1, every post-press contrast | done |
 | D1 | Token-locked single-trial source ERFs (every token, metadata: index, direction relative to choice and correct target, SP, ΔSP, KL, reversal and decisive flags, time to commitment), overlap-corrected | D2, D3, E1, E4, G2 | high |
 | D2 | Correct/error averages (trailing-target choices vs unlucky leaders), enter and decision | E4, G1 | low (`erp` with a new split) |
 | D3 | Feedback-lock ERFs and band power (the epochs exist) | G2 | low |

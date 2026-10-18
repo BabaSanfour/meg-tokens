@@ -294,6 +294,8 @@ def build_parser() -> argparse.ArgumentParser:
     band_power.add_argument("--band", required=True, help="theta, alpha, beta, gamma or highgamma")
     band_power.add_argument("--locks", nargs="+", choices=EPOCH_LOCKS, help="default: go, decision, enter")
     band_power.add_argument("--n-jobs", type=int, default=1, help="cores for filtering")
+    band_power.add_argument("--induced", action="store_true",
+                            help="take every task event's response out first and write the second copy")
     band_power.add_argument("--output-root", help="write the region part under this root instead of the BIDS root")
     band_power.add_argument(
         "--fsaverage-root",
@@ -324,6 +326,7 @@ def build_parser() -> argparse.ArgumentParser:
     band_power_means_fsaverage.add_argument("--locks", nargs="+", choices=EPOCH_LOCKS, help="default: go, decision, enter")
     band_power_means_fsaverage.add_argument("--fsaverage-root", required=True, help="where the fsaverage band power is")
     band_power_means_fsaverage.add_argument("--output-root", help="write the means under this root instead of the fsaverage root")
+    band_power_means_fsaverage.add_argument("--induced", action="store_true", help="the second copy, event responses taken out")
 
     deep_morph = meg_commands.add_parser(
         "deep-morph",
@@ -370,6 +373,7 @@ def build_parser() -> argparse.ArgumentParser:
     band_power_means.add_argument("--subjects", nargs="+", required=True)
     band_power_means.add_argument("--streams", nargs="+", choices=STREAMS, default=list(STREAMS))
     band_power_means.add_argument("--locks", nargs="+", choices=EPOCH_LOCKS, help="default: go, decision, enter")
+    band_power_means.add_argument("--induced", action="store_true", help="the second copy, event responses taken out")
 
     band_power_merge = meg_commands.add_parser(
         "band-power-merge",
@@ -378,6 +382,7 @@ def build_parser() -> argparse.ArgumentParser:
     band_power_merge.add_argument("--subjects", nargs="+", required=True)
     band_power_merge.add_argument("--streams", nargs="+", choices=STREAMS, default=list(STREAMS))
     band_power_merge.add_argument("--locks", nargs="+", choices=EPOCH_LOCKS, help="default: go, decision, enter")
+    band_power_merge.add_argument("--induced", action="store_true", help="the second copy, event responses taken out")
 
     features = domains.add_parser("features", help="Neural feature extraction.")
     feature_commands = features.add_subparsers(dest="feature_command", required=True)
@@ -519,6 +524,8 @@ def build_parser() -> argparse.ArgumentParser:
                               help="seconds from the lock; default: the lock's whole analysis window")
     trajectories.add_argument("--fsaverage-root", help="where the fsaverage band power means are (power on fsaverage)")
     trajectories.add_argument("--structure", help="the deep structure of an fsaverageaseg fit (Caudate: both sides)")
+    trajectories.add_argument("--induced", action="store_true",
+                              help="the second copy of band power, task events' responses taken out")
     trajectories.add_argument("--with-deep", action="store_true",
                               help="fit the 17 deep structures beside the 360 regions (HCP-MMP1 band power)")
 
@@ -918,6 +925,7 @@ def _meg_band_power(project: ProjectConfig, args: argparse.Namespace) -> object:
         project, RunSpec(subject=args.subjects[0], run=args.run, condition=args.condition),
         stream=args.stream, band=args.band, locks=args.locks or LOCKS,
         fsaverage_root=args.fsaverage_root or None, output_root=args.output_root, n_jobs=args.n_jobs,
+        induced=args.induced,
     )
 
 
@@ -943,7 +951,8 @@ def _meg_band_power_means_fsaverage(project: ProjectConfig, args: argparse.Names
         raise SystemExit(f"--bands must be among {', '.join(BANDS)}, got {unknown}")
     return [
         band_power_means_fsaverage(project, subject, stream=stream, band=band, locks=args.locks or LOCKS,
-                                   fsaverage_root=args.fsaverage_root, output_root=args.output_root)
+                                   fsaverage_root=args.fsaverage_root, output_root=args.output_root,
+                                   induced=args.induced)
         for subject in args.subjects
         for stream in args.streams
         for band in args.bands or BANDS
@@ -1012,7 +1021,7 @@ def _meg_band_power_means(project: ProjectConfig, args: argparse.Namespace) -> o
     from meg_tokens.workflows.band_power import band_power_means
 
     return [
-        band_power_means(project, subject, stream=stream, locks=args.locks or LOCKS)
+        band_power_means(project, subject, stream=stream, locks=args.locks or LOCKS, induced=args.induced)
         for subject in args.subjects
         for stream in args.streams
     ]
@@ -1023,7 +1032,7 @@ def _meg_band_power_merge(project: ProjectConfig, args: argparse.Namespace) -> o
     from meg_tokens.workflows.band_power import band_power_merge
 
     return [
-        band_power_merge(project, subject, stream=stream, locks=args.locks or LOCKS)
+        band_power_merge(project, subject, stream=stream, locks=args.locks or LOCKS, induced=args.induced)
         for subject in args.subjects
         for stream in args.streams
     ]
@@ -1228,6 +1237,7 @@ def _analyze_trajectories(project: ProjectConfig, args: argparse.Namespace) -> o
     settings = TrajectoryConfig(
         fit=args.fit, measure=args.measure, space=args.space, n_components=args.n_components,
         window=tuple(args.window) if args.window else None, deep=args.with_deep, structure=args.structure,
+        induced=args.induced,
     )
     return [
         trajectories(project, stream=stream, lock=lock, settings=settings, subjects=args.subjects,

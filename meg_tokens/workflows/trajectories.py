@@ -52,12 +52,12 @@ class _PowerMeans:
     def __init__(
         self, layout: DerivativeLayout, fsaverage: Optional[DerivativeLayout], subjects: Sequence[str], *,
         stream: str, lock: str, measure: str, band: int, space: str, window: Optional[tuple[float, float]],
-        deep: bool = False, structure: Optional[str] = None,
+        deep: bool = False, structure: Optional[str] = None, variant: Optional[str] = None,
     ) -> None:
         self.measure, self.band, self.space = measure, band, space
         if space == PARCELLATION:
             self.paths = [
-                require_file(layout.band_power_means(subject=subject, stream=stream, lock=lock),
+                require_file(layout.band_power_means(subject=subject, stream=stream, lock=lock, variant=variant),
                              purpose=f"{subject} {stream} {lock} band power means; run `meg band-power-means` first")
                 for subject in subjects
             ]
@@ -65,7 +65,7 @@ class _PowerMeans:
             command = "band-power-means-fsaverage" if space == "fsaverage" else "deep-power-means"
             self.paths = [
                 require_file(fsaverage.band_power_means_space(subject=subject, stream=stream, lock=lock,
-                                                              band=list(BANDS)[band], space=space),
+                                                              band=list(BANDS)[band], space=space, variant=variant),
                              purpose=f"{subject} {stream} {lock} {space} band power means; run `meg {command}` first")
                 for subject in subjects
             ]
@@ -182,7 +182,7 @@ def trajectories(
         else:
             source = _PowerMeans(layout, fsaverage, selected, stream=stream, lock=lock, measure=settings.measure,
                                  band=band_index, space=settings.space, window=settings.window, deep=settings.deep,
-                                 structure=settings.structure)
+                                 structure=settings.structure, variant="induced" if settings.induced else None)
             means, meta, paths = source.conditions(), source.meta, source.paths
         keep = np.isfinite(means).all(axis=(0, 1, 2))
         if not keep.all():
@@ -207,6 +207,7 @@ def trajectories(
     path = destination.trajectories(
         stream=stream, lock=lock, space=settings.space, fit=settings.fit, measure=settings.measure,
         window=settings.window, deep=settings.deep, structure=settings.structure,
+        variant="induced" if settings.induced else None,
     )
     path.parent.mkdir(parents=True, exist_ok=True)
     projection = "uncentred" if settings.fit == "grandaverage" else "centred"
@@ -236,6 +237,7 @@ def trajectories(
         "subjects": selected, "bands": list(bands), "n_sources": int(keep.sum()),
         "dropped_sources": np.array(meta["sources"])[~keep].tolist(),
         "deep_structures": "beside the regions" if settings.deep else "left out",
+        "event_responses": "taken out" if settings.induced else "kept",
     })
     return WorkflowResult(
         stage="trajectories",

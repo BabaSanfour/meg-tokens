@@ -357,7 +357,8 @@ class TrajectoryConfig:
     regions, so their loadings can be read beside the cortex's.
     ``fsaverageaseg`` is the deep sources' band power on fsaverage's grid, one
     PCA per ``structure``: a structure's name (``Left-Caudate``) or, without
-    its side, both sides together (``Caudate``).
+    its side, both sides together (``Caudate``). ``induced`` reads the second
+    copy of band power, with the task events' responses taken out.
     """
 
     fit: str = "pooled"
@@ -367,6 +368,7 @@ class TrajectoryConfig:
     window: Optional[Tuple[float, float]] = None
     deep: bool = False
     structure: Optional[str] = None
+    induced: bool = False
 
     def __post_init__(self) -> None:
         if self.fit not in ("grandaverage", "pooled"):
@@ -379,6 +381,8 @@ class TrajectoryConfig:
             raise ValueError("the deep sources' grid (fsaverageaseg) takes one structure, and only it does")
         if self.space == "fsaverageaseg" and self.measure == "erp":
             raise ValueError("the deep sources' grid holds band power only")
+        if self.induced and (self.measure == "erp" or self.space == "fsaverageaseg"):
+            raise ValueError("the induced copy is of band power, in the HCP-MMP1 regions and on fsaverage")
         if self.deep and (self.space != "HCPMMP1" or self.measure == "erp"):
             raise ValueError("deep structures enter the band power of the HCP-MMP1 regions only")
         if self.window is not None and not self.window[0] < self.window[1]:

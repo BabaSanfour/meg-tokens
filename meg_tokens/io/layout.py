@@ -348,32 +348,43 @@ class DerivativeLayout:
             subject=subject, run=run, condition=condition, processing=stream, suffix="inv", extension=".fif",
         )
 
-    def band_power(self, *, subject: str, stream: str, lock: str, space: str) -> Path:
-        """One subject's single-trial band power around one lock, every Fast and Slow run, one stream and space."""
+    def band_power(self, *, subject: str, stream: str, lock: str, space: str, variant: Optional[str] = None) -> Path:
+        """One subject's single-trial band power around one lock, every Fast and Slow run, one stream and space.
+
+        ``variant`` names a second copy computed differently, ``induced`` for
+        the task events' responses taken out (``band_power_part``).
+        """
         return self.path(
-            subject=subject, processing=stream, space=space, description=lock, suffix="power", extension=".h5",
+            subject=subject, processing=stream, space=space, description=_description(lock, variant),
+            suffix="power", extension=".h5",
         )
 
-    def band_power_part(self, *, subject: str, run: str, condition: str, stream: str, band: str, space: str) -> Path:
+    def band_power_part(
+        self, *, subject: str, run: str, condition: str, stream: str, band: str, space: str,
+        variant: Optional[str] = None,
+    ) -> Path:
         """One run's band power in one band, every lock: a part of the subject's band power."""
         run_number, inferred = parse_run_label(run)
         return self.path(
             subject=subject, run=run_number, processing=stream, space=space,
-            description=_description(_condition(condition or inferred), band), suffix="power", extension=".h5",
+            description=_description(_condition(condition or inferred), band, variant), suffix="power", extension=".h5",
         )
 
-    def band_power_means(self, *, subject: str, stream: str, lock: str) -> Path:
+    def band_power_means(self, *, subject: str, stream: str, lock: str, variant: Optional[str] = None) -> Path:
         """A subject's mean band power per condition and per decision-time quintile, around one lock."""
         return self.path(
-            subject=subject, processing=stream, space="HCPMMP1", description=lock, suffix="powermeans", extension=".h5",
+            subject=subject, processing=stream, space="HCPMMP1", description=_description(lock, variant),
+            suffix="powermeans", extension=".h5",
         )
 
-    def band_power_means_space(self, *, subject: str, stream: str, lock: str, band: str, space: str) -> Path:
+    def band_power_means_space(
+        self, *, subject: str, stream: str, lock: str, band: str, space: str, variant: Optional[str] = None,
+    ) -> Path:
         """A subject's mean band power per condition and decision-time quintile, one lock and band, in one
         group space: ``fsaverage`` (the cortex's 8,196 sources) or ``fsaverageaseg`` (the deep sources on
         fsaverage's grid)."""
         return self.path(
-            subject=subject, processing=stream, space=space, description=f"{lock}-{band}",
+            subject=subject, processing=stream, space=space, description=_description(lock, band, variant),
             suffix="powermeans", extension=".h5",
         )
 
@@ -392,6 +403,7 @@ class DerivativeLayout:
     def trajectories(
         self, *, stream: str, lock: str, space: str, fit: str, measure: str,
         window: Optional[tuple[float, float]] = None, deep: bool = False, structure: Optional[str] = None,
+        variant: Optional[str] = None,
     ) -> Path:
         """The cohort's PCA trajectories around one lock: one fit, one measure, every band.
 
@@ -406,6 +418,8 @@ class DerivativeLayout:
         tag = ("" if window is None else f"-{ms(window[0])}to{ms(window[1])}ms") + ("-withdeep" if deep else "")
         if structure is not None:
             tag += "-" + structure.replace("-", "")
+        if variant is not None:
+            tag += f"-{variant}"
         return self.path(
             subject="group", processing=stream, space=space, description=f"{lock}-{fit}-{measure}{tag}",
             suffix="trajectories", extension=".h5",

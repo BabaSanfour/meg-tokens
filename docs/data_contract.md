@@ -195,6 +195,17 @@ stream and band under its own BIDS-like root (`band_power.fsaverage_root`):
 per lock, `<lock>/power`, trials x 8,196 `oct6` sources (left then right) x
 times, and `<lock>/times`, in the order of the lock's epoch file.
 
+**The induced copy.** `--induced` on `meg band-power`, `band-power-merge`,
+`band-power-means`, `band-power-means-fsaverage` and `analyze trajectories`
+computes and reads a second copy of band power, every name's description
+ending in `induced` (`..._desc-fast-alpha-induced_power.h5`,
+`..._desc-go-induced_power.h5`, `..._desc-go-induced_powermeans.h5`): before
+filtering, every go cue's, token jump's (before the press by side, after it by
+speed), press's and feedback's response is estimated over the whole run by
+MNE's `linear_regression_raw` (−0.2 to +0.8 s) and taken out of the
+magnetometers. The trials and their tables are the first copy's; the first
+copy is left as it is.
+
 The fsaverage means (`band-power-means-fsaverage`) are the same three forms,
 groups, counts and baseline on the 8,196 `fsaverage` sources, one file per
 subject, stream, lock and band under the fsaverage root

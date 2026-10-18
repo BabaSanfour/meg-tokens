@@ -65,6 +65,13 @@ file.
 The audit behind the analysis stage: `docs/analysis_audit.md`; the hypotheses
 it leads to: `docs/analysis_hypotheses.md`.
 
+**PCA trajectories — run on the cohort; replication in progress.** All fits
+of `meg.md` §2 (grand-average and pooled; power, log10, dB and the signed
+fields; regions and fsaverage; both streams, three locks), the preprint's
+matched fit, fsaverage band power means and per-source deep power. The
+replication of the preprint claim by claim, its audit and the same analyses
+our way: `docs/pca_replication.md`.
+
 **Downstream helpers with no callers.** `psd_description`
 (`workflows/spectral.py`),
 `get_peak_latency` / `get_significance_onset` / `compute_motor_lateralization`
@@ -179,6 +186,15 @@ sources found in the subject's own `aseg`.
   weights the trials with the most power, and the two differ wherever bursts
   or artifacts change the trials' spread rather than their typical power.
 - First run: both streams, the `go`, `decision` and `enter` locks.
+- A second, induced copy (regions and fsaverage) takes the task's evoked
+  responses out first: the task log gives every token's time, and the 5 Hz
+  token stream adds power at 5 and 10 Hz (`pca_replication.md`), while after
+  the press Fast and Slow show different streams (`analysis_hypotheses.md`
+  §2.4). MNE's `linear_regression_raw` estimates the go cue's, each token
+  jump's, the press's and the feedback's responses over the whole run, so
+  responses 200 ms apart are told apart, and they are subtracted from the
+  magnetometers before the band-pass. The first copy stays; every result can
+  be read with and without the evoked responses.
 
 **Event-related fields → twelve condition averages per subject, signed, in
 regions, deep structures, fsaverage and sensors.** For each subject, stream and

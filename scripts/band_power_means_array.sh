@@ -21,6 +21,8 @@ set -euo pipefail
 CONFIG="${1:?usage: sbatch --array=0-N scripts/band_power_means_array.sh <config.toml>}"
 STREAMS=(dss ica)
 
+# Further options go to the command: `--induced` for the second copy.
+EXTRA=("${@:2}")
 mapfile -t SUBJECTS < <(./.venv/bin/meg-tokens --config "$CONFIG" behavior subjects)
 INDEX=$((SLURM_ARRAY_TASK_ID / ${#STREAMS[@]}))
 if [ "$INDEX" -ge "${#SUBJECTS[@]}" ]; then
@@ -35,5 +37,6 @@ echo "commit=$(git rev-parse HEAD) dirty=$(git status --porcelain | tr '\n' ';')
 
 ./.venv/bin/meg-tokens --config "$CONFIG" meg band-power-means \
     --subjects "$SUBJECT" \
-    --streams "$STREAM"
+    --streams "$STREAM" \
+    "${EXTRA[@]}"
 echo "finished=$(date --iso-8601=seconds)"

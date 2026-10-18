@@ -298,3 +298,55 @@ __all__ = [
     "KNOWN_GO_RECONSTRUCTION_RUNS", "read_triggers", "reconstruct_missing_go", "align_go",
     "trial_metadata", "lock_offset", "epoch", "amplitudes", "outlier_thresholds", "drop_outliers", "save_epochs",
 ]
+
+
+# Event types of a run for the regression of event responses (meg/band_power.py).
+TASK_EVENTS = {
+    "go": 1,
+    "token right before press": 2,
+    "token left before press": 3,
+    "token after press fast": 4,
+    "token after press slow": 5,
+    "press": 6,
+    "feedback": 7,
+}
+
+
+def task_events(
+    go: np.ndarray, trials: pd.DataFrame, condition: str, sfreq: float, first_samp: int,
+) -> tuple[np.ndarray, dict[str, int]]:
+    """Every go cue, token jump, press and feedback of one run, as MNE events.
+
+    ``go`` and ``trials`` are ``align_go``'s pairing; the task log gives every
+    token's time (``tTime``) and direction (``nTokenDir``), the press
+    (``tEnterTarget``) and the trial's end, its feedback (``tTrialEnd``), in
+    milliseconds from the trial's start, which lies ``tGO`` before its go cue.
+    Tokens before the press are split by side (1 = right) and those after it
+    by the run's speed, since they jump every 200, 20 or 170 ms. An event
+    falling on a sample already taken (two tokens 20 ms apart at most share
+    none at 600 Hz) is dropped, as MNE's regression requires unique samples.
+    Returns the events and the event types present in the run.
+    """
+    after = "token after press fast" if condition.lower() == "fast" else "token after press slow"
+    rows = []
+    for onset, trial in zip(go, trials.itertuples()):
+        start = onset - trial.tGO / 1000
+        press = trial.tEnterTarget / 1000 if trial.tEnterTarget > 0 else np.inf
+        rows.append((onset, "go"))
+        for time, side in zip(np.asarray(trial.tTime, float) / 1000, trial.nTokenDir):
+            if time <= press:
+                rows.append((start + time, "token right before press" if side == 1 else "token left before press"))
+            else:
+                rows.append((start + time, after))
+        if trial.tEnterTarget > 0:
+            rows.append((start + press, "press"))
+        if trial.tTrialEnd > 0:
+            rows.append((start + trial.tTrialEnd / 1000, "feedback"))
+    samples = first_samp + np.round(np.array([t for t, _ in rows]) * sfreq).astype(int)
+    codes = np.array([TASK_EVENTS[name] for _, name in rows])
+    order = np.argsort(samples, kind="stable")
+    samples, codes = samples[order], codes[order]
+    unique = np.r_[True, np.diff(samples) > 0]
+    events = np.column_stack([samples[unique], np.zeros(unique.sum(), int), codes[unique]])
+    present = {name: code for name, code in TASK_EVENTS.items() if code in events[:, 2]}
+    return events, present

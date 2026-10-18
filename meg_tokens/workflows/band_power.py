@@ -28,10 +28,11 @@ from meg_tokens.meg.band_power import (
     hcp_labels,
     invalid_samples,
     morph_map,
+    remove_event_responses,
     trial_power,
     window,
 )
-from meg_tokens.meg.epoching import WINDOWS
+from meg_tokens.meg.epoching import WINDOWS, task_events
 from meg_tokens.meg.meg_bids import epoched_meg_runs
 from meg_tokens.meg.preprocessing import stream_paths
 from meg_tokens.meg.sources import LAMBDA2, METHOD, VOLUME_LABELS, deep_structures
@@ -41,6 +42,18 @@ def _subjects_dir(project: ProjectConfig) -> Path:
     if project.subjects_dir is None:
         raise ValueError("Project configuration requires subjects_dir for band power")
     return Path(project.subjects_dir)
+
+
+def _paired_trials(project: ProjectConfig, run: RunSpec) -> tuple[np.ndarray, pd.DataFrame]:
+    """The run's go cues and their started trials, paired as the epoching pairs them (``align_go``)."""
+    from meg_tokens.behavior.tables import read_behavior_table
+    from meg_tokens.meg.epoching import align_go, read_triggers
+
+    layout = DerivativeLayout(project.bids_root, task=project.task)
+    triggers = read_triggers(project.bids_root, run.subject, run.condition, run.run, task=project.task)
+    behavior = read_behavior_table(layout.find_behavior(subject=run.subject, run=run.run, condition=run.condition))
+    go, trials, _ = align_go(triggers, behavior, run.subject, run.condition, run.run)
+    return go, trials
 
 
 def band_power_part(
@@ -53,6 +66,7 @@ def band_power_part(
     fsaverage_root: Optional[str | Path] = None,
     output_root: Optional[str | Path] = None,
     n_jobs: int = 1,
+    induced: bool = False,
 ) -> WorkflowResult:
     """One run's band power in one band, for every lock with kept epochs.
 
@@ -60,7 +74,10 @@ def band_power_part(
     structures) x times of linear power at the recording's rate, in the order
     of the lock's epoch file; with ``fsaverage_root``, a second file there with
     trials x 8,196 ``fsaverage`` sources x times. A sample whose filter reaches
-    a flux jump or the recording's end is NaN.
+    a flux jump or the recording's end is NaN. With ``induced``, every go
+    cue's, token jump's, press's and feedback's response is first estimated
+    and taken out of the run (``remove_event_responses``), and the files are a
+    second copy, named ``induced``.
     """
     layout = DerivativeLayout(project.bids_root, task=project.task)
     destination = DerivativeLayout(output_root or project.bids_root, task=project.task)
@@ -84,6 +101,12 @@ def band_power_part(
                 kept[lock] = epochs
 
     raw = mne.io.read_raw_fif(raw_path, preload=True, verbose=False)
+    variant = None
+    if induced:
+        go, paired = _paired_trials(project, run)
+        events, event_id = task_events(go, paired, run.condition, raw.info["sfreq"], raw.first_samp)
+        raw, _ = remove_event_responses(raw, events, event_id)
+        variant = "induced"
     inv = mne.minimum_norm.read_inverse_operator(inv_path, verbose=False)
     src = inv["src"]
     anatomy = src[0]["subject_his_id"]
@@ -100,17 +123,18 @@ def band_power_part(
     invalid = invalid_samples(raw, half_length(sfreq, band))
     prepared = mne.minimum_norm.prepare_inverse_operator(inv, 1, LAMBDA2, METHOD, verbose=False)
 
-    outputs = [destination.band_power_part(**entities, band=band, space=PARCELLATION)]
+    outputs = [destination.band_power_part(**entities, band=band, space=PARCELLATION, variant=variant)]
     outputs[0].parent.mkdir(parents=True, exist_ok=True)
     handles = {"regions": h5py.File(outputs[0], "w")}
     if morph is not None:
         outputs.append(DerivativeLayout(fsaverage_root, task=project.task).band_power_part(
-            **entities, band=band, space="fsaverage"))
+            **entities, band=band, space="fsaverage", variant=variant))
         outputs[-1].parent.mkdir(parents=True, exist_ok=True)
         handles["fsaverage"] = h5py.File(outputs[-1], "w")
     record = {
         "subject": run.subject, "run": run.run, "condition": run.condition, "stream": stream, "band": band,
         "method": METHOD, "lambda2": LAMBDA2, "parcellation": PARCELLATION, "sfreq": sfreq,
+        "event_responses": "taken out" if induced else "kept",
     }
     for handle in handles.values():
         handle.attrs.update(record)
@@ -159,12 +183,16 @@ def band_power_merge(
     stream: str,
     locks: Sequence[str] = LOCKS,
     output_root: Optional[str | Path] = None,
+    induced: bool = False,
 ) -> WorkflowResult:
     """A subject's band power per lock, from its parts: every Fast and Slow run, every band.
 
     Writes, per lock, one HDF5 file of trials x bands x (360 regions + 17 deep
     structures) x times, its sidecar, and one table of its trials, row for row.
+    With ``induced`` it assembles the second copy (``band_power_part``); the
+    trials are the same and their table is left as the first copy wrote it.
     """
+    variant = "induced" if induced else None
     layout = DerivativeLayout(project.bids_root, task=project.task)
     destination = DerivativeLayout(output_root or project.bids_root, task=project.task)
     inputs, outputs = [], []
@@ -180,7 +208,7 @@ def band_power_merge(
         parts = {
             (run, band): require_file(
                 destination.band_power_part(subject=subject, run=run.run, condition=run.condition, stream=stream,
-                                            band=band, space=PARCELLATION),
+                                            band=band, space=PARCELLATION, variant=variant),
                 purpose=f"{subject} {run.condition} {run.run} {stream} {band} band power; run `meg band-power` first",
             )
             for run in epochs for band in BANDS
@@ -190,7 +218,7 @@ def band_power_merge(
             sources, counts, times = first["sources"][:], first["n_sources"][:], first[f"{lock}/times"][:]
             sfreq = float(first.attrs["sfreq"])
 
-        path = destination.band_power(subject=subject, stream=stream, lock=lock, space=PARCELLATION)
+        path = destination.band_power(subject=subject, stream=stream, lock=lock, space=PARCELLATION, variant=variant)
         with h5py.File(path, "w") as handle:
             power = handle.create_dataset(
                 "power", shape=(len(trials), len(BANDS), counts.size, times.size), dtype="float32",
@@ -219,9 +247,11 @@ def band_power_merge(
             "n_trials": int(len(trials)),
             "empty_sources": [name.decode() for name, count in zip(sources, counts) if count == 0],
         })
-        table = destination.band_power_trials(subject=subject, stream=stream, lock=lock)
-        trials.to_csv(table, sep="\t", index=False, na_rep="n/a")
-        outputs.extend([path, table])
+        outputs.append(path)
+        if not induced:
+            table = destination.band_power_trials(subject=subject, stream=stream, lock=lock)
+            trials.to_csv(table, sep="\t", index=False, na_rep="n/a")
+            outputs.append(table)
     return WorkflowResult(
         stage="band_power_merge",
         inputs=tuple(inputs),
@@ -263,10 +293,12 @@ def _trial_keys(trials: pd.DataFrame) -> pd.MultiIndex:
     return pd.MultiIndex.from_frame(trials[["condition", "run", "nTrialIndex"]])
 
 
-def _go_baselines(destination: DerivativeLayout, subject: str, stream: str) -> tuple[pd.MultiIndex, np.ndarray]:
+def _go_baselines(
+    destination: DerivativeLayout, subject: str, stream: str, variant: Optional[str] = None,
+) -> tuple[pd.MultiIndex, np.ndarray]:
     """Each go epoch's mean linear power over ``BASELINE``, trials x bands x sources, with its trials' keys."""
     path = require_file(
-        destination.band_power(subject=subject, stream=stream, lock="go", space=PARCELLATION),
+        destination.band_power(subject=subject, stream=stream, lock="go", space=PARCELLATION, variant=variant),
         purpose=f"{subject} {stream} go band power, the baseline of every lock; run `meg band-power-merge` first",
     )
     trials = pd.read_csv(destination.band_power_trials(subject=subject, stream=stream, lock="go"), sep="\t")
@@ -287,6 +319,7 @@ def band_power_means(
     stream: str,
     locks: Sequence[str] = LOCKS,
     output_root: Optional[str | Path] = None,
+    induced: bool = False,
 ) -> WorkflowResult:
     """A subject's mean band power per condition and per decision-time quintile, per lock, three ways.
 
@@ -306,11 +339,12 @@ def band_power_means(
     from meg_tokens.meg.evoked import CONDITIONS
 
     destination = DerivativeLayout(output_root or project.bids_root, task=project.task)
-    go_keys, go_baseline = _go_baselines(destination, subject, stream)
+    variant = "induced" if induced else None
+    go_keys, go_baseline = _go_baselines(destination, subject, stream, variant)
     inputs, outputs = [], []
     for lock in locks:
         power_path = require_file(
-            destination.band_power(subject=subject, stream=stream, lock=lock, space=PARCELLATION),
+            destination.band_power(subject=subject, stream=stream, lock=lock, space=PARCELLATION, variant=variant),
             purpose=f"{subject} {stream} {lock} band power; run `meg band-power-merge` first",
         )
         trials = pd.read_csv(destination.band_power_trials(subject=subject, stream=stream, lock=lock), sep="\t")
@@ -344,7 +378,7 @@ def band_power_means(
                 count += np.isfinite(logged).sum(axis=(0, -1))
             meta = {key: source[key][:] for key in ("times", "bands", "band_edges_hz", "sources", "n_sources")}
 
-        path = destination.band_power_means(subject=subject, stream=stream, lock=lock)
+        path = destination.band_power_means(subject=subject, stream=stream, lock=lock, variant=variant)
         with h5py.File(path, "w") as handle:
             for prefix, results, sizes, names in (
                 ("condition", condition, [groups[name].size for name in CONDITIONS], CONDITIONS),
@@ -383,7 +417,7 @@ PART_BLOCK = 8
 
 def _part_means(
     project: ProjectConfig, subject: str, *, stream: str, band: str, root: str | Path, space: str,
-    locks: Sequence[str],
+    locks: Sequence[str], variant: Optional[str] = None,
 ) -> Iterator[dict]:
     """A subject's condition and quintile means of one band, per lock, from its run files of ``space``.
 
@@ -409,7 +443,7 @@ def _part_means(
         for (condition, run), rows in table.groupby(["condition", "run"], sort=False).indices.items():
             yield require_file(
                 source.band_power_part(subject=subject, run=str(run), condition=condition, stream=stream,
-                                       band=band, space=space),
+                                       band=band, space=space, variant=variant),
                 purpose=f"{subject} {condition} {run} {stream} {band} {space} band power",
             ), np.sort(rows)
 
@@ -517,6 +551,7 @@ def band_power_means_fsaverage(
     fsaverage_root: str | Path,
     locks: Sequence[str] = LOCKS,
     output_root: Optional[str | Path] = None,
+    induced: bool = False,
 ) -> WorkflowResult:
     """A subject's mean fsaverage band power per condition and decision-time quintile, one band, every lock.
 
@@ -531,10 +566,11 @@ def band_power_means_fsaverage(
     destination = DerivativeLayout(output_root or fsaverage_root, task=project.task)
     vertices = fsaverage_vertices(_subjects_dir(project))
     outputs, inputs = [], ()
+    variant = "induced" if induced else None
     for lock_means in _part_means(project, subject, stream=stream, band=band, root=fsaverage_root,
-                                  space="fsaverage", locks=locks):
+                                  space="fsaverage", locks=locks, variant=variant):
         path = destination.band_power_means_space(subject=subject, stream=stream, lock=lock_means["lock"],
-                                                  band=band, space="fsaverage")
+                                                  band=band, space="fsaverage", variant=variant)
         _write_means(path, lock_means, {
             "log10_center": lock_means["centre"], "vertices_lh": vertices[0], "vertices_rh": vertices[1],
         }, {"subject": subject, "stream": stream, "lock": lock_means["lock"], "band": band})

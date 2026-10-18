@@ -240,5 +240,37 @@ __all__ = [
     "BANDS", "TRANSITIONS", "LOCKS", "PARCELLATION", "INVALID_NEAR",
     "half_length", "analytic", "invalid_samples", "window",
     "morph_map", "prepare_morph_map", "hcp_labels", "deep_labels", "fsaverage_morph", "trial_power",
-    "deep_trial_power", "fsaverage_vertices",
+    "deep_trial_power", "fsaverage_vertices", "RESPONSE_WINDOW", "remove_event_responses",
 ]
+
+
+# The span of each event's response the regression estimates, seconds from the event.
+RESPONSE_WINDOW = (-0.2, 0.8)
+
+
+def remove_event_responses(
+    raw: mne.io.BaseRaw, events: np.ndarray, event_id: dict[str, int], window: tuple[float, float] = RESPONSE_WINDOW,
+) -> tuple[mne.io.BaseRaw, dict[str, mne.Evoked]]:
+    """The magnetometers with every event's response taken out, and the responses.
+
+    MNE's ``linear_regression_raw`` estimates each event type's response over
+    the whole run at once, so responses that overlap (tokens 200 ms apart, a
+    press amid tokens) are told apart. The responses are placed back at every
+    event, on the lags the regression used, and subtracted, leaving what is
+    not locked to the task's events. MNE's regression sees every sample,
+    annotated ones included. ``raw`` is preloaded; returns a copy.
+    """
+    cleaned = raw.copy().pick("mag")
+    responses = mne.stats.linear_regression_raw(cleaned, events, event_id, tmin=window[0], tmax=window[1])
+    sfreq = cleaned.info["sfreq"]
+    lags = np.arange(int(round(window[0] * sfreq)), int(round(window[1] * sfreq)) + 1)
+    predicted = np.zeros_like(cleaned._data)
+    for name, code in event_id.items():
+        onsets = events[events[:, 2] == code, 0] - cleaned.first_samp
+        kernel = responses[name].data
+        for j, lag in enumerate(lags):
+            where = onsets + lag
+            where = where[(where >= 0) & (where < cleaned.n_times)]
+            predicted[:, where] += kernel[:, j:j + 1]
+    cleaned._data -= predicted
+    return cleaned, responses

@@ -1683,9 +1683,12 @@ the y-range and flatten the three series they exist to contextualise.
   the other side: a declining first-order criterion is produced by the finite
   horizon whether or not the policy changes.
 - **Not addressed: reward-rate optimality.** Verified payoff, error and
-  timeout penalties, and the complete inter-trial and remaining-token timing
-  schedule were never established from the acquisition material, so no
-  optimality claim is made. This is an omission by decision, not an oversight;
+  timeout penalties, and the complete inter-trial timing were never
+  established from the acquisition material, so no optimality claim is made.
+  The remaining-token schedule is in the task log (`tTime`, every token's
+  time): after the press the tokens jump every 20 ms in Fast blocks and every
+  170 ms in Slow blocks, and the trial ends 143 ms and 1,024 ms after the
+  press (medians, all 16,324 trials). This is an omission by decision, not an oversight;
   it should not be added without that material found and documented.
 
 **The strict-exclusion control.**

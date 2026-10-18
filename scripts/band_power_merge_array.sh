@@ -23,6 +23,8 @@ set -euo pipefail
 CONFIG="${1:?usage: sbatch --array=0-N scripts/band_power_merge_array.sh <config.toml>}"
 STREAMS=(dss ica)
 
+# Further options go to the command: `--induced` for the second copy.
+EXTRA=("${@:2}")
 mapfile -t SUBJECTS < <(./.venv/bin/meg-tokens --config "$CONFIG" behavior subjects)
 INDEX=$((SLURM_ARRAY_TASK_ID / ${#STREAMS[@]}))
 if [ "$INDEX" -ge "${#SUBJECTS[@]}" ]; then
@@ -36,7 +38,8 @@ echo "commit=$(git rev-parse HEAD) dirty=$(git status --porcelain | tr '\n' ';')
 
 ./.venv/bin/meg-tokens --config "$CONFIG" meg band-power-merge \
     --subjects "$SUBJECT" \
-    --streams "$STREAM"
+    --streams "$STREAM" \
+    "${EXTRA[@]}"
 
 DERIVATIVES="$(./.venv/bin/python -c "from meg_tokens.core import ProjectConfig; print(ProjectConfig.from_toml('$CONFIG').bids_root / 'derivatives')")"
 rm -f "$DERIVATIVES/sub-${SUBJECT}/meg/sub-${SUBJECT}"_task-tokens_run-*_proc-"${STREAM}"_space-HCPMMP1_desc-*_power.h5

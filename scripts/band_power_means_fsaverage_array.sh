@@ -28,6 +28,8 @@ FSAVERAGE_ROOT="${2:?usage: sbatch --array=0-N scripts/band_power_means_fsaverag
 STREAMS=(dss ica)
 BANDS=(theta alpha beta gamma highgamma)
 
+# Further options go to the command: `--induced` for the second copy.
+EXTRA=("${@:3}")
 mapfile -t SUBJECTS < <(./.venv/bin/meg-tokens --config "$CONFIG" behavior subjects)
 INDEX=$((SLURM_ARRAY_TASK_ID / 10))
 if [ "$INDEX" -ge "${#SUBJECTS[@]}" ]; then
@@ -49,7 +51,8 @@ echo "commit=$(git rev-parse HEAD) dirty=$(git status --porcelain | tr '\n' ';')
     --streams "$STREAM" \
     --bands "$BAND" \
     --fsaverage-root "$FSAVERAGE_ROOT" \
-    --output-root "$LOCAL"
+    --output-root "$LOCAL" \
+    "${EXTRA[@]}"
 echo "computed=$(date --iso-8601=seconds)"
 
 (cd "$LOCAL" && find derivatives -type f) | while read -r file; do
