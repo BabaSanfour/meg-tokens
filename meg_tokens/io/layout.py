@@ -330,6 +330,10 @@ class DerivativeLayout:
             "src": self.path(subject=subject, space="subject", suffix="src", extension=".fif"),
         }
 
+    def deep_morph(self, *, subject: str) -> Path:
+        """The morph of one subject's deep sources onto fsaverage's grid of the same structures."""
+        return self.path(subject=subject, space="fsaverage", description="deep", suffix="morph", extension=".h5")
+
     def trans(self, *, subject: str, run: str, condition: str) -> Path:
         """One recording's MEG-MRI transform, as coregistration writes it."""
         return self.source(subject=subject, run=run, condition=condition, suffix="trans", extension=".fif")
@@ -364,10 +368,12 @@ class DerivativeLayout:
             subject=subject, processing=stream, space="HCPMMP1", description=lock, suffix="powermeans", extension=".h5",
         )
 
-    def band_power_means_fsaverage(self, *, subject: str, stream: str, lock: str, band: str) -> Path:
-        """A subject's mean band power on ``fsaverage`` per condition and decision-time quintile, one lock and band."""
+    def band_power_means_space(self, *, subject: str, stream: str, lock: str, band: str, space: str) -> Path:
+        """A subject's mean band power per condition and decision-time quintile, one lock and band, in one
+        group space: ``fsaverage`` (the cortex's 8,196 sources) or ``fsaverageaseg`` (the deep sources on
+        fsaverage's grid)."""
         return self.path(
-            subject=subject, processing=stream, space="fsaverage", description=f"{lock}-{band}",
+            subject=subject, processing=stream, space=space, description=f"{lock}-{band}",
             suffix="powermeans", extension=".h5",
         )
 
@@ -385,18 +391,21 @@ class DerivativeLayout:
 
     def trajectories(
         self, *, stream: str, lock: str, space: str, fit: str, measure: str,
-        window: Optional[tuple[float, float]] = None,
+        window: Optional[tuple[float, float]] = None, deep: bool = False, structure: Optional[str] = None,
     ) -> Path:
         """The cohort's PCA trajectories around one lock: one fit, one measure, every band.
 
         A window other than the lock's whole one is named in milliseconds,
-        ``m`` for minus: ``-1.25, 1.2`` is ``m1250to1200ms``.
+        ``m`` for minus: ``-1.25, 1.2`` is ``m1250to1200ms``; a fit with the deep
+        structures beside the regions adds ``withdeep``, a deep structure its name.
         """
         def ms(seconds: float) -> str:
             value = int(round(seconds * 1000))
             return f"m{-value}" if value < 0 else str(value)
 
-        tag = "" if window is None else f"-{ms(window[0])}to{ms(window[1])}ms"
+        tag = ("" if window is None else f"-{ms(window[0])}to{ms(window[1])}ms") + ("-withdeep" if deep else "")
+        if structure is not None:
+            tag += "-" + structure.replace("-", "")
         return self.path(
             subject="group", processing=stream, space=space, description=f"{lock}-{fit}-{measure}{tag}",
             suffix="trajectories", extension=".h5",

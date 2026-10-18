@@ -3,12 +3,13 @@
 # stream and lock, 60 for the plan. Never run this command directly on a login
 # node.
 #
-#   sbatch --array=<tasks> [resources] scripts/trajectories_array.sh tokens.toml ["TMIN TMAX"] [fsaverage_root]
+#   sbatch --array=<tasks> [resources] scripts/trajectories_array.sh tokens.toml [analyze trajectories options]
 #
-# The optional window (seconds from the lock) applies to every task of the
-# submission: the preprint-matched fit is the press lock cut to -1.25 to
-# +1.2 s (tasks 2 and 5: `"-1.25 1.2"`). Band power on fsaverage (tasks 42-59)
-# reads its means under fsaverage_root (scripts/band_power_means_fsaverage_array.sh).
+# Options after the config go to every task of the submission: the
+# preprint-matched fit is the press lock cut to -1.25 to +1.2 s (tasks 2 and
+# 5: `--window -1.25 1.2`), `--with-deep` fits the deep structures beside the
+# regions, and band power on fsaverage (tasks 42-59) needs `--fsaverage-root`
+# (scripts/band_power_means_fsaverage_array.sh).
 #
 # Task i runs analysis i // 6 of ANALYSES on stream (i % 6) // 3 and lock
 # i % 3 (0 go, 1 decision, 2 enter). Memory follows the analysis and the lock:
@@ -42,15 +43,8 @@
 
 set -euo pipefail
 
-CONFIG="${1:?usage: sbatch --array=0-N scripts/trajectories_array.sh <config.toml> ["TMIN TMAX"] [fsaverage_root]}"
-OPTIONS=()
-if [ -n "${2:-}" ]; then
-    read -r TMIN TMAX <<< "$2"
-    OPTIONS+=(--window "$TMIN" "$TMAX")
-fi
-if [ -n "${3:-}" ]; then
-    OPTIONS+=(--fsaverage-root "$3")
-fi
+CONFIG="${1:?usage: sbatch --array=0-N scripts/trajectories_array.sh <config.toml> [analyze trajectories options]}"
+OPTIONS=("${@:2}")
 # fit measure space
 ANALYSES=(
     "grandaverage power HCPMMP1"

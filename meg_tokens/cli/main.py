@@ -325,6 +325,23 @@ def build_parser() -> argparse.ArgumentParser:
     band_power_means_fsaverage.add_argument("--fsaverage-root", required=True, help="where the fsaverage band power is")
     band_power_means_fsaverage.add_argument("--output-root", help="write the means under this root instead of the fsaverage root")
 
+    deep_morph = meg_commands.add_parser(
+        "deep-morph",
+        help="Each subject's morph of its deep sources onto fsaverage's grid of the same structures, once.",
+    )
+    deep_morph.add_argument("--subjects", nargs="+", required=True)
+
+    deep_power_means = meg_commands.add_parser(
+        "deep-power-means",
+        help="A subject's mean deep-source band power per condition and quintile on fsaverage's grid, one band.",
+    )
+    deep_power_means.add_argument("--subjects", nargs="+", required=True)
+    deep_power_means.add_argument("--streams", nargs="+", choices=STREAMS, default=list(STREAMS))
+    deep_power_means.add_argument("--bands", nargs="+", help="default: every band")
+    deep_power_means.add_argument("--locks", nargs="+", choices=EPOCH_LOCKS, help="default: go, decision, enter")
+    deep_power_means.add_argument("--deep-root", required=True, help="where the deep power is")
+    deep_power_means.add_argument("--output-root", help="write the means under this root instead of the deep root")
+
     band_power_prepare = meg_commands.add_parser(
         "band-power-prepare",
         help="Build each subject's morph map with fsaverage, once, before the band-power jobs.",
@@ -501,6 +518,9 @@ def build_parser() -> argparse.ArgumentParser:
     trajectories.add_argument("--window", type=float, nargs=2, metavar=("TMIN", "TMAX"),
                               help="seconds from the lock; default: the lock's whole analysis window")
     trajectories.add_argument("--fsaverage-root", help="where the fsaverage band power means are (power on fsaverage)")
+    trajectories.add_argument("--structure", help="the deep structure of an fsaverageaseg fit (Caudate: both sides)")
+    trajectories.add_argument("--with-deep", action="store_true",
+                              help="fit the 17 deep structures beside the 360 regions (HCP-MMP1 band power)")
 
     spatial_decoding = analysis_commands.add_parser(
         "spatial-decoding",
@@ -930,6 +950,28 @@ def _meg_band_power_means_fsaverage(project: ProjectConfig, args: argparse.Names
     ]
 
 
+def _meg_deep_morph(project: ProjectConfig, args: argparse.Namespace) -> object:
+    from meg_tokens.workflows.band_power import deep_morph_subject
+
+    return [deep_morph_subject(project, subject) for subject in args.subjects]
+
+
+def _meg_deep_power_means(project: ProjectConfig, args: argparse.Namespace) -> object:
+    from meg_tokens.meg.band_power import BANDS, LOCKS
+    from meg_tokens.workflows.band_power import deep_power_means
+
+    unknown = sorted(set(args.bands or ()) - set(BANDS))
+    if unknown:
+        raise SystemExit(f"--bands must be among {', '.join(BANDS)}, got {unknown}")
+    return [
+        deep_power_means(project, subject, stream=stream, band=band, locks=args.locks or LOCKS,
+                         deep_root=args.deep_root, output_root=args.output_root)
+        for subject in args.subjects
+        for stream in args.streams
+        for band in args.bands or BANDS
+    ]
+
+
 def _meg_band_power_prepare(project: ProjectConfig, args: argparse.Namespace) -> object:
     from meg_tokens.meg.band_power import prepare_morph_map
     from meg_tokens.meg.meg_bids import staged_subjects
@@ -1185,7 +1227,7 @@ def _analyze_trajectories(project: ProjectConfig, args: argparse.Namespace) -> o
 
     settings = TrajectoryConfig(
         fit=args.fit, measure=args.measure, space=args.space, n_components=args.n_components,
-        window=tuple(args.window) if args.window else None,
+        window=tuple(args.window) if args.window else None, deep=args.with_deep, structure=args.structure,
     )
     return [
         trajectories(project, stream=stream, lock=lock, settings=settings, subjects=args.subjects,
@@ -1365,6 +1407,8 @@ _HANDLERS: dict[tuple[str, str], Handler] = {
     ("meg", "band-power-means"): _meg_band_power_means,
     ("meg", "band-power-prepare"): _meg_band_power_prepare,
     ("meg", "deep-power"): _meg_deep_power,
+    ("meg", "deep-morph"): _meg_deep_morph,
+    ("meg", "deep-power-means"): _meg_deep_power_means,
     ("meg", "band-power-means-fsaverage"): _meg_band_power_means_fsaverage,
     ("features", "power"): _features_power,
     ("features", "spectral"): _features_spectral,

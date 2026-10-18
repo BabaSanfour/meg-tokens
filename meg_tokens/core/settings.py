@@ -337,7 +337,7 @@ class SpatialDecodingConfig:
 # What a trajectory PCA reads: band power as each of its means' three forms, or
 # the signed event-related fields; and where (fields also on fsaverage).
 TRAJECTORY_MEASURES = ("power", "log10", "db", "erp")
-TRAJECTORY_SPACES = ("HCPMMP1", "fsaverage")
+TRAJECTORY_SPACES = ("HCPMMP1", "fsaverage", "fsaverageaseg")
 
 
 @dataclass(frozen=True)
@@ -353,6 +353,11 @@ class TrajectoryConfig:
     baseline), or ``erp``, the signed fields, in the HCP-MMP1 regions or on
     ``fsaverage``. ``window`` (seconds from the lock) restricts the fit and the
     trajectories to part of the lock's analysis window; ``None`` keeps all of it.
+    ``deep`` adds the 17 deep structures' band power to the 360 HCP-MMP1
+    regions, so their loadings can be read beside the cortex's.
+    ``fsaverageaseg`` is the deep sources' band power on fsaverage's grid, one
+    PCA per ``structure``: a structure's name (``Left-Caudate``) or, without
+    its side, both sides together (``Caudate``).
     """
 
     fit: str = "pooled"
@@ -360,6 +365,8 @@ class TrajectoryConfig:
     space: str = "HCPMMP1"
     n_components: int = 20
     window: Optional[Tuple[float, float]] = None
+    deep: bool = False
+    structure: Optional[str] = None
 
     def __post_init__(self) -> None:
         if self.fit not in ("grandaverage", "pooled"):
@@ -368,6 +375,12 @@ class TrajectoryConfig:
             raise ValueError(f"measure must be one of {list(TRAJECTORY_MEASURES)}, got {self.measure!r}")
         if self.space not in TRAJECTORY_SPACES:
             raise ValueError(f"space must be one of {list(TRAJECTORY_SPACES)}, got {self.space!r}")
+        if (self.space == "fsaverageaseg") != (self.structure is not None):
+            raise ValueError("the deep sources' grid (fsaverageaseg) takes one structure, and only it does")
+        if self.space == "fsaverageaseg" and self.measure == "erp":
+            raise ValueError("the deep sources' grid holds band power only")
+        if self.deep and (self.space != "HCPMMP1" or self.measure == "erp"):
+            raise ValueError("deep structures enter the band power of the HCP-MMP1 regions only")
         if self.window is not None and not self.window[0] < self.window[1]:
             raise ValueError(f"window must run forward in time, got {self.window}")
         if self.n_components < 1:

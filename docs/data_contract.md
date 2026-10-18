@@ -214,6 +214,16 @@ the order of the lock's epoch file), `<lock>/times`, and per source its
 stay in the subject's own volume; a group analysis brings them to a common
 grid.
 
+Each subject's deep morph (`deep-morph`,
+`sub-<s>_space-fsaverage_desc-deep_morph.h5`, MNE's `SourceMorph` with its
+matrix) carries its deep sources onto fsaverage's grid of the same 17
+structures, built as the subjects' (5 mm, `aseg`); the rebuilt subject volume
+must hold the stored models' sources. The deep means (`deep-power-means`,
+`*_space-fsaverageaseg_desc-<lock>-<band>_powermeans.h5` under the deep root)
+are the region means' three forms, groups and counts, computed on the
+subject's sources and morphed onto that grid, with each source's `vertno`
+and `structure` there, and the morph's `coverage` each mean was divided by.
+
 ## Event-related-field derivatives
 
 Per subject, stream and lock, the twelve condition averages (Fast/Slow ×

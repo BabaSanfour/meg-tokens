@@ -378,39 +378,28 @@ def band_power_means(
 
 
 # Trials of a fsaverage file read at once (each about 69 MB at the longer locks).
-FSAVERAGE_BLOCK = 8
+PART_BLOCK = 8
 
 
-def band_power_means_fsaverage(
-    project: ProjectConfig,
-    subject: str,
-    *,
-    stream: str,
-    band: str,
-    fsaverage_root: str | Path,
-    locks: Sequence[str] = LOCKS,
-    output_root: Optional[str | Path] = None,
-) -> WorkflowResult:
-    """A subject's mean fsaverage band power per condition and decision-time quintile, one band, every lock.
+def _part_means(
+    project: ProjectConfig, subject: str, *, stream: str, band: str, root: str | Path, space: str,
+    locks: Sequence[str],
+) -> Iterator[dict]:
+    """A subject's condition and quintile means of one band, per lock, from its run files of ``space``.
 
     The groups, the three forms and the baseline are those of
-    ``band_power_means``, on the 8,196 fsaverage sources. The fsaverage power
-    stays one file per run and band (``band_power_part``), each holding a
-    run's trials in the order of the subject's trial table, so every run's file
-    is read once per lock and each trial added to the sums of its condition
-    and its quintile. Writes one file per lock under ``fsaverage_root`` (or
-    ``output_root``): ``condition_<measure>`` (12 x 8,196 x times) and
-    ``quantile_<measure>`` (10 x ...) for each of ``MEASURES``, the counts
-    (``*_n``, ``*_n_db``), ``log10_center`` (sources), ``quantile_dt_ms``,
-    ``times`` and ``vertices_lh`` / ``vertices_rh``.
+    ``band_power_means``. The power stays one file per run and band
+    (``band_power_part``, ``fsaverage`` or ``aseg``), each holding a run's
+    trials in the order of the subject's trial table, so every run's file is
+    read once per lock and each trial added to the sums of its condition and
+    its quintile. Yields, per lock, the means (groups x sources x times) by
+    ``<group>_<measure>``, the counts, the centre (sources), the quintiles'
+    mean decision times, the times and the files read.
     """
-    from meg_tokens.meg.band_power import fsaverage_vertices
     from meg_tokens.meg.evoked import CONDITIONS
 
     layout = DerivativeLayout(project.bids_root, task=project.task)
-    source = DerivativeLayout(fsaverage_root, task=project.task)
-    destination = DerivativeLayout(output_root or fsaverage_root, task=project.task)
-    vertices = fsaverage_vertices(_subjects_dir(project))
+    source = DerivativeLayout(root, task=project.task)
     tables = {
         lock: pd.read_csv(layout.band_power_trials(subject=subject, stream=stream, lock=lock), sep="\t")
         for lock in dict.fromkeys(("go", *locks))
@@ -420,8 +409,8 @@ def band_power_means_fsaverage(
         for (condition, run), rows in table.groupby(["condition", "run"], sort=False).indices.items():
             yield require_file(
                 source.band_power_part(subject=subject, run=str(run), condition=condition, stream=stream,
-                                       band=band, space="fsaverage"),
-                purpose=f"{subject} {condition} {run} {stream} {band} fsaverage band power",
+                                       band=band, space=space),
+                purpose=f"{subject} {condition} {run} {stream} {band} {space} band power",
             ), np.sort(rows)
 
     def blocks(path: Path, lock: str, rows: np.ndarray) -> Iterator[tuple[np.ndarray, np.ndarray]]:
@@ -429,22 +418,22 @@ def band_power_means_fsaverage(
             power = part[f"{lock}/power"]
             if power.shape[0] != rows.size:
                 raise ValueError(f"{path.name} holds {power.shape[0]} {lock} trials, its trial table {rows.size}")
-            for start in range(0, rows.size, FSAVERAGE_BLOCK):
-                yield rows[start:start + FSAVERAGE_BLOCK], power[start:start + FSAVERAGE_BLOCK]
+            for start in range(0, rows.size, PART_BLOCK):
+                yield rows[start:start + PART_BLOCK], power[start:start + PART_BLOCK]
 
     go = tables["go"]
-    baseline = np.full((len(go), sum(v.size for v in vertices)), np.nan, dtype=np.float32)
-    inputs = []
+    baseline, inputs = None, []
     for path, rows in runs(go):
         inputs.append(path)
         with h5py.File(path, "r") as part:
             times = part["go/times"][:]
+            if baseline is None:
+                baseline = np.full((len(go), part["go/power"].shape[1]), np.nan, dtype=np.float32)
         span = (times >= BASELINE[0]) & (times <= BASELINE[1])
         for block_rows, block in blocks(path, "go", rows):
             baseline[block_rows] = np.nanmean(block[..., span], axis=-1)
     go_keys = _trial_keys(go)
 
-    outputs = []
     for lock in locks:
         trials = tables[lock]
         groups, quantiles = _groups(trials)
@@ -480,40 +469,80 @@ def band_power_means_fsaverage(
                             sums[prefix, measure][g] += np.where(finite, values, 0)
                             if measure != "log10":
                                 counts[prefix, "n" if measure == "power" else "n_db"][g] += finite
-
-        path = destination.band_power_means_fsaverage(subject=subject, stream=stream, lock=lock, band=band)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with h5py.File(path, "w") as handle:
-            for prefix, members in partitions.items():
-                for measure in MEASURES:
-                    n = counts[prefix, "n_db" if measure == "db" else "n"]
-                    mean = np.full(sums[prefix, measure].shape, np.nan, np.float32)
-                    np.divide(sums[prefix, measure], n, out=mean, where=n > 0)
-                    handle.create_dataset(f"{prefix}_{measure}", data=mean)
-                handle.create_dataset(f"{prefix}_n", data=np.array([rows.size for rows in members]))
-                handle.create_dataset(f"{prefix}_n_db", data=np.array([
-                    int((position[rows] >= 0).sum()) for rows in members
-                ]))
-            handle.create_dataset("conditions", data=np.array(CONDITIONS, dtype="S"))
-            handle.create_dataset("quantiles", data=np.array(list(quantiles), dtype="S"))
-            handle.create_dataset("quantile_dt_ms", data=np.array([
+        means = {}
+        for prefix in partitions:
+            for measure in MEASURES:
+                n = counts[prefix, "n_db" if measure == "db" else "n"]
+                means[f"{prefix}_{measure}"] = np.full(sums[prefix, measure].shape, np.nan, np.float32)
+                np.divide(sums[prefix, measure], n, out=means[f"{prefix}_{measure}"], where=n > 0)
+        yield {
+            "lock": lock, "means": means, "times": times, "centre": centre_sum / centre_n, "inputs": inputs,
+            "conditions": list(CONDITIONS), "quantiles": list(quantiles),
+            "counts": {
+                f"{prefix}_n": np.array([rows.size for rows in members]) for prefix, members in partitions.items()
+            } | {
+                f"{prefix}_n_db": np.array([int((position[rows] >= 0).sum()) for rows in members])
+                for prefix, members in partitions.items()
+            },
+            "quantile_dt_ms": np.array([
                 trials.loc[rows, "dt_ms"].mean() if rows.size else np.nan for rows in quantiles.values()
-            ]))
-            handle.create_dataset("log10_center", data=centre_sum / centre_n)
-            handle.create_dataset("times", data=times)
-            handle.create_dataset("vertices_lh", data=vertices[0])
-            handle.create_dataset("vertices_rh", data=vertices[1])
-            handle.attrs.update({
-                "subject": subject, "stream": stream, "lock": lock, "band": band,
-                "power": "linear |z|^2, mean of trials",
-                "log10": "log10 of each trial's power, mean of trials",
-                "db": "10 log10 of each trial's power over its mean power in the go epoch's baseline, mean of trials",
-                "baseline_s": BASELINE,
-            })
+            ]),
+        }
+
+
+def _write_means(path: Path, lock_means: dict, extra: dict, attrs: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with h5py.File(path, "w") as handle:
+        for key, value in {**lock_means["means"], **lock_means["counts"], **extra}.items():
+            handle.create_dataset(key, data=value)
+        handle.create_dataset("conditions", data=np.array(lock_means["conditions"], dtype="S"))
+        handle.create_dataset("quantiles", data=np.array(lock_means["quantiles"], dtype="S"))
+        handle.create_dataset("quantile_dt_ms", data=lock_means["quantile_dt_ms"])
+        handle.create_dataset("times", data=lock_means["times"])
+        handle.attrs.update({
+            **attrs,
+            "power": "linear |z|^2, mean of trials",
+            "log10": "log10 of each trial's power, mean of trials",
+            "db": "10 log10 of each trial's power over its mean power in the go epoch's baseline, mean of trials",
+            "baseline_s": BASELINE,
+        })
+
+
+def band_power_means_fsaverage(
+    project: ProjectConfig,
+    subject: str,
+    *,
+    stream: str,
+    band: str,
+    fsaverage_root: str | Path,
+    locks: Sequence[str] = LOCKS,
+    output_root: Optional[str | Path] = None,
+) -> WorkflowResult:
+    """A subject's mean fsaverage band power per condition and decision-time quintile, one band, every lock.
+
+    ``_part_means`` on the 8,196 fsaverage sources. Writes one file per lock
+    under ``fsaverage_root`` (or ``output_root``): ``condition_<measure>`` (12
+    x 8,196 x times) and ``quantile_<measure>`` (10 x ...) for each of
+    ``MEASURES``, the counts (``*_n``, ``*_n_db``), ``log10_center``
+    (sources), ``quantile_dt_ms``, ``times`` and ``vertices_lh`` / ``vertices_rh``.
+    """
+    from meg_tokens.meg.band_power import fsaverage_vertices
+
+    destination = DerivativeLayout(output_root or fsaverage_root, task=project.task)
+    vertices = fsaverage_vertices(_subjects_dir(project))
+    outputs, inputs = [], ()
+    for lock_means in _part_means(project, subject, stream=stream, band=band, root=fsaverage_root,
+                                  space="fsaverage", locks=locks):
+        path = destination.band_power_means_space(subject=subject, stream=stream, lock=lock_means["lock"],
+                                                  band=band, space="fsaverage")
+        _write_means(path, lock_means, {
+            "log10_center": lock_means["centre"], "vertices_lh": vertices[0], "vertices_rh": vertices[1],
+        }, {"subject": subject, "stream": stream, "lock": lock_means["lock"], "band": band})
         outputs.append(path)
+        inputs = tuple(lock_means["inputs"])
     return WorkflowResult(
         stage="band_power_means_fsaverage",
-        inputs=tuple(inputs),
+        inputs=inputs,
         outputs=tuple(outputs),
         settings={"subject": subject, "stream": stream, "band": band, "locks": list(locks)},
     )
@@ -606,4 +635,99 @@ def deep_power_part(
         outputs=(path,),
         settings={"run": f"{run.subject} {run.condition} {run.run}", "stream": stream, "band": band,
                   "locks": list(kept)},
+    )
+
+
+def deep_morph_subject(project: ProjectConfig, subject: str, output_root: Optional[str | Path] = None) -> WorkflowResult:
+    """The morph of one subject's deep sources onto fsaverage's grid of the same structures, saved once.
+
+    The deep volume is rebuilt as the subject models built it, now with the
+    interpolator MNE's volume morph needs, and must hold the very sources of
+    the stored models (the sources the deep power is at).
+    """
+    from meg_tokens.meg.sources import deep_morph, deep_volume
+
+    layout = DerivativeLayout(project.bids_root, task=project.task)
+    destination = DerivativeLayout(output_root or project.bids_root, task=project.task)
+    models = layout.source_models(subject=subject)
+    stored = mne.read_source_spaces(require_file(models["src"], purpose=f"{subject} source space"), verbose=False)
+    bem = mne.read_bem_solution(require_file(models["bem"], purpose=f"{subject} BEM"), verbose=False)
+    subjects_dir = _subjects_dir(project)
+    volume = deep_volume(stored[0]["subject_his_id"], subjects_dir, bem, interpolator=True)
+    if not np.array_equal(volume[0]["vertno"], stored[-1]["vertno"]):
+        raise ValueError(f"{subject}: the rebuilt deep volume does not hold the stored models' sources")
+    morph = deep_morph(volume, subjects_dir)
+    path = destination.deep_morph(subject=subject)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    morph.save(path, overwrite=True, verbose=False)
+    return WorkflowResult(stage="deep_morph", inputs=(models["src"], models["bem"]), outputs=(path,),
+                          settings={"subject": subject})
+
+
+def deep_power_means(
+    project: ProjectConfig,
+    subject: str,
+    *,
+    stream: str,
+    band: str,
+    deep_root: str | Path,
+    locks: Sequence[str] = LOCKS,
+    output_root: Optional[str | Path] = None,
+) -> WorkflowResult:
+    """A subject's mean deep-source band power per condition and quintile, on fsaverage's grid, one band.
+
+    ``_part_means`` on the subject's deep sources (``deep_power_part``), each
+    mean then morphed onto fsaverage's grid of the 17 structures
+    (``deep_morph_subject``) so that every subject has the same sources. The
+    morph interpolates the 5 mm grid onto the MRI's, where a structure's edge
+    has no sources beyond it: a constant field comes back at 0.14-0.99 of
+    itself. Each morphed mean is divided by the morph of a constant, so a
+    source on fsaverage's grid is a weighted average of the subject's
+    sources (``coverage``, kept in the file). Writes one file per lock under
+    ``deep_root`` (or ``output_root``), as the fsaverage means, with each
+    source's ``vertno`` and ``structure`` on fsaverage's grid.
+    """
+    from meg_tokens.meg.sources import deep_volume
+
+    layout = DerivativeLayout(project.bids_root, task=project.task)
+    destination = DerivativeLayout(output_root or deep_root, task=project.task)
+    subjects_dir = _subjects_dir(project)
+    morph = mne.read_source_morph(
+        require_file(layout.deep_morph(subject=subject), purpose=f"{subject} deep morph; run `meg deep-morph` first"),
+    )
+    target = deep_volume("fsaverage", subjects_dir)
+    structure = np.full(target[0]["nuse"], "", dtype=object)
+    for name, where in deep_structures(target, subjects_dir).items():
+        structure[where] = name
+
+    def morphed(data: np.ndarray, vertno: np.ndarray) -> np.ndarray:
+        return morph.apply(mne.VolSourceEstimate(data, [vertno], 0.0, 1.0, morph.subject_from)).data
+
+    outputs, inputs = [], ()
+    for lock_means in _part_means(project, subject, stream=stream, band=band, root=deep_root, space="aseg",
+                                  locks=locks):
+        with h5py.File(lock_means["inputs"][0], "r") as part:
+            vertno = part["vertno"][:]
+        coverage = morphed(np.ones((vertno.size, 1)), vertno)[:, 0]
+
+        def to_fsaverage(data: np.ndarray, vertno: np.ndarray) -> np.ndarray:
+            return morphed(data, vertno) / coverage[:, None]
+
+        lock_means["means"] = {
+            key: np.stack([to_fsaverage(group, vertno) for group in values]).astype(np.float32)
+            for key, values in lock_means["means"].items()
+        }
+        path = destination.band_power_means_space(subject=subject, stream=stream, lock=lock_means["lock"],
+                                                  band=band, space="fsaverageaseg")
+        _write_means(path, lock_means, {
+            "log10_center": to_fsaverage(lock_means["centre"][:, None], vertno)[:, 0],
+            "vertno": target[0]["vertno"], "structure": structure.astype("S"), "coverage": coverage,
+        }, {"subject": subject, "stream": stream, "lock": lock_means["lock"], "band": band})
+        outputs.append(path)
+        inputs = tuple(lock_means["inputs"])
+    return WorkflowResult(
+        stage="deep_power_means",
+        inputs=inputs,
+        outputs=tuple(outputs),
+        settings={"subject": subject, "stream": stream, "band": band, "locks": list(locks)},
     )

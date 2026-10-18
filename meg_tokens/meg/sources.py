@@ -180,6 +180,35 @@ def deep_structures(
     return {name: np.flatnonzero(codes == lut[name]) for name in VOLUME_LABELS}
 
 
+def deep_volume(subject: str, subjects_dir: str | Path, bem: mne.bem.ConductorModel | None = None,
+                *, interpolator: bool = False) -> mne.SourceSpaces:
+    """The 17 deep structures as one volume source space, as the subject models build it.
+
+    With ``interpolator`` it also carries the map to the MRI grid that MNE's
+    volume morph needs (the stored models leave it out: it is the size of
+    the MRI grid). ``bem`` limits the grid to the inner skull, as the models
+    do; fsaverage's volume, the target of the morph, takes none.
+    """
+    return mne.setup_volume_source_space(
+        subject, pos=VOLUME_SPACING_MM, mri="aseg.mgz", bem=bem, volume_label=list(VOLUME_LABELS),
+        subjects_dir=subjects_dir, single_volume=True, add_interpolator=interpolator, verbose=False,
+    )
+
+
+def deep_morph(volume: mne.SourceSpaces, subjects_dir: str | Path) -> mne.SourceMorph:
+    """The morph of a subject's deep sources onto the same structures' grid on ``fsaverage``.
+
+    MNE's volume morph: the subject's ``brain.mgz`` registered to fsaverage's,
+    affine then symmetric diffeomorphic (dipy), at the grid's 5 mm; its matrix
+    computed once, so applying it is one sparse product.
+    """
+    morph = mne.compute_source_morph(
+        volume, volume[0]["subject_his_id"], "fsaverage", subjects_dir=subjects_dir,
+        src_to=deep_volume("fsaverage", subjects_dir), verbose=False,
+    )
+    return morph.compute_vol_morph_mat(verbose=False)
+
+
 def forward(info: mne.Info, trans: str | Path, src: mne.SourceSpaces, bem: mne.bem.ConductorModel) -> mne.Forward:
     """The run's forward model: magnetometers at the run's compensation grade, from its own transform."""
     return mne.make_forward_solution(info, trans=str(trans), src=src, bem=bem, meg=True, eeg=False, mindist=MINDIST_MM, verbose=False)

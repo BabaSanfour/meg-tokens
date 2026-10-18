@@ -44,13 +44,15 @@ def _require_every_condition(handle: h5py.File, counts: str, subject: str, what:
 
 
 class _PowerMeans:
-    """One band's means of the subjects' cortical sources, read from the means files:
-    the 360 HCP-MMP1 regions (deep structures left out) or the 8,196 fsaverage
-    sources; within ``window``; log10 centred by each subject's ``log10_center``."""
+    """One band's means of the subjects' sources, read from the means files: the
+    360 HCP-MMP1 regions (with the 17 deep structures when ``deep``) or the
+    8,196 fsaverage sources; within ``window``; log10 centred by each subject's
+    ``log10_center``."""
 
     def __init__(
         self, layout: DerivativeLayout, fsaverage: Optional[DerivativeLayout], subjects: Sequence[str], *,
         stream: str, lock: str, measure: str, band: int, space: str, window: Optional[tuple[float, float]],
+        deep: bool = False, structure: Optional[str] = None,
     ) -> None:
         self.measure, self.band, self.space = measure, band, space
         if space == PARCELLATION:
@@ -60,21 +62,27 @@ class _PowerMeans:
                 for subject in subjects
             ]
         else:
+            command = "band-power-means-fsaverage" if space == "fsaverage" else "deep-power-means"
             self.paths = [
-                require_file(fsaverage.band_power_means_fsaverage(subject=subject, stream=stream, lock=lock,
-                                                                  band=list(BANDS)[band]),
-                             purpose=f"{subject} {stream} {lock} fsaverage band power means; "
-                                     "run `meg band-power-means-fsaverage` first")
+                require_file(fsaverage.band_power_means_space(subject=subject, stream=stream, lock=lock,
+                                                              band=list(BANDS)[band], space=space),
+                             purpose=f"{subject} {stream} {lock} {space} band power means; run `meg {command}` first")
                 for subject in subjects
             ]
         with h5py.File(self.paths[0], "r") as first:
             if space == PARCELLATION:
                 names = _names(first["sources"][:])
-                self.cortex = ~np.isin(names, VOLUME_LABELS)
+                self.cortex = np.ones(len(names), bool) if deep else ~np.isin(names, VOLUME_LABELS)
                 sources = np.array(names)[self.cortex].tolist()
-            else:
+            elif space == "fsaverage":
                 sources = [f"lh-{v}" for v in first["vertices_lh"][:]] + [f"rh-{v}" for v in first["vertices_rh"][:]]
                 self.cortex = np.ones(len(sources), bool)
+            else:
+                names = np.array(_names(first["structure"][:]))
+                self.cortex = (names == structure) | np.isin(names, [f"Left-{structure}", f"Right-{structure}"])
+                if not self.cortex.any():
+                    raise ValueError(f"no deep source of {structure!r}; the structures are {sorted(set(names))}")
+                sources = [f"{name}-{v}" for name, v in zip(names[self.cortex], first["vertno"][:][self.cortex])]
             self.crop = _in_window(first["times"][:], window)
             self.meta = {
                 "conditions": _names(first["conditions"][:]), "quantiles": _names(first["quantiles"][:]),
@@ -159,8 +167,8 @@ def trajectories(
     layout = DerivativeLayout(project.bids_root, task=project.task)
     destination = DerivativeLayout(output_root or project.bids_root, task=project.task)
     fsaverage = None if fsaverage_root is None else DerivativeLayout(fsaverage_root, task=project.task)
-    if settings.space == "fsaverage" and settings.measure != "erp" and fsaverage is None:
-        raise ValueError("band power on fsaverage needs fsaverage_root, where its means are")
+    if settings.space != PARCELLATION and settings.measure != "erp" and fsaverage is None:
+        raise ValueError(f"band power on {settings.space} needs fsaverage_root, where its means are")
     selected = list(subjects or staged_subjects(project.bids_root))
     is_field = settings.measure == "erp"
     bands = ("field",) if is_field else tuple(BANDS)
@@ -173,7 +181,8 @@ def trajectories(
                                               window=settings.window)
         else:
             source = _PowerMeans(layout, fsaverage, selected, stream=stream, lock=lock, measure=settings.measure,
-                                 band=band_index, space=settings.space, window=settings.window)
+                                 band=band_index, space=settings.space, window=settings.window, deep=settings.deep,
+                                 structure=settings.structure)
             means, meta, paths = source.conditions(), source.meta, source.paths
         keep = np.isfinite(means).all(axis=(0, 1, 2))
         if not keep.all():
@@ -197,7 +206,7 @@ def trajectories(
 
     path = destination.trajectories(
         stream=stream, lock=lock, space=settings.space, fit=settings.fit, measure=settings.measure,
-        window=settings.window,
+        window=settings.window, deep=settings.deep, structure=settings.structure,
     )
     path.parent.mkdir(parents=True, exist_ok=True)
     projection = "uncentred" if settings.fit == "grandaverage" else "centred"
@@ -226,7 +235,7 @@ def trajectories(
         "window_s": list(settings.window) if settings.window else "the lock's whole analysis window",
         "subjects": selected, "bands": list(bands), "n_sources": int(keep.sum()),
         "dropped_sources": np.array(meta["sources"])[~keep].tolist(),
-        "deep_structures": "left out",
+        "deep_structures": "beside the regions" if settings.deep else "left out",
     })
     return WorkflowResult(
         stage="trajectories",

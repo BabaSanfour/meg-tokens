@@ -14,8 +14,8 @@
 #SBATCH --account=rrg-kjerbi_cpu
 #SBATCH --job-name=deep-power
 #SBATCH --partition=cpubase_bycore_b1
-#SBATCH --cpus-per-task=4
-#SBATCH --mem=8000M
+#SBATCH --cpus-per-task=2
+#SBATCH --mem=6G
 #SBATCH --tmp=8G
 #SBATCH --time=01:00:00
 #SBATCH --output=logs/deep-power-%A_%a.out

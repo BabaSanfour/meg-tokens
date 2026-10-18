@@ -233,6 +233,13 @@ permutes labels within subject, and Fast/Slow by run within subject.
   power (all 17 structures, whatever share of their estimate is cortex) is
   kept per trial as a derivative, for the preprint's per-structure PCA and
   later analyses.
+- For the per-structure PCA every subject's deep sources are morphed onto
+  fsaverage's grid of the same structures (MNE's volume morph, affine then
+  SDR through dipy, on `brain.mgz`), and a structure is fitted on its
+  sources there, both sides together unless one is named. A cortex-wide fit
+  can also take the 17 structures' power beside the 360 regions
+  (`--with-deep`), the test of the preprint's "mostly subcortical" claim its
+  own PCA, of the cortex alone, could not make.
 - The means are held in the float32 they are stored in. The grand-average fit
   runs in float64, since raw power sits far from zero and its covariance would
   lose precision; the pooled fit (centred log10, dB, signed fields) runs in

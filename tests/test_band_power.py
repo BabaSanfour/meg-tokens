@@ -183,8 +183,8 @@ def test_fsaverage_means_equal_the_region_means_of_the_same_trials(tmp_path, mon
 
     for lock in ("go", "decision"):
         with h5py.File(layout.band_power_means(subject="H01", stream="dss", lock=lock), "r") as regions, \
-                h5py.File(DerivativeLayout(fsaverage_root, task=project.task).band_power_means_fsaverage(
-                    subject="H01", stream="dss", lock=lock, band="alpha"), "r") as vertices:
+                h5py.File(DerivativeLayout(fsaverage_root, task=project.task).band_power_means_space(
+                    subject="H01", stream="dss", lock=lock, band="alpha", space="fsaverage"), "r") as vertices:
             for key in ("condition_power", "condition_log10", "condition_db",
                         "quantile_power", "quantile_log10", "quantile_db"):
                 np.testing.assert_allclose(vertices[key][:], regions[key][:, 0], rtol=1e-5, equal_nan=True)
@@ -192,3 +192,56 @@ def test_fsaverage_means_equal_the_region_means_of_the_same_trials(tmp_path, mon
                 np.testing.assert_array_equal(vertices[key][:], regions[key][:])
             np.testing.assert_allclose(vertices["log10_center"][:], regions["log10_center"][0], rtol=1e-6)
             assert vertices["vertices_lh"].size == 2
+
+
+def test_deep_means_are_the_part_means_morphed_onto_fsaverages_grid(tmp_path, monkeypatch):
+    import h5py
+    import mne
+    import pandas as pd
+
+    import meg_tokens.meg.sources as sources
+    import meg_tokens.workflows.band_power as workflow
+    from meg_tokens.core import ProjectConfig
+    from meg_tokens.io import DerivativeLayout
+
+    class Doubling:  # stands in for the subject's morph: half the first source, onto three target sources
+        subject_from = "H01"
+
+        def apply(self, stc):
+            return mne.VolSourceEstimate(np.repeat(0.5 * stc.data[:1], 3, axis=0), [np.arange(3)], 0, 1, "fsaverage")
+
+    project = ProjectConfig(data_root=tmp_path, subjects_dir=tmp_path)
+    layout = DerivativeLayout(project.bids_root, task=project.task)
+    morph_path = layout.deep_morph(subject="H01")
+    morph_path.parent.mkdir(parents=True, exist_ok=True)
+    morph_path.touch()
+    monkeypatch.setattr(mne, "read_source_morph", lambda path: Doubling())
+    monkeypatch.setattr(sources, "deep_volume", lambda subject, subjects_dir: [{"nuse": 3, "vertno": np.arange(3)}])
+    monkeypatch.setattr(workflow, "deep_structures", lambda src, subjects_dir: {"Left-Caudate": np.arange(3)})
+    deep_root = tmp_path / "deep"
+    trials = pd.DataFrame({
+        "condition": ["Fast"] * 4 + ["Slow"] * 4, "run": [1] * 8, "nTrialIndex": list(range(1, 5)) * 2,
+        "trial_class_name": ["easy"] * 8, "choice_side": [1.0] * 8, "dt_ms": np.arange(8.0),
+    })
+    trials.to_csv(layout.band_power_trials(subject="H01", stream="dss", lock="go"), sep="\t", index=False)
+    power = np.random.default_rng(1).lognormal(size=(8, 2, 4)).astype(np.float32)
+    for condition in ("Fast", "Slow"):
+        part = DerivativeLayout(deep_root, task=project.task).band_power_part(
+            subject="H01", run="1", condition=condition, stream="dss", band="alpha", space="aseg")
+        part.parent.mkdir(parents=True, exist_ok=True)
+        with h5py.File(part, "w") as handle:
+            handle["go/power"] = power[trials["condition"] == condition]
+            handle["go/times"] = np.array([-0.4, -0.2, 0.0, 0.2])
+            handle["vertno"] = np.array([7, 9])
+
+    workflow.deep_power_means(project, "H01", stream="dss", band="alpha", deep_root=deep_root, locks=["go"])
+
+    path = DerivativeLayout(deep_root, task=project.task).band_power_means_space(
+        subject="H01", stream="dss", lock="go", band="alpha", space="fsaverageaseg")
+    with h5py.File(path, "r") as handle:
+        fast = handle["conditions"][:].tolist().index(b"fast-easy-right")
+        # divided by the morph of a constant (0.5), the first source's mean comes back whole
+        np.testing.assert_allclose(handle["condition_power"][fast], np.repeat(power[:4, :1].mean(axis=0), 3, axis=0),
+                                   rtol=1e-6)
+        np.testing.assert_allclose(handle["coverage"][:], 0.5)
+        assert [s.decode() for s in handle["structure"]] == ["Left-Caudate"] * 3

@@ -191,7 +191,7 @@ def test_band_power_on_fsaverage_reads_one_means_file_per_band(tmp_path):
     subjects = ["H01", "H02", "H03"]
     for level, subject in enumerate(subjects):
         for band in BANDS:
-            path = fsaverage.band_power_means_fsaverage(subject=subject, stream="dss", lock="go", band=band)
+            path = fsaverage.band_power_means_space(subject=subject, stream="dss", lock="go", band=band, space="fsaverage")
             path.parent.mkdir(parents=True, exist_ok=True)
             with h5py.File(path, "w") as handle:
                 for prefix, n in (("condition", 12), ("quantile", 10)):
@@ -213,3 +213,51 @@ def test_band_power_on_fsaverage_reads_one_means_file_per_band(tmp_path):
         assert [s.decode() for s in handle["sources"]] == ["lh-0", "lh-1", "lh-2", "rh-0", "rh-1"]
         assert handle["scores"].shape == (len(BANDS), 3, 12, TIMES.size, 2)
         assert np.abs(handle["mean"][:]).max() < 1  # each subject centred by its own log10_center
+
+
+def test_deep_structures_can_be_fitted_beside_the_regions(tmp_path):
+    project, layout = _project(tmp_path)
+    subjects = ["H01", "H02", "H03"]
+    for index, subject in enumerate(subjects):
+        _write_power_means(layout, subject, level=10 * index)
+    settings = TrajectoryConfig(fit="grandaverage", measure="power", n_components=2, deep=True)
+
+    trajectories(project, stream="dss", lock="go", settings=settings, subjects=subjects)
+
+    path = layout.trajectories(stream="dss", lock="go", space="HCPMMP1", fit="grandaverage", measure="power", deep=True)
+    assert path.name.endswith("desc-go-grandaverage-power-withdeep_trajectories.h5")
+    with h5py.File(path, "r") as handle:
+        assert [s.decode() for s in handle["sources"]] == SOURCES[:3] + ["Left-Caudate"]
+    with pytest.raises(ValueError, match="deep structures enter"):
+        TrajectoryConfig(measure="erp", deep=True)
+
+
+def test_a_deep_structure_is_fitted_from_its_sources_on_fsaverages_grid(tmp_path):
+    project, layout = _project(tmp_path)
+    deep = DerivativeLayout(tmp_path / "deep", task=project.task)
+    structure = np.array([b"Left-Caudate", b"Right-Caudate", b"Left-Putamen", b"Right-Caudate", b"Brain-Stem"])
+    subjects = ["H01", "H02", "H03"]
+    for level, subject in enumerate(subjects):
+        for band in BANDS:
+            path = deep.band_power_means_space(subject=subject, stream="dss", lock="go", band=band, space="fsaverageaseg")
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with h5py.File(path, "w") as handle:
+                for prefix, n in (("condition", 12), ("quantile", 10)):
+                    handle[f"{prefix}_power"] = RNG.normal(size=(n, 5, TIMES.size)) + 10 * level
+                handle["condition_n"] = np.full(12, 5)
+                handle["conditions"] = np.array(CONDITIONS, dtype="S")
+                handle["quantiles"] = np.array([f"q{q}" for q in range(10)], dtype="S")
+                handle["times"] = TIMES
+                handle["structure"], handle["vertno"] = structure, np.arange(10, 15)
+    settings = TrajectoryConfig(fit="grandaverage", measure="power", space="fsaverageaseg", structure="Caudate",
+                                n_components=2)
+
+    trajectories(project, stream="dss", lock="go", settings=settings, subjects=subjects, fsaverage_root=tmp_path / "deep")
+
+    path = layout.trajectories(stream="dss", lock="go", space="fsaverageaseg", fit="grandaverage", measure="power",
+                               structure="Caudate")
+    assert path.name.endswith("desc-go-grandaverage-power-Caudate_trajectories.h5")
+    with h5py.File(path, "r") as handle:
+        assert [s.decode() for s in handle["sources"]] == ["Left-Caudate-10", "Right-Caudate-11", "Right-Caudate-13"]
+    with pytest.raises(ValueError, match="takes one structure"):
+        TrajectoryConfig(measure="power", space="fsaverageaseg")
