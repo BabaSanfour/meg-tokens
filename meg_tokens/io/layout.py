@@ -20,10 +20,6 @@ def _description(*parts: Optional[str]) -> Optional[str]:
     return "-".join(values) if values else None
 
 
-def _frequency(value: float) -> str:
-    return f"{float(value):g}".replace(".", "p")
-
-
 @dataclass(frozen=True)
 class DerivativeLayout:
     """Build exact MEG Tokens derivative paths from canonical entities."""
@@ -614,30 +610,19 @@ class DerivativeLayout:
             extension=".npy",
         )
 
-    def psd(
-        self,
-        *,
-        subject: str,
-        run: str,
-        condition: Optional[str],
-        alignment: str,
-        method: str,
-        fmin: float,
-        fmax: float,
-        suffix: str,
-        extension: str,
+    def sensor_spectra(self, *, subject: str, stream: str, lock: str) -> Path:
+        """One subject's trial-averaged magnetometer spectra around one lock, every Fast and Slow run."""
+        return self.path(subject=subject, processing=stream, description=lock, suffix="psd", extension=".h5")
+
+    def band_choice(
+        self, *, stream: str, lock: str, aperiodic: str, suffix: str, extension: str, datatype: str = "meg",
     ) -> Path:
-        run_number, inferred = parse_run_label(run)
+        """The cohort's band choice from spectral peaks: the specparam model (``specparam``, ``.json``), its
+        readings (``bands``, ``.h5``) and their figures (``datatype="fig"``); a knee is named, the fixed
+        aperiodic component (the preprint's) is not."""
         return self.path(
-            subject=subject,
-            run=run_number,
-            description=_description(
-                _condition(condition or inferred),
-                alignment,
-                method,
-                f"{_frequency(fmin)}to{_frequency(fmax)}hz",
-            ),
-            suffix=suffix,
+            subject="group", datatype=datatype, processing=stream,
+            description=_description(lock, None if aperiodic == "fixed" else aperiodic), suffix=suffix,
             extension=extension,
         )
 

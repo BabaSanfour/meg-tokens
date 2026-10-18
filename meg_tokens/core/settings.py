@@ -144,24 +144,53 @@ class PowerConfig:
 
 @dataclass(frozen=True)
 class SpectralConfig:
-    run: Optional[str] = None
-    condition: Optional[str] = None
-    alignment: Optional[str] = None
+    """Each subject's sensor spectra: the magnetometers around one lock (meg.md §2, Bands).
+
+    Welch's method over the lock's whole analysis window, trial-averaged over
+    every Fast and Slow run; the defaults are the preprint's band-choice input
+    (press lock, -1.5 to +2.0 s, 2 s segments at 600 Hz: 0.5 Hz resolution).
+    """
+
+    lock: str = "enter"
     fmin: float = 1.0
-    fmax: float = 100.0
-    method: str = "welch"
-    n_fft: int = 2048
-    n_overlap: int = 150
-    n_jobs: int = 1
-    fit_model: bool = True
+    fmax: float = 90.0
+    n_fft: int = 1200
+    n_overlap: int = 600
 
     def __post_init__(self) -> None:
         if self.fmin < 0 or self.fmax <= self.fmin:
             raise ValueError("Spectral bounds must satisfy 0 <= fmin < fmax")
-        if self.method not in {"welch", "multitaper"}:
-            raise ValueError(f"Unknown PSD method: {self.method}")
-        if self.n_fft <= 0 or self.n_overlap < 0:
-            raise ValueError("n_fft must be positive and n_overlap non-negative")
+        if self.n_fft <= 0 or not 0 <= self.n_overlap < self.n_fft:
+            raise ValueError("n_fft must be positive and 0 <= n_overlap < n_fft")
+
+
+@dataclass(frozen=True)
+class BandChoiceConfig:
+    """The preprint's band choice from spectral peaks (its Fig S1), and the checks of it.
+
+    One specparam model of every subject's sensor spectra with FOOOF's
+    defaults over ``fmin``-``fmax``, the aperiodic component ``fixed`` (the
+    preprint's) or with a ``knee``; peak centre frequencies counted in bins of
+    ``bin_hz``, each subject weighted equally; the bands where the histogram is
+    above its mean bin; ``n_resamples`` resamplings of subjects for the edges'
+    intervals; spectra fitted below ``min_r2`` counted.
+    """
+
+    lock: str = "enter"
+    fmin: float = 1.0
+    fmax: float = 35.0
+    aperiodic: str = "fixed"
+    bin_hz: float = 1.0
+    n_resamples: int = 2000
+    min_r2: float = 0.9
+
+    def __post_init__(self) -> None:
+        if self.fmin <= 0 or self.fmax <= self.fmin:
+            raise ValueError("Band-choice bounds must satisfy 0 < fmin < fmax")
+        if self.aperiodic not in {"fixed", "knee"}:
+            raise ValueError(f"aperiodic must be 'fixed' or 'knee', got {self.aperiodic!r}")
+        if self.bin_hz <= 0 or self.n_resamples < 1 or not 0 < self.min_r2 < 1:
+            raise ValueError("bin_hz must be positive, n_resamples at least 1 and min_r2 in (0, 1)")
 
 
 @dataclass(frozen=True)

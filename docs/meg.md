@@ -72,8 +72,7 @@ matched fit, fsaverage band power means and per-source deep power. The
 replication of the preprint claim by claim, its audit and the same analyses
 our way: `docs/pca_replication.md`.
 
-**Downstream helpers with no callers.** `psd_description`
-(`workflows/spectral.py`),
+**Downstream helpers with no callers.**
 `get_peak_latency` / `get_significance_onset` / `compute_motor_lateralization`
 (`analysis/statistics.py`), `extract_roi_time_courses`
 (`features/connectivity.py`), `plot_tfr_spectrogram` / `plot_sensor_topomap`

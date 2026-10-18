@@ -259,13 +259,18 @@ meg-tokens --config tokens.toml report behavior --figures all
 ### Stages 6 onward: source reconstruction, features, group analyses
 
 Commands exist for every later stage -- `meg source`, `features
-{erp,power,spectral,hilbert,pac,connectivity}`, `analyze
+{erp,power,hilbert,pac,connectivity}`, `analyze
 {statistics,lateralization,decoding,spatial-decoding}`, the
 matching `report` figures, and `validate golden` -- but they were ported from
 the original notebooks and **none has run on this project's data**. Each is
 rebuilt against [`docs/meg.md`](docs/meg.md) when
 its stage is reached; until then treat them as unverified, and read their
 options from `meg-tokens <domain> <command> --help`.
+
+`meg sensor-spectra`, `analyze band-choice` and `report band-choice` are
+rebuilt: each subject's magnetometer spectra, and the preprint's band choice
+from their spectral peaks (its Fig S1) with the checks of it
+(`docs/pca_replication.md`, claim 0).
 
 `analyze trajectories` is rebuilt: PCA trajectories of the cohort's condition
 means through coco-pipe, fitted on their grand average or on every subject's

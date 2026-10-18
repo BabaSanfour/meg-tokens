@@ -1,452 +1,181 @@
-"""PSD and specparam workflow over staged Epochs derivatives."""
+"""Sensor spectra per subject, and the cohort's band choice from their spectral peaks (meg.md §2, Bands)."""
 
 from __future__ import annotations
 
-import json
-import re
 from pathlib import Path
-from typing import Mapping, Optional, Sequence
+from typing import Optional, Sequence
 
+import h5py
 import mne
 import numpy as np
-import pandas as pd
 
-from meg_tokens.core import (
-    ProjectConfig,
-    SpectralConfig,
-    WorkflowResult,
-    normalize_subject_id,
-    parse_run_label,
+from meg_tokens.analysis.bands import (
+    FOOOF_SETTINGS,
+    band_at,
+    bands_above,
+    line_sweep,
+    peak_shares,
+    periodic_power,
+    resampled_bands,
 )
+from meg_tokens.core import BandChoiceConfig, ProjectConfig, SpectralConfig, WorkflowResult
 from meg_tokens.features.time_frequency import compute_psd, fit_specparam
-from meg_tokens.io import DerivativeLayout, require_file, save_array, save_table, sidecar_path
+from meg_tokens.io import DerivativeLayout, require_file, save_sidecar
+from meg_tokens.meg.band_power import BANDS
+from meg_tokens.meg.meg_bids import epoched_meg_runs, staged_subjects
+
+# The lines of the sweep, in multiples of the histogram's mean bin.
+SWEEP_LINES = np.linspace(0.5, 2.0, 61)
 
 
-def _format_freq(value: float) -> str:
-    return f"{float(value):g}".replace(".", "p")
-
-
-def psd_description(
-    *,
-    condition: Optional[str],
-    align_to: str,
-    method: str,
-    fmin: float,
-    fmax: float,
-) -> str:
-    parts = []
-    if condition:
-        parts.append(condition.lower())
-    parts.extend([align_to, method, f"{_format_freq(fmin)}to{_format_freq(fmax)}hz"])
-    return "-".join(parts)
-
-
-def psd_derivative_path(
-    output_root: str | Path,
-    *,
-    subject: str,
-    run: str,
-    condition: Optional[str],
-    align_to: str,
-    method: str,
-    fmin: float,
-    fmax: float,
-    suffix: str,
-    extension: str,
-) -> Path:
-    return DerivativeLayout(output_root).psd(
-        subject=subject,
-        run=run,
-        condition=condition,
-        alignment=align_to,
-        method=method,
-        fmin=fmin,
-        fmax=fmax,
-        suffix=suffix,
-        extension=extension,
-    )
-
-
-def _metadata_from_epochs_path(path: Path) -> dict[str, object]:
-    meta_path = sidecar_path(path)
-    if meta_path.is_file():
-        with meta_path.open("r", encoding="utf-8") as f:
-            metadata = json.load(f)
-        return {
-            "subject": metadata.get("subject"),
-            "run": metadata.get("run"),
-            "condition": metadata.get("condition"),
-            "alignment": metadata.get("alignment"),
-        }
-
-    match = re.match(
-        r"sub-(?P<subject>[^_]+)_task-[^_]+_run-(?P<run>[^_]+)_desc-(?P<desc>.+)_epo\.fif$",
-        path.name,
-    )
-    if not match:
-        raise ValueError(f"Epochs file is missing a sidecar and does not match the derivative pattern: {path}")
-    desc = match.group("desc")
-    parts = desc.split("-")
-    if len(parts) == 1:
-        condition = None
-        alignment = parts[0]
-    else:
-        condition = parts[0].capitalize()
-        alignment = parts[-1]
-    return {
-        "subject": match.group("subject"),
-        "run": match.group("run"),
-        "condition": condition,
-        "alignment": alignment,
-    }
-
-
-def find_epoch_derivatives(
-    epochs_dir: str | Path,
-    subject: str,
-    *,
-    run: Optional[str] = None,
-    condition: Optional[str] = None,
-    align_to: Optional[str] = None,
-) -> list[Path]:
-    """Find staged Epochs FIF derivatives for one subject."""
-    root = Path(epochs_dir)
-    pattern = f"**/sub-{subject}_task-tokens_run-*_desc-*_epo.fif"
-    candidates = sorted(path for path in root.glob(pattern) if path.is_file())
-    if not candidates:
-        raise FileNotFoundError(f"No staged Epochs FIF derivatives found for {subject} under {epochs_dir}")
-
-    run_filter = parse_run_label(run)[0] if run else None
-    condition_filter = condition.lower() if condition else None
-    align_filter = align_to.lower() if align_to else None
-    selected: list[Path] = []
-    for path in candidates:
-        metadata = _metadata_from_epochs_path(path)
-        if run_filter and str(metadata.get("run")) != run_filter:
-            continue
-        if condition_filter and str(metadata.get("condition", "")).lower() != condition_filter:
-            continue
-        if align_filter and str(metadata.get("alignment", "")).lower() != align_filter:
-            continue
-        selected.append(path)
-
-    if not selected:
-        raise FileNotFoundError(
-            "No staged Epochs FIF derivatives matched "
-            f"subject={subject}, run={run}, condition={condition}, alignment={align_to}"
-        )
-    return selected
-
-
-def _channel_names(epochs: mne.BaseEpochs) -> list[str]:
-    return [str(name) for name in epochs.ch_names]
-
-
-def _safe_positive_spectra(spectra: np.ndarray) -> np.ndarray:
-    values = np.asarray(spectra, dtype=float)
-    finite_positive = values[np.isfinite(values) & (values > 0)]
-    if finite_positive.size == 0:
-        raise ValueError("PSD contains no positive finite values for specparam fitting")
-    floor = float(np.min(finite_positive)) * 1e-6
-    return np.where(np.isfinite(values) & (values > 0), values, floor)
-
-
-def _specparam_tables(model, channels: Sequence[str], base_metadata: Mapping[str, object]) -> tuple[pd.DataFrame, pd.DataFrame]:
-    params = model.to_df().copy()
-    if len(params) != len(channels):
-        raise ValueError(f"specparam returned {len(params)} rows for {len(channels)} channels")
-
-    params.insert(0, "channel", list(channels))
-    for key in ("subject", "run", "condition", "alignment", "psd_method", "fmin_hz", "fmax_hz"):
-        params.insert(0, key, base_metadata.get(key))
-    params["n_peaks"] = 0
-
-    peak_rows = []
-    group_results = getattr(getattr(model, "results", None), "group_results", [])
-    for channel, result in zip(channels, group_results):
-        peaks = np.asarray(getattr(result, "peak_converted", np.empty((0, 3))), dtype=float)
-        if peaks.size == 0:
-            continue
-        if peaks.ndim == 1:
-            peaks = peaks.reshape(1, -1)
-        params.loc[params["channel"] == channel, "n_peaks"] = int(peaks.shape[0])
-        for peak_index, row in enumerate(peaks, start=1):
-            peak_rows.append({
-                **base_metadata,
-                "channel": channel,
-                "peak_index": peak_index,
-                "center_frequency_hz": float(row[0]),
-                "power": float(row[1]),
-                "bandwidth_hz": float(row[2]),
-            })
-
-    peaks = pd.DataFrame(
-        peak_rows,
-        columns=[
-            "subject",
-            "run",
-            "condition",
-            "alignment",
-            "psd_method",
-            "fmin_hz",
-            "fmax_hz",
-            "channel",
-            "peak_index",
-            "center_frequency_hz",
-            "power",
-            "bandwidth_hz",
-        ],
-    )
-    return params, peaks
-
-
-def process_epochs_psd(
-    epochs_path: str | Path,
-    output_dir: str | Path,
-    *,
-    fmin: float = 1.0,
-    fmax: float = 100.0,
-    method: str = "welch",
-    n_fft: int = 2048,
-    n_overlap: int = 150,
-    n_jobs: int = 1,
-    fit_model: bool = True,
-    peak_width_limits: tuple[float, float] = (1.0, 10.0),
-    min_peak_height: float = 0.1,
-    max_n_peaks: int = 6,
-    peak_threshold: float = 2.0,
-    aperiodic_mode: str = "fixed",
-) -> dict[str, Path]:
-    """Compute PSD and optional specparam tables for one Epochs derivative."""
-    epochs_file = require_file(epochs_path, purpose="staged Epochs FIF derivative")
-    metadata = _metadata_from_epochs_path(epochs_file)
-    subject = normalize_subject_id(str(metadata["subject"]))
-    run = str(metadata["run"])
-    condition = None if metadata.get("condition") in (None, "None") else str(metadata["condition"])
-    align_to = str(metadata["alignment"])
-
-    epochs = mne.read_epochs(str(epochs_file), preload=True, verbose=False)
-    psds, freqs = compute_psd(
-        epochs,
-        fmin=fmin,
-        fmax=fmax,
-        method=method,
-        n_fft=n_fft,
-        n_overlap=n_overlap,
-        n_jobs=n_jobs,
-    )
-    mean_psd = np.nanmean(psds, axis=0)
-    channels = _channel_names(epochs)
-    if mean_psd.shape[0] != len(channels):
-        raise ValueError(f"PSD channel axis {mean_psd.shape[0]} does not match Epochs channels {len(channels)}")
-
-    psd_path = psd_derivative_path(
-        output_dir,
-        subject=subject,
-        run=run,
-        condition=condition,
-        align_to=align_to,
-        method=method,
-        fmin=fmin,
-        fmax=fmax,
-        suffix="psd",
-        extension=".npy",
-    )
-    saved = {
-        "psd": save_array(
-            psd_path,
-            mean_psd,
-            dims=("channel", "frequency"),
-            coords={"channel": channels, "frequency_hz": freqs},
-            metadata={
-                "stage": "psd_specparam",
-                "kind": "epoch_mean_psd",
-                "subject": subject,
-                "run": parse_run_label(run)[0],
-                "condition": condition,
-                "alignment": align_to,
-                "psd_method": method,
-                "fmin_hz": float(fmin),
-                "fmax_hz": float(fmax),
-                "n_fft": int(min(n_fft, len(epochs.times))) if method == "welch" else None,
-                "n_overlap": int(min(n_overlap, max(0, min(n_fft, len(epochs.times)) - 1))) if method == "welch" else None,
-                "n_epochs": int(len(epochs)),
-                "input_epochs": str(epochs_file),
-            },
-        )
-    }
-
-    if fit_model:
-        positive_psd = _safe_positive_spectra(mean_psd)
-        model = fit_specparam(
-            freqs,
-            positive_psd,
-            peak_width_limits=peak_width_limits,
-            min_peak_height=min_peak_height,
-            max_n_peaks=max_n_peaks,
-            peak_threshold=peak_threshold,
-            freq_range=(fmin, fmax),
-            aperiodic_mode=aperiodic_mode,
-            n_jobs=n_jobs,
-            verbose=False,
-        )
-        base_metadata = {
-            "subject": subject,
-            "run": parse_run_label(run)[0],
-            "condition": condition,
-            "alignment": align_to,
-            "psd_method": method,
-            "fmin_hz": float(fmin),
-            "fmax_hz": float(fmax),
-        }
-        params, peaks = _specparam_tables(model, channels, base_metadata)
-        params_path = psd_derivative_path(
-            output_dir,
-            subject=subject,
-            run=run,
-            condition=condition,
-            align_to=align_to,
-            method=method,
-            fmin=fmin,
-            fmax=fmax,
-            suffix="specparam",
-            extension=".tsv",
-        )
-        peaks_path = psd_derivative_path(
-            output_dir,
-            subject=subject,
-            run=run,
-            condition=condition,
-            align_to=align_to,
-            method=method,
-            fmin=fmin,
-            fmax=fmax,
-            suffix="specparampeaks",
-            extension=".tsv",
-        )
-        saved["specparam"] = save_table(
-            params_path,
-            params,
-            metadata={
-                "stage": "psd_specparam",
-                "kind": "specparam_channel_parameters",
-                "input_psd": str(saved["psd"]),
-                "input_epochs": str(epochs_file),
-                "aperiodic_mode": aperiodic_mode,
-                "peak_width_limits_hz": list(peak_width_limits),
-                "min_peak_height": float(min_peak_height),
-                "max_n_peaks": int(max_n_peaks),
-                "peak_threshold": float(peak_threshold),
-            },
-        )
-        saved["specparam_peaks"] = save_table(
-            peaks_path,
-            peaks,
-            metadata={
-                "stage": "psd_specparam",
-                "kind": "specparam_periodic_peaks",
-                "input_psd": str(saved["psd"]),
-                "input_epochs": str(epochs_file),
-            },
-        )
-
-    return saved
-
-
-def run_psd_specparam(
-    epochs_dir: str | Path,
-    output_dir: str | Path,
-    subjects: Sequence[str],
-    *,
-    run: Optional[str] = None,
-    condition: Optional[str] = None,
-    align_to: Optional[str] = None,
-    fmin: float = 1.0,
-    fmax: float = 100.0,
-    method: str = "welch",
-    n_fft: int = 2048,
-    n_overlap: int = 150,
-    n_jobs: int = 1,
-    fit_model: bool = True,
-) -> dict[str, list[dict[str, Path]]]:
-    """Run PSD/specparam extraction for staged Epochs derivatives."""
-    outputs: dict[str, list[dict[str, Path]]] = {}
-    for subject in subjects:
-        outputs[subject] = []
-        epoch_files = find_epoch_derivatives(
-            epochs_dir,
-            subject,
-            run=run,
-            condition=condition,
-            align_to=align_to,
-        )
-        for epochs_path in epoch_files:
-            print(f"Computing PSD/specparam for {epochs_path}")
-            outputs[subject].append(
-                process_epochs_psd(
-                    epochs_path,
-                    output_dir,
-                    fmin=fmin,
-                    fmax=fmax,
-                    method=method,
-                    n_fft=n_fft,
-                    n_overlap=n_overlap,
-                    n_jobs=n_jobs,
-                    fit_model=fit_model,
-                )
-            )
-    return outputs
-
-
-def extract_spectral_features(
+def sensor_spectra(
     project: ProjectConfig,
+    subject: str,
     *,
-    subjects: Sequence[str],
+    stream: str,
     settings: SpectralConfig,
-    epochs_root: Optional[str | Path] = None,
     output_root: Optional[str | Path] = None,
 ) -> WorkflowResult:
-    """Compute PSD and optional specparam outputs for staged Epochs."""
-    epochs_root = Path(epochs_root or project.bids_root)
-    outputs = run_psd_specparam(
-        epochs_root,
-        output_root or project.bids_root,
-        subjects,
-        run=settings.run,
-        condition=settings.condition,
-        align_to=settings.alignment,
-        fmin=settings.fmin,
-        fmax=settings.fmax,
-        method=settings.method,
-        n_fft=settings.n_fft,
-        n_overlap=settings.n_overlap,
-        n_jobs=settings.n_jobs,
-        fit_model=settings.fit_model,
-    )
-    inputs = tuple(
-        path
-        for subject in subjects
-        for path in find_epoch_derivatives(
-            epochs_root,
-            subject,
-            run=settings.run,
-            condition=settings.condition,
-            align_to=settings.alignment,
-        )
-    )
-    output_paths = tuple(
-        path
-        for subject_outputs in outputs.values()
-        for run_outputs in subject_outputs
-        for path in run_outputs.values()
-    )
-    return WorkflowResult(
-        stage="spectral_features",
-        inputs=inputs,
-        outputs=output_paths,
-        settings={
-            "subjects": [subject for subject in subjects],
-            **settings.__dict__,
-        },
-    )
+    """One subject's magnetometer spectra around one lock, trial-averaged over every Fast and Slow run.
 
+    Welch's method (MNE, through ``compute_psd``) on every kept epoch's whole
+    analysis window; one HDF5 file with ``psd`` (magnetometers x frequencies),
+    ``freqs``, ``channels`` and ``n_epochs``.
+    """
+    layout = DerivativeLayout(project.bids_root, task=project.task)
+    destination = DerivativeLayout(output_root or project.bids_root, task=project.task)
+    total, count, freqs, channels, inputs = 0.0, 0, None, None, []
+    for _, path in epoched_meg_runs(layout, subject, alignment=settings.lock, stream=stream):
+        epochs = mne.read_epochs(path, preload=True, verbose=False)
+        if not len(epochs):
+            continue
+        names = epochs.copy().pick("mag").ch_names
+        if channels is not None and names != channels:
+            raise ValueError(f"{path.name}: magnetometers differ from the subject's other runs")
+        psd, freqs = compute_psd(epochs, fmin=settings.fmin, fmax=settings.fmax, method="welch",
+                                 n_fft=settings.n_fft, n_overlap=settings.n_overlap, picks="mag")
+        total, count, channels = total + psd.sum(axis=0), count + psd.shape[0], names
+        inputs.append(path)
+    if not count:
+        raise FileNotFoundError(f"{subject} {stream}: no kept {settings.lock} epochs")
+
+    path = destination.sensor_spectra(subject=subject, stream=stream, lock=settings.lock)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with h5py.File(path, "w") as handle:
+        handle.create_dataset("psd", data=total / count)
+        handle.create_dataset("freqs", data=freqs)
+        handle.create_dataset("channels", data=np.array(channels, dtype="S"))
+        handle.create_dataset("n_epochs", data=count)
+    save_sidecar(path, {
+        "stage": "sensor_spectra", "subject": subject, "stream": stream, "lock": settings.lock,
+        "method": "welch", "fmin_hz": settings.fmin, "fmax_hz": settings.fmax, "n_fft": settings.n_fft,
+        "n_overlap": settings.n_overlap, "resolution_hz": float(freqs[1] - freqs[0]), "n_epochs": count,
+        "n_runs": len(inputs), "inputs": [str(p) for p in inputs],
+    })
+    return WorkflowResult(stage="sensor_spectra", inputs=tuple(inputs), outputs=(path,),
+                          settings={"subject": subject, "stream": stream, **settings.__dict__})
+
+
+def band_choice(
+    project: ProjectConfig,
+    *,
+    stream: str,
+    settings: BandChoiceConfig,
+    subjects: Optional[Sequence[str]] = None,
+    output_root: Optional[str | Path] = None,
+) -> WorkflowResult:
+    """The preprint's band choice (its Fig S1) on the cohort's sensor spectra, and the checks of it.
+
+    One specparam model of every subject's magnetometer spectra (FOOOF's
+    defaults, ``settings.aperiodic``), saved as specparam's own JSON (its
+    report is drawn from it), and one HDF5 file of what the figures read:
+    each subject's power above the aperiodic fit (``periodic``, subjects x
+    ``freqs``) and its 95 % interval over resampled subjects; each subject's
+    peaks per bin (``shares``, subjects x bins between ``edges``) and its
+    interval; the bands above the mean bin (``bands``, NaN where none holds a
+    preprint band's centre) and their edges in each resample
+    (``bands_resampled``); which bins lie above each line of the sweep
+    (``sweep``, ``lines`` x bins); and per spectrum the ``exponent``, ``r2``
+    and ``subject``.
+    """
+    layout = DerivativeLayout(project.bids_root, task=project.task)
+    destination = DerivativeLayout(output_root or project.bids_root, task=project.task)
+    selected = list(subjects or staged_subjects(project.bids_root))
+    spectra, owner, inputs, freqs = [], [], [], None
+    for index, subject in enumerate(selected):
+        path = require_file(layout.sensor_spectra(subject=subject, stream=stream, lock=settings.lock),
+                            purpose=f"{subject} {stream} sensor spectra; run `meg sensor-spectra` first")
+        with h5py.File(path, "r") as handle:
+            spectra.append(handle["psd"][:])
+            freqs = handle["freqs"][:]
+        owner.append(np.full(spectra[-1].shape[0], index))
+        inputs.append(path)
+    spectra, owner = np.concatenate(spectra), np.concatenate(owner)
+
+    model = fit_specparam(freqs, spectra, freq_range=(settings.fmin, settings.fmax),
+                          aperiodic_mode=settings.aperiodic, **FOOOF_SETTINGS)
+    peaks = model.results.get_params("peak")  # centre frequency, power, bandwidth, spectrum
+    centre, peak_owner = peaks[:, 0], owner[peaks[:, 3].astype(int)]
+    aperiodic = model.get_params("aperiodic")
+    r2, error = model.results.get_metrics("gof", "rsquared"), model.results.get_metrics("error", "mae")
+    n = len(selected)
+
+    periodic = periodic_power(model.data.power_spectra, aperiodic, model.data.freqs, settings.aperiodic)
+    periodic = np.stack([periodic[owner == s].mean(axis=0) for s in range(n)])
+    edges = np.arange(settings.fmin, settings.fmax + settings.bin_hz / 2, settings.bin_hz)
+    shares = peak_shares(centre, peak_owner, n, edges)
+    preprint = {name: band for name, band in BANDS.items() if band[1] <= settings.fmax}
+    resamples = np.random.default_rng(0).integers(0, n, (settings.n_resamples, n))
+    resampled_shares, resampled = resampled_bands(shares, edges, preprint, resamples)
+    found = bands_above(shares.mean(axis=0), edges, shares.mean())
+    chosen = np.array([band_at(found, band) or (np.nan, np.nan) for band in preprint.values()])
+
+    model_path = destination.band_choice(stream=stream, lock=settings.lock, aperiodic=settings.aperiodic,
+                                         suffix="specparam", extension=".json")
+    path = destination.band_choice(stream=stream, lock=settings.lock, aperiodic=settings.aperiodic,
+                                   suffix="bands", extension=".h5")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    model.save(model_path.name, str(model_path.parent), save_results=True, save_settings=True)
+    with h5py.File(path, "w") as handle:
+        for name, data in {
+            "freqs": model.data.freqs, "periodic": periodic,
+            "periodic_interval": np.percentile(np.stack([periodic[p].mean(axis=0) for p in resamples]),
+                                               [2.5, 97.5], axis=0),
+            "edges": edges, "shares": shares, "shares_interval": np.percentile(resampled_shares, [2.5, 97.5], axis=0),
+            "bands": chosen, "bands_resampled": np.stack([resampled[name] for name in preprint]),
+            "preprint_bands": np.array(list(preprint.values())), "lines": SWEEP_LINES,
+            "sweep": line_sweep(shares.mean(axis=0), SWEEP_LINES), "exponent": aperiodic[:, -1], "r2": r2,
+            "error": error, "subject": owner,
+        }.items():
+            handle.create_dataset(name, data=data)
+        handle.create_dataset("band_names", data=np.array(list(preprint), dtype="S"))
+        handle.create_dataset("subjects", data=np.array(selected, dtype="S"))
+
+    def interval(values: np.ndarray) -> list[float] | None:
+        values = values[np.isfinite(values)]
+        return np.percentile(values, [2.5, 97.5]).round(1).tolist() if values.size else None
+
+    save_sidecar(path, {
+        "stage": "band_choice", "stream": stream, **settings.__dict__, "specparam": {
+            **{k: (str(v) if k == "max_n_peaks" else v) for k, v in FOOOF_SETTINGS.items()},
+            "aperiodic_mode": settings.aperiodic},
+        "subjects": selected, "n_spectra": int(spectra.shape[0]), "n_peaks": int(centre.size),
+        "peaks_per_spectrum": round(centre.size / spectra.shape[0], 2),
+        "exponent_range": [round(float(aperiodic[:, -1].min()), 3), round(float(aperiodic[:, -1].max()), 3)],
+        "r2_range": [round(float(r2.min()), 3), round(float(r2.max()), 3)],
+        "spectra_below_min_r2": int((r2 < settings.min_r2).sum()),
+        "bands_above_mean_bin": [list(band) for band in found],
+        "bands": {name: {"preprint": list(band), "here": None if np.isnan(edge[0]) else edge.tolist(),
+                         "lower_edge_95": interval(resampled[name][:, 0]),
+                         "upper_edge_95": interval(resampled[name][:, 1]),
+                         "resamples_without": round(float(np.isnan(resampled[name][:, 0]).mean()), 3)}
+                  for (name, band), edge in zip(preprint.items(), chosen)},
+        "resamples_theta_alpha_one_band": round(float(np.mean(np.all(resampled["theta"] == resampled["alpha"], axis=1))), 3)
+        if {"theta", "alpha"} <= set(resampled) else None,
+        "model": str(model_path), "inputs": [str(p) for p in inputs],
+    })
+    return WorkflowResult(stage="band_choice", inputs=tuple(inputs), outputs=(model_path, path),
+                          settings={"stream": stream, "subjects": selected, **settings.__dict__})
+
+
+__all__ = ["SWEEP_LINES", "sensor_spectra", "band_choice"]

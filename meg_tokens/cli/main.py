@@ -26,6 +26,7 @@ from meg_tokens.core import (
     RunSpec,
     SpatialDecodingConfig,
     SpectralConfig,
+    BandChoiceConfig,
     StatisticsConfig,
     TRAJECTORY_MEASURES,
     TRAJECTORY_SPACES,
@@ -316,6 +317,15 @@ def build_parser() -> argparse.ArgumentParser:
     deep_power.add_argument("--n-jobs", type=int, default=1, help="cores for filtering")
     deep_power.add_argument("--output-root", required=True, help="the BIDS-like root of the deep power (in /project)")
 
+    sensor_spectra = meg_commands.add_parser(
+        "sensor-spectra",
+        help="A subject's trial-averaged magnetometer spectra around one lock, every Fast and Slow run (Welch).",
+    )
+    sensor_spectra.add_argument("--subjects", nargs="+", required=True)
+    sensor_spectra.add_argument("--streams", nargs="+", choices=STREAMS, default=list(STREAMS))
+    sensor_spectra.add_argument("--lock", choices=EPOCH_LOCKS, default="enter")
+    sensor_spectra.add_argument("--output-root")
+
     band_power_means_fsaverage = meg_commands.add_parser(
         "band-power-means-fsaverage",
         help="A subject's mean fsaverage band power per condition and decision-time quintile, one band, every lock.",
@@ -401,20 +411,6 @@ def build_parser() -> argparse.ArgumentParser:
     power.add_argument("--baseline-method", choices=["percent", "ratio", "logratio", "zscore", "difference"], default="percent")
     power.add_argument("--n-jobs", type=int, default=1)
     power.add_argument("--source-root")
-
-    spectral = feature_commands.add_parser("spectral", help="Compute Epochs PSD and specparam.")
-    spectral.add_argument("--subjects", nargs="+", required=True)
-    spectral.add_argument("--run")
-    spectral.add_argument("--condition")
-    spectral.add_argument("--alignment", choices=EPOCH_LOCKS)
-    spectral.add_argument("--method", choices=["welch", "multitaper"], default="welch")
-    spectral.add_argument("--fmin", type=float, default=1.0)
-    spectral.add_argument("--fmax", type=float, default=100.0)
-    spectral.add_argument("--n-fft", type=int, default=2048)
-    spectral.add_argument("--n-overlap", type=int, default=150)
-    spectral.add_argument("--n-jobs", type=int, default=1)
-    spectral.add_argument("--no-specparam", action="store_true")
-    spectral.add_argument("--epochs-root")
 
     hilbert = feature_commands.add_parser("hilbert", help="Extract analytic-signal features.")
     hilbert.add_argument("--subjects", nargs="+", required=True)
@@ -529,6 +525,17 @@ def build_parser() -> argparse.ArgumentParser:
     trajectories.add_argument("--with-deep", action="store_true",
                               help="fit the 17 deep structures beside the 360 regions (HCP-MMP1 band power)")
 
+    band_choice = analysis_commands.add_parser(
+        "band-choice",
+        help="The preprint's band choice from spectral peaks of the cohort's sensor spectra (its Fig S1), and its checks.",
+    )
+    band_choice.add_argument("--streams", nargs="+", choices=STREAMS, default=list(STREAMS))
+    band_choice.add_argument("--lock", choices=EPOCH_LOCKS, default="enter")
+    band_choice.add_argument("--aperiodic", choices=["fixed", "knee"], default="fixed",
+                             help="the aperiodic component: fixed (the preprint's) or with a knee")
+    band_choice.add_argument("--subjects", nargs="+", help="default: every staged subject")
+    band_choice.add_argument("--output-root")
+
     spatial_decoding = analysis_commands.add_parser(
         "spatial-decoding",
         help="Run sensor-space decoding on staged trial arrays.",
@@ -576,6 +583,14 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Skip figures whose source derivative is absent instead of raising.",
     )
+
+    band_choice_report = report_commands.add_parser(
+        "band-choice", help="specparam's group report and the band-choice figure, per stream."
+    )
+    band_choice_report.add_argument("--streams", nargs="+", choices=STREAMS, default=list(STREAMS))
+    band_choice_report.add_argument("--lock", choices=EPOCH_LOCKS, default="enter")
+    band_choice_report.add_argument("--aperiodic", choices=["fixed", "knee"], default="fixed")
+    band_choice_report.add_argument("--output-root")
 
     coreg_report = report_commands.add_parser(
         "coreg", help="Rebuild MEG-MRI coregistration QC figures."
@@ -942,6 +957,17 @@ def _meg_deep_power(project: ProjectConfig, args: argparse.Namespace) -> object:
     )
 
 
+def _meg_sensor_spectra(project: ProjectConfig, args: argparse.Namespace) -> object:
+    from meg_tokens.workflows.spectral import sensor_spectra
+
+    settings = SpectralConfig(lock=args.lock)
+    return [
+        sensor_spectra(project, subject, stream=stream, settings=settings, output_root=args.output_root)
+        for subject in args.subjects
+        for stream in args.streams
+    ]
+
+
 def _meg_band_power_means_fsaverage(project: ProjectConfig, args: argparse.Namespace) -> object:
     from meg_tokens.meg.band_power import BANDS, LOCKS
     from meg_tokens.workflows.band_power import band_power_means_fsaverage
@@ -1063,28 +1089,6 @@ def _features_power(project: ProjectConfig, args: argparse.Namespace) -> object:
             n_jobs=args.n_jobs,
         ),
         source_root=args.source_root,
-    )
-
-
-def _features_spectral(project: ProjectConfig, args: argparse.Namespace) -> object:
-    from meg_tokens.workflows.spectral import extract_spectral_features
-
-    return extract_spectral_features(
-        project,
-        subjects=args.subjects,
-        settings=SpectralConfig(
-            run=args.run,
-            condition=args.condition,
-            alignment=args.alignment,
-            method=args.method,
-            fmin=args.fmin,
-            fmax=args.fmax,
-            n_fft=args.n_fft,
-            n_overlap=args.n_overlap,
-            n_jobs=args.n_jobs,
-            fit_model=not args.no_specparam,
-        ),
-        epochs_root=args.epochs_root,
     )
 
 
@@ -1247,6 +1251,16 @@ def _analyze_trajectories(project: ProjectConfig, args: argparse.Namespace) -> o
     ]
 
 
+def _analyze_band_choice(project: ProjectConfig, args: argparse.Namespace) -> object:
+    from meg_tokens.workflows.spectral import band_choice
+
+    settings = BandChoiceConfig(lock=args.lock, aperiodic=args.aperiodic)
+    return [
+        band_choice(project, stream=stream, settings=settings, subjects=args.subjects, output_root=args.output_root)
+        for stream in args.streams
+    ]
+
+
 def _analyze_spatial_decoding(project: ProjectConfig, args: argparse.Namespace) -> object:
     from meg_tokens.workflows.spatial_decoding import run_spatial_decoding
 
@@ -1284,6 +1298,14 @@ def _report_behavior(project: ProjectConfig, args: argparse.Namespace) -> object
             skip_missing=args.skip_missing,
         )
     return result
+
+
+def _report_band_choice(project: ProjectConfig, args: argparse.Namespace) -> object:
+    from meg_tokens.reports.bands import render_band_choice
+
+    return render_band_choice(project, streams=args.streams,
+                              settings=BandChoiceConfig(lock=args.lock, aperiodic=args.aperiodic),
+                              output_root=args.output_root)
 
 
 def _report_coreg(project: ProjectConfig, args: argparse.Namespace) -> object:
@@ -1419,9 +1441,9 @@ _HANDLERS: dict[tuple[str, str], Handler] = {
     ("meg", "deep-power"): _meg_deep_power,
     ("meg", "deep-morph"): _meg_deep_morph,
     ("meg", "deep-power-means"): _meg_deep_power_means,
+    ("meg", "sensor-spectra"): _meg_sensor_spectra,
     ("meg", "band-power-means-fsaverage"): _meg_band_power_means_fsaverage,
     ("features", "power"): _features_power,
-    ("features", "spectral"): _features_spectral,
     ("features", "hilbert"): _features_hilbert,
     ("features", "pac"): _features_pac,
     ("features", "connectivity"): _features_connectivity,
@@ -1429,8 +1451,10 @@ _HANDLERS: dict[tuple[str, str], Handler] = {
     ("analyze", "lateralization"): _analyze_lateralization,
     ("analyze", "decoding"): _analyze_decoding,
     ("analyze", "trajectories"): _analyze_trajectories,
+    ("analyze", "band-choice"): _analyze_band_choice,
     ("analyze", "spatial-decoding"): _analyze_spatial_decoding,
     ("report", "behavior"): _report_behavior,
+    ("report", "band-choice"): _report_band_choice,
     ("report", "coreg"): _report_coreg,
     ("report", "statistics"): _report_statistics,
     ("report", "connectivity"): _report_connectivity,

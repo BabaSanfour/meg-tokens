@@ -425,9 +425,10 @@ def compute_psd(
     method: str = 'welch',
     n_fft: int = 2048,
     n_overlap: int = 150,
-    n_jobs: int = 1
+    n_jobs: int = 1,
+    picks=None,
 ) -> tuple:
-    """Compute PSD for an MNE Epochs object using modern MNE APIs."""
+    """Compute PSD for an MNE Epochs object using modern MNE APIs (``picks`` as MNE takes them)."""
     if not isinstance(epochs, mne.BaseEpochs):
         raise TypeError("epochs must be an MNE Epochs object")
     if fmax <= fmin:
@@ -448,6 +449,7 @@ def compute_psd(
             n_fft=fft,
             n_overlap=overlap,
             n_jobs=n_jobs,
+            picks=picks,
             verbose=False,
         )
     elif method == 'multitaper':
@@ -456,6 +458,7 @@ def compute_psd(
             fmin=fmin,
             fmax=fmax,
             n_jobs=n_jobs,
+            picks=picks,
             verbose=False,
         )
     else:
@@ -469,7 +472,7 @@ def fit_specparam(
     spectra: np.ndarray,
     peak_width_limits: tuple[float, float] = (1.0, 10.0),
     min_peak_height: float = 0.1,
-    max_n_peaks: int = 6,
+    max_n_peaks: float = 6,
     peak_threshold: float = 2.0,
     freq_range: tuple[float, float] | None = None,
     aperiodic_mode: str = "fixed",
