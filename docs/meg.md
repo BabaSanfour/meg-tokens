@@ -225,6 +225,11 @@ permutes labels within subject, and Fast/Slow by run within subject.
   PCA per stream, lock and band, on the cortex alone: the 17 deep structures
   are mostly cortex through this inverse (§4, Source reconstruction) and the
   preprint's PCA had none; a region with no source in any subject is left out.
+- The means are held in the float32 they are stored in. The grand-average fit
+  runs in float64, since raw power sits far from zero and its covariance would
+  lose precision; the pooled fit (centred log10, dB, signed fields) runs in
+  float32, which halves the memory of the fsaverage fits and gives the float64
+  components to 1e-4.
 - The two fits are named for what they do: `grandaverage` (one PCA of the
   grand average of the subjects' condition means, each subject projected
   uncentred: the preprint's code) and `pooled` (one PCA of every subject's

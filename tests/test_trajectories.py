@@ -13,9 +13,9 @@ from meg_tokens.workflows.trajectories import trajectories
 RNG = np.random.default_rng(0)
 
 
-def _aligned(a, b):
+def _aligned(a, b, atol=1e-6):
     """Components equal up to each one's sign."""
-    return np.allclose(np.abs(np.sum(a * b, axis=1)), 1, atol=1e-6)
+    return np.allclose(np.abs(np.sum(a * b, axis=1)), 1, atol=atol)
 
 
 def test_a_grand_average_fit_projects_each_subject_uncentred():
@@ -154,3 +154,17 @@ def test_region_fields_are_sign_aligned_before_the_pca(tmp_path):
 def test_band_power_is_in_the_regions_only():
     with pytest.raises(ValueError, match="fsaverage takes measure 'erp'"):
         TrajectoryConfig(measure="power", space="fsaverage")
+
+
+def test_a_pooled_fit_in_float32_matches_float64():
+    means = RNG.normal(size=(6, 12, 300, 40))
+    means[..., :5] += 3 * np.sin(np.linspace(0, 8, 300))[None, None, :, None]
+    single = pca.fit(means.astype(np.float32), "pooled", 5)
+    double = pca.fit(means, "pooled", 5)
+    assert _aligned(single.get_components().astype(float), double.get_components(), atol=1e-4)
+
+
+def test_a_grand_average_fit_is_float64_even_from_float32_means():
+    means = (RNG.normal(size=(4, 3, 50, 6)) + 1e3).astype(np.float32)
+    reducer = pca.fit(means, "grandaverage", 2)
+    assert reducer.reducer.model.mean_.dtype == np.float64

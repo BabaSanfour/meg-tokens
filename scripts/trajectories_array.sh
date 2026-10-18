@@ -3,20 +3,32 @@
 # stream and lock, 42 for the plan. Never run this command directly on a login
 # node.
 #
-#   sbatch --array=0-29 scripts/trajectories_array.sh tokens.toml
-#   sbatch --array=30-41 --mem=96G scripts/trajectories_array.sh tokens.toml
-#
 # Task i runs analysis i // 6 of ANALYSES on stream (i % 6) // 3 and lock
-# i % 3. The fsaverage fields (tasks 30-41) hold every subject's 12 x 2,101 x
-# 8,196 means at once, about 53 GB, hence their own memory. Needs the band
-# power means (scripts/band_power_means_array.sh) and the event-related fields
+# i % 3 (0 go, 1 decision, 2 enter). Memory follows the analysis and the lock:
+# GNU time peaks of the float64 runs on the cohort, halved for float32 (power
+# 2.6 GB go, about 6 GB the longer locks; region fields under 1.5 GB;
+# fsaverage fields about 13 GB go, about 30 GB the longer locks); each task
+# logs its own peak. fir allows about 24 GB per core, so the
+# longer fsaverage locks take two, which the covariance's BLAS uses:
+#
+#   power, go               sbatch --array=0,3,6,9,12,15 --mem=3300M
+#   power, decision/enter   sbatch --array=1,2,4,5,7,8,10,11,13,14,16,17 --mem=7680M
+#   region fields, go       sbatch --array=18,21,24,27 --mem=1G
+#   region fields, longer   sbatch --array=19,20,22,23,25,26,28,29 --mem=2G
+#   fsaverage, go           sbatch --array=30,33,36,39 --mem=16G
+#   fsaverage, longer       sbatch --array=31,32,34,35,37,38,40,41 --mem=37G --cpus-per-task=2
+#
+# each followed by `scripts/trajectories_array.sh tokens.toml`. The power tasks
+# spend most of their time reading the means files, so their CPU use stays low
+# whatever they are given. Needs the band power means
+# (scripts/band_power_means_array.sh) and the event-related fields
 # (scripts/erp_array.sh).
 
 #SBATCH --account=rrg-kjerbi_cpu
 #SBATCH --job-name=trajectories
 #SBATCH --partition=cpubase_bycore_b1
 #SBATCH --cpus-per-task=1
-#SBATCH --mem=24000M
+#SBATCH --mem=3300M
 #SBATCH --time=03:00:00
 #SBATCH --output=logs/trajectories-%A_%a.out
 
@@ -48,7 +60,8 @@ export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK}" OPENBLAS_NUM_THREADS="${SLURM_CP
 echo "started=$(date --iso-8601=seconds) job=${SLURM_JOB_ID} task=${SLURM_ARRAY_TASK_ID} fit=${FIT} measure=${MEASURE} space=${SPACE} stream=${STREAM} lock=${LOCK}"
 echo "commit=$(git rev-parse HEAD) dirty=$(git status --porcelain | tr '\n' ';') host=$(hostname)"
 
-./.venv/bin/meg-tokens --config "$CONFIG" analyze trajectories \
+# GNU time logs the task's peak resident memory; sacct's MaxRSS counts page cache.
+/usr/bin/time -v ./.venv/bin/meg-tokens --config "$CONFIG" analyze trajectories \
     --fit "$FIT" --measure "$MEASURE" --space "$SPACE" \
     --streams "$STREAM" --locks "$LOCK"
 echo "finished=$(date --iso-8601=seconds)"

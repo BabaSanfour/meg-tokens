@@ -63,7 +63,11 @@ def fit(means: np.ndarray, how: str, n_components: int) -> DimReduction:
     (``pooled``)."""
     if how not in FITS:
         raise ValueError(f"fit must be one of {FITS}, got {how!r}")
-    data = means.mean(axis=0) if how == "grandaverage" else means
+    # The grand average is small and may sit far from zero (raw power), so it is
+    # fitted in float64; pooled means (centred log10, dB, signed fields) are
+    # fitted in their own precision, float32 from the files, which halves the
+    # memory of the largest fits.
+    data = means.mean(axis=0, dtype=np.float64) if how == "grandaverage" else means
     # Exact, and it never forms the centred copy of the rows.
     return DimReduction("PCA", n_components=n_components, svd_solver="covariance_eigh").fit(rows(data))
 

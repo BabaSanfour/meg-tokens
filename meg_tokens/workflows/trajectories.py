@@ -53,9 +53,10 @@ def _power_means(
             "sources": np.array(_names(first["sources"][:]))[cortex].tolist(), "times": first["times"][:],
         }
         shape = (len(meta["times"]), int(cortex.sum()))
-    conditions = np.empty((len(subjects), len(meta["conditions"]), *shape))
-    quantiles = np.empty((len(subjects), len(meta["quantiles"]), *shape))
-    centres = np.zeros((len(subjects), shape[1]))
+    # Kept in the files' float32; the fit upcasts what needs it (analysis/trajectories.py).
+    conditions = np.empty((len(subjects), len(meta["conditions"]), *shape), dtype=np.float32)
+    quantiles = np.empty((len(subjects), len(meta["quantiles"]), *shape), dtype=np.float32)
+    centres = np.zeros((len(subjects), shape[1]), dtype=np.float32)
     for index, (subject, path) in enumerate(zip(subjects, paths)):
         with h5py.File(path, "r") as handle:
             _require_every_condition(handle, "condition_n", subject, f"{stream} {lock}")
@@ -83,7 +84,7 @@ def _field_means(
         else:
             sources = [f"lh-{v}" for v in first["vertices_lh"][:]] + [f"rh-{v}" for v in first["vertices_rh"][:]]
         meta = {"conditions": _names(first["conditions"][:]), "sources": sources, "times": first["times"][:]}
-    fields = np.empty((len(subjects), len(meta["conditions"]), len(meta["times"]), len(sources)))
+    fields = np.empty((len(subjects), len(meta["conditions"]), len(meta["times"]), len(sources)), dtype=np.float32)
     for index, (subject, path) in enumerate(zip(subjects, paths)):
         with h5py.File(path, "r") as handle:
             _require_every_condition(handle, "n_trials", subject, f"{stream} {lock} {space}")
